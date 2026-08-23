@@ -62,11 +62,21 @@ public:
 	ASourceFuncDoorRotating();
 
 	virtual void InitializeFromEntity(const FSourceBSPFile& Map, int32 ModelIndex, const FSourceEntity& InEntity,
-		ULambdaMaterialLibrary* MaterialLibrary) override;
+		ULambdaMaterialLibrary* MaterialLibrary, ASourceBSPWorldActor* InWorldActor) override;
 	virtual void Tick(float DeltaSeconds) override;
 
 	virtual bool IsUsable() const override;
 	virtual void OnUsed(AActor* Activator) override;
+	virtual bool AcceptInput(const FString& InputName, AActor* Activator, AActor* Caller, const FString& Parameter) override;
+
+	// ---- CBaseDoor inputs ----
+	void InputOpen();
+	void InputClose();
+	void InputToggle();
+	void Lock() { bLocked = true; }
+	void Unlock() { bLocked = false; }
+	/** CRotDoor::SetToggleState */
+	void SetToggleState(ESourceToggleState State);
 
 	/** CBaseDoor::DoorActivate - decides whether to open or close. */
 	int32 DoorActivate();
@@ -83,6 +93,14 @@ protected:
 	void StartMovingSound();
 	void StopMovingSound();
 	void PlayArrivedSound();
+	/** PlayLockSounds() - locked_sound when refused, unlocked_sound when it opens. */
+	void PlayLockSounds(bool bLockedSound);
+
+	// ---- Blocked (CBaseDoor::StartBlocked / Blocked / EndBlocked) ----
+	void CheckBlocked();
+	void StartBlocked(AActor* Other);
+	void Blocked(AActor* Other);
+	void EndBlocked();
 
 	// ---- CBaseDoor state machine ----
 	void DoorGoUp();
@@ -123,6 +141,15 @@ protected:
 	EPendingMove PendingMove = EPendingMove::None;
 
 	TWeakObjectPtr<AActor> Activator;				// m_hActivator
+
+	// Sounds named directly by the map (Source resolves these through soundscripts too, but map-authored wav
+	// paths like "doors/door_locked2.wav" are used as-is).
+	FString LockedSound;			// locked_sound
+	FString UnlockedSound;			// unlocked_sound
+
+	float BlockDamage = 0.0f;		// m_flBlockDamage ("dmg")
+	bool bForceClosed = false;		// m_bForceClosed ("forceclosed")
+	TWeakObjectPtr<AActor> Blocker;	// who is currently blocking us
 
 	/** Stands in for SetTouch(&CBaseDoor::DoorTouch) / SetTouch(NULL): touch is disabled while the door moves. */
 	bool bTouchEnabled = true;

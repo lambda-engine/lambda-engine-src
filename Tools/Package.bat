@@ -48,6 +48,10 @@ if errorlevel 8 (
 	exit /b 1
 )
 
+rem The staged launcher is built from BootstrapPackagedGame and keeps Epic's icon alongside ours, so strip it.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0FixLauncherIcon.ps1" -Exe "%GAME_DIR%\LambdaEngine.exe"
+ie4uinit.exe -show >nul 2>&1
+
 echo.
 echo [LambdaEngine] Done. Run the game with:
 echo     "%GAME_DIR%\Run.bat" test

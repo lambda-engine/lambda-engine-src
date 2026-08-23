@@ -3,6 +3,7 @@
 #include "LambdaSourceSettings.h"
 #include "SourceCoordinates.h"
 #include "SourceGeometryBuilder.h"
+#include "SourceBSPWorldActor.h"
 #include "Engine/CollisionProfile.h"
 #include "ProceduralMeshComponent.h"
 
@@ -22,11 +23,10 @@ ASourceBrushEntity::ASourceBrushEntity()
 }
 
 void ASourceBrushEntity::InitializeFromEntity(const FSourceBSPFile& Map, int32 ModelIndex, const FSourceEntity& InEntity,
-	ULambdaMaterialLibrary* MaterialLibrary)
+	ULambdaMaterialLibrary* MaterialLibrary, ASourceBSPWorldActor* InWorldActor)
 {
-	Entity = InEntity;
+	InitializeEntity(InEntity, InWorldActor);
 	BrushModelIndex = ModelIndex;
-	SpawnFlags = Entity.GetInt(TEXT("spawnflags"), 0);
 
 	SourceOrigin = FVector3f::ZeroVector;
 	Entity.GetVector(TEXT("origin"), SourceOrigin);
@@ -57,6 +57,12 @@ void ASourceBrushEntity::InitializeFromEntity(const FSourceBSPFile& Map, int32 M
 	UE_LOG(LogLambdaSource, Log, TEXT("%s (*%d) at Source(%s): %d faces, %d tris, %d sections, spawnflags %d"),
 		*Entity.ClassName, ModelIndex, *SourceOrigin.ToString(), GeoStats.NumFaces, GeoStats.NumTriangles,
 		Sections.Num(), SpawnFlags);
+}
+
+void ASourceBrushEntity::SetSourceOrigin(const FVector3f& InOrigin)
+{
+	SourceOrigin = InOrigin;
+	SetActorLocation(FSourceCoords::ToUE(SourceOrigin, ULambdaSourceSettings::Get().UnitScale));
 }
 
 void ASourceBrushEntity::SetSourceAngles(const FVector3f& InAngles)

@@ -22,9 +22,9 @@ ASourceFuncDoorRotating::ASourceFuncDoorRotating()
 // ---------------------------------------------------------------------------------------------------------------------
 
 void ASourceFuncDoorRotating::InitializeFromEntity(const FSourceBSPFile& Map, int32 ModelIndex, const FSourceEntity& InEntity,
-	ULambdaMaterialLibrary* MaterialLibrary)
+	ULambdaMaterialLibrary* MaterialLibrary, ASourceBSPWorldActor* InWorldActor)
 {
-	Super::InitializeFromEntity(Map, ModelIndex, InEntity, MaterialLibrary);
+	Super::InitializeFromEntity(Map, ModelIndex, InEntity, MaterialLibrary, InWorldActor);
 
 	// CBaseToggle::KeyValue / CBaseDoor::Spawn defaults.
 	MoveDistance = Entity.GetFloat(TEXT("distance"), 90.0f);
@@ -39,6 +39,11 @@ void ASourceFuncDoorRotating::InitializeFromEntity(const FSourceBSPFile& Map, in
 	}
 	Wait = Entity.GetFloat(TEXT("wait"), 4.0f);
 	SpawnPosition = (ESourceDoorSpawnPos)Entity.GetInt(TEXT("spawnpos"), 0);
+
+	LockedSound = Entity.Get(TEXT("locked_sound"));
+	UnlockedSound = Entity.Get(TEXT("unlocked_sound"));
+	BlockDamage = Entity.GetFloat(TEXT("dmg"), 0.0f);
+	bForceClosed = Entity.GetInt(TEXT("forceclosed"), 0) != 0;
 
 	NoiseMoving = Entity.Get(TEXT("noise1"));
 	NoiseArrived = Entity.Get(TEXT("noise2"));
@@ -135,7 +140,9 @@ void ASourceFuncDoorRotating::OnUsed(AActor* InActivator)
 
 	if (bLocked)
 	{
-		UE_LOG(LogLambdaSource, Verbose, TEXT("func_door_rotating: locked"));
+		// CBaseDoor::Use / DoorTouch: locked doors report and play the locked sound.
+		FireOutput(TEXT("OnLockedUse"), InActivator);
+		PlayLockSounds(true);
 		return;
 	}
 
@@ -182,6 +189,8 @@ void ASourceFuncDoorRotating::DoorTouch(AActor* Other)
 	}
 	if (bLocked)
 	{
+		FireOutput(TEXT("OnLockedUse"), Other);
+		PlayLockSounds(true);
 		return;
 	}
 
@@ -192,6 +201,204 @@ void ASourceFuncDoorRotating::DoorTouch(AActor* Other)
 	{
 		// Temporarily disable the touch function, until movement is finished.
 		bTouchEnabled = false;
+	}
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Inputs - CBaseDoor's DEFINE_INPUTFUNC list
+// ---------------------------------------------------------------------------------------------------------------------
+
+bool ASourceFuncDoorRotating::AcceptInput(const FString& InputName, AActor* InActivator, AActor* Caller, const FString& Parameter)
+{
+	if (InputName.Equals(TEXT("Open"), ESearchCase::IgnoreCase))
+	{
+		Activator = InActivator;
+		InputOpen();
+		return true;
+	}
+	if (InputName.Equals(TEXT("Close"), ESearchCase::IgnoreCase))
+	{
+		Activator = InActivator;
+		InputClose();
+		return true;
+	}
+	if (InputName.Equals(TEXT("Toggle"), ESearchCase::IgnoreCase))
+	{
+		Activator = InActivator;
+		InputToggle();
+		return true;
+	}
+	if (InputName.Equals(TEXT("Lock"), ESearchCase::IgnoreCase))
+	{
+		Lock();
+		return true;
+	}
+	if (InputName.Equals(TEXT("Unlock"), ESearchCase::IgnoreCase))
+	{
+		Unlock();
+		return true;
+	}
+	if (InputName.Equals(TEXT("SetSpeed"), ESearchCase::IgnoreCase))
+	{
+		Speed = FCString::Atof(*Parameter);
+		return true;
+	}
+	if (InputName.Equals(TEXT("SetToggleState"), ESearchCase::IgnoreCase))
+	{
+		SetToggleState(FCString::Atoi(*Parameter) == 1 ? ESourceToggleState::AtTop : ESourceToggleState::AtBottom);
+		return true;
+	}
+	if (InputName.Equals(TEXT("Use"), ESearchCase::IgnoreCase))
+	{
+		OnUsed(InActivator);
+		return true;
+	}
+	return Super::AcceptInput(InputName, InActivator, Caller, Parameter);
+}
+
+void ASourceFuncDoorRotating::InputOpen()
+{
+	// CBaseDoor::InputOpen
+	if (ToggleState != ESourceToggleState::AtTop && ToggleState != ESourceToggleState::GoingUp)
+	{
+		// I'm locked, can't open
+		if (bLocked)
+		{
+			return;
+		}
+		// Play door unlock sounds.
+		PlayLockSounds(false);
+		DoorGoUp();
+	}
+}
+
+void ASourceFuncDoorRotating::InputClose()
+{
+	// CBaseDoor::InputClose
+	if (ToggleState != ESourceToggleState::AtBottom)
+	{
+		DoorGoDown();
+	}
+}
+
+void ASourceFuncDoorRotating::InputToggle()
+{
+	// CBaseDoor::InputToggle
+	if (bLocked)
+	{
+		return;
+	}
+	if (ToggleState == ESourceToggleState::AtBottom)
+	{
+		DoorGoUp();
+	}
+	else if (ToggleState == ESourceToggleState::AtTop)
+	{
+		DoorGoDown();
+	}
+}
+
+void ASourceFuncDoorRotating::SetToggleState(ESourceToggleState State)
+{
+	// CRotDoor::SetToggleState
+	SetSourceAngles(State == ESourceToggleState::AtTop ? Angle2 : Angle1);
+	ToggleState = State;
+	AngularVelocity = FVector3f::ZeroVector;
+	MoveDoneTime = -1.0f;
+	PendingMove = EPendingMove::None;
+}
+
+void ASourceFuncDoorRotating::PlayLockSounds(bool bLockedSound)
+{
+	const FString& SoundName = bLockedSound ? LockedSound : UnlockedSound;
+	if (SoundName.IsEmpty() || SoundName == TEXT("0"))
+	{
+		return;
+	}
+	if (ULambdaSoundWave* Wave = FLambdaSoundCache::Get().CreateWave(this, SoundName, false))
+	{
+		UGameplayStatics::SpawnSoundAtLocation(this, Wave, GetActorLocation());
+	}
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Blocked - CBaseDoor::StartBlocked / Blocked / EndBlocked
+// ---------------------------------------------------------------------------------------------------------------------
+
+void ASourceFuncDoorRotating::CheckBlocked()
+{
+	// Source detects this while pushing the door through the physics system; here we test the moving door's box
+	// against players each frame, which catches the same case: something standing in the doorway.
+	AActor* Found = nullptr;
+	const FBox DoorBox = BrushMesh->Bounds.GetBox();
+	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	{
+		APawn* Pawn = It->IsValid() ? It->Get()->GetPawn() : nullptr;
+		if (Pawn && DoorBox.Intersect(Pawn->GetComponentsBoundingBox()))
+		{
+			Found = Pawn;
+			break;
+		}
+	}
+
+	if (Found && !Blocker.IsValid())
+	{
+		Blocker = Found;
+		StartBlocked(Found);
+		Blocked(Found);
+	}
+	else if (!Found && Blocker.IsValid())
+	{
+		Blocker = nullptr;
+		EndBlocked();
+	}
+}
+
+void ASourceFuncDoorRotating::StartBlocked(AActor* Other)
+{
+	// CBaseDoor::StartBlocked
+	if (ToggleState == ESourceToggleState::GoingDown)
+	{
+		FireOutput(TEXT("OnBlockedClosing"), Other);
+	}
+	else
+	{
+		FireOutput(TEXT("OnBlockedOpening"), Other);
+	}
+}
+
+void ASourceFuncDoorRotating::Blocked(AActor* Other)
+{
+	// CBaseDoor::Blocked - if we're set to force ourselves closed, keep going.
+	if (bForceClosed)
+	{
+		return;
+	}
+
+	// A door with a negative wait would never come back if blocked, so it just keeps going.
+	if (Wait >= 0.0f)
+	{
+		if (ToggleState == ESourceToggleState::GoingDown)
+		{
+			DoorGoUp();
+		}
+		else
+		{
+			DoorGoDown();
+		}
+	}
+}
+
+void ASourceFuncDoorRotating::EndBlocked()
+{
+	// CBaseDoor::EndBlocked
+	if (ToggleState == ESourceToggleState::GoingDown)
+	{
+		FireOutput(TEXT("OnUnblockedClosing"), nullptr);
+	}
+	else
+	{
+		FireOutput(TEXT("OnUnblockedOpening"), nullptr);
 	}
 }
 
@@ -306,6 +513,9 @@ void ASourceFuncDoorRotating::DoorGoUp()
 	}
 
 	AngularMove(Angle2 * Sign, Speed);
+
+	// Fire our open output.
+	FireOutput(TEXT("OnOpen"), Activator.Get());
 }
 
 void ASourceFuncDoorRotating::DoorHitTop()
@@ -337,6 +547,8 @@ void ASourceFuncDoorRotating::DoorHitTop()
 			SetMoveDoneTime(Wait);
 		}
 	}
+	// SF_DOOR_START_OPEN_OBSOLETE swaps the meaning of the two ends.
+	FireOutput(HasSpawnFlags(SF_DOOR_START_OPEN_OBSOLETE) ? TEXT("OnFullyClosed") : TEXT("OnFullyOpen"), Activator.Get());
 	UE_LOG(LogLambdaSource, Verbose, TEXT("func_door_rotating: fully open"));
 }
 
@@ -350,6 +562,9 @@ void ASourceFuncDoorRotating::DoorGoDown()
 	ToggleState = ESourceToggleState::GoingDown;
 	PendingMove = EPendingMove::HitBottom;
 	AngularMove(Angle1, Speed);
+
+	// Fire our closed output.
+	FireOutput(TEXT("OnClose"), Activator.Get());
 }
 
 void ASourceFuncDoorRotating::DoorHitBottom()
@@ -363,6 +578,7 @@ void ASourceFuncDoorRotating::DoorHitBottom()
 	bTouchEnabled = true;
 	PendingMove = EPendingMove::None;
 	MoveDoneTime = -1.0f;
+	FireOutput(HasSpawnFlags(SF_DOOR_START_OPEN_OBSOLETE) ? TEXT("OnFullyOpen") : TEXT("OnFullyClosed"), Activator.Get());
 	UE_LOG(LogLambdaSource, Verbose, TEXT("func_door_rotating: fully closed"));
 }
 
@@ -459,6 +675,12 @@ void ASourceFuncDoorRotating::Tick(float DeltaSeconds)
 	if (MoveDoneTime < 0.0f)
 	{
 		return;
+	}
+
+	// While pushing, watch for anything caught in the doorway.
+	if (ToggleState == ESourceToggleState::GoingUp || ToggleState == ESourceToggleState::GoingDown)
+	{
+		CheckBlocked();
 	}
 
 	// MOVETYPE_PUSH: integrate angular velocity, then fire MoveDone when the move time elapses.

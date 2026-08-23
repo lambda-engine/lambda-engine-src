@@ -4,9 +4,11 @@
 #include "GameFramework/Actor.h"
 #include "ProceduralMeshComponent.h"
 #include "SourceBSPFile.h"
+#include "SourceEntityIO.h"
 #include "SourceBSPWorldActor.generated.h"
 
 class ULambdaMaterialLibrary;
+class ASourceEntity;
 class ULightComponent;
 class ULocalLightComponent;
 
@@ -66,7 +68,18 @@ public:
 	const FSourceBSPLoadStats& GetLoadStats() const { return Stats; }
 
 	const FSourceBSPFile* GetBSP() const { return BSP.Get(); }
+
+	// ---- Entity I/O (CEventQueue) ----
+	/** Queues an input to be delivered to every entity matching Target after Delay seconds. */
+	void QueueEntityEvent(const FString& Target, const FString& Input, const FString& Parameter,
+		AActor* Activator, AActor* Caller, float Delay);
+	/** Resolves a target name, including Source's !activator / !caller / !self / !player keywords. */
+	void ResolveTargets(const FString& Target, AActor* Activator, AActor* Caller, TArray<ASourceEntity*>& Out) const;
+	/** Registers an entity so it can be found by targetname. */
+	void RegisterEntity(ASourceEntity* InEntity);
 	TArray<const FSourceEntity*> FindEntities(const FString& ClassName) const;
+
+	virtual void Tick(float DeltaSeconds) override;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Lambda")
 	TObjectPtr<UProceduralMeshComponent> WorldMesh;
@@ -97,5 +110,12 @@ private:
 	FString LoadedMapName;
 	FSourceBSPLoadStats Stats;
 	TMap<FString, int32> UnhandledEntityCounts;
+
+	/** Every entity spawned from the map, for targetname lookups. */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<ASourceEntity>> Entities;
+
+	/** Pending I/O events, serviced each tick (CEventQueue::ServiceEvents). */
+	TArray<FSourceQueuedEvent> EventQueue;
 	bool bSpawnedSkyLight = false;
 };

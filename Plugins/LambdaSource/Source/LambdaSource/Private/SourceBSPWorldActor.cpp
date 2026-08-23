@@ -6,6 +6,8 @@
 #include "SourceCoordinates.h"
 #include "SourceBrushEntity.h"
 #include "SourceFuncDoorRotating.h"
+#include "SourceFuncButton.h"
+#include "SourceEntity.h"
 #include "SourceGeometryBuilder.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Components/PointLightComponent.h"
@@ -25,7 +27,7 @@
 
 ASourceBSPWorldActor::ASourceBSPWorldActor()
 {
-	PrimaryActorTick.bCanEverTick = false;
+	PrimaryActorTick.bCanEverTick = true;
 
 	WorldMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("WorldMesh"));
 	RootComponent = WorldMesh;
@@ -121,6 +123,8 @@ void ASourceBSPWorldActor::ClearMap()
 		}
 	}
 	SpawnedActors.Reset();
+	Entities.Reset();
+	EventQueue.Reset();
 	BSP.Reset();
 	LoadedMapName.Reset();
 	MaterialLibrary = nullptr;
@@ -239,6 +243,10 @@ void ASourceBSPWorldActor::SpawnBrushEntity(const FSourceEntity& Entity, int32 M
 	{
 		ActorClass = ASourceFuncDoorRotating::StaticClass();
 	}
+	else if (Class.Equals(TEXT("func_button"), ESearchCase::IgnoreCase))
+	{
+		ActorClass = ASourceFuncButton::StaticClass();
+	}
 	else
 	{
 		// Not implemented yet: render the brush so the map still looks right, but with no behaviour.
@@ -254,7 +262,8 @@ void ASourceBSPWorldActor::SpawnBrushEntity(const FSourceEntity& Entity, int32 M
 	{
 		return;
 	}
-	BrushActor->InitializeFromEntity(*BSP, ModelIndex, Entity, MaterialLibrary);
+	BrushActor->InitializeFromEntity(*BSP, ModelIndex, Entity, MaterialLibrary, this);
+	RegisterEntity(BrushActor);
 	SpawnedActors.Add(BrushActor);
 	++Stats.NumBrushEntities;
 }
@@ -517,5 +526,99 @@ void ASourceBSPWorldActor::LogUnhandledEntities() const
 	for (const TPair<FString, int32>& Pair : UnhandledEntityCounts)
 	{
 		UE_LOG(LogLambdaSource, Log, TEXT("Unhandled entity class '%s' x%d"), *Pair.Key, Pair.Value);
+	}
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Entity I/O
+// ---------------------------------------------------------------------------------------------------------------------
+
+void ASourceBSPWorldActor::RegisterEntity(ASourceEntity* InEntity)
+{
+	if (InEntity)
+	{
+		Entities.Add(InEntity);
+	}
+}
+
+void ASourceBSPWorldActor::QueueEntityEvent(const FString& Target, const FString& Input, const FString& Parameter,
+	AActor* Activator, AActor* Caller, float Delay)
+{
+	if (Target.IsEmpty() || Input.IsEmpty())
+	{
+		return;
+	}
+	FSourceQueuedEvent Event;
+	Event.Target = Target;
+	Event.Input = Input;
+	Event.Parameter = Parameter;
+	Event.Activator = Activator;
+	Event.Caller = Caller;
+	Event.FireTime = GetWorld()->GetTimeSeconds() + FMath::Max(0.0f, Delay);
+	EventQueue.Add(MoveTemp(Event));
+
+	UE_LOG(LogLambdaSource, Verbose, TEXT("I/O queued: %s.%s(%s) in %gs"), *Target, *Input, *Parameter, Delay);
+}
+
+void ASourceBSPWorldActor::ResolveTargets(const FString& Target, AActor* Activator, AActor* Caller,
+	TArray<ASourceEntity*>& Out) const
+{
+	// Source's magic target names.
+	if (Target.Equals(TEXT("!activator"), ESearchCase::IgnoreCase))
+	{
+		if (ASourceEntity* AsEntity = Cast<ASourceEntity>(Activator)) { Out.Add(AsEntity); }
+		return;
+	}
+	if (Target.Equals(TEXT("!caller"), ESearchCase::IgnoreCase) || Target.Equals(TEXT("!self"), ESearchCase::IgnoreCase))
+	{
+		if (ASourceEntity* AsEntity = Cast<ASourceEntity>(Caller)) { Out.Add(AsEntity); }
+		return;
+	}
+
+	for (const TObjectPtr<ASourceEntity>& Candidate : Entities)
+	{
+		if (IsValid(Candidate) && Candidate->MatchesTargetName(Target))
+		{
+			Out.Add(Candidate);
+		}
+	}
+}
+
+void ASourceBSPWorldActor::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	if (EventQueue.Num() == 0)
+	{
+		return;
+	}
+
+	// CEventQueue::ServiceEvents - deliver everything whose time has come. Delivering an input can queue more
+	// events, so collect the due ones first and let those land on a later tick.
+	const float Now = GetWorld()->GetTimeSeconds();
+	TArray<FSourceQueuedEvent> Due;
+	for (int32 i = EventQueue.Num() - 1; i >= 0; --i)
+	{
+		if (EventQueue[i].FireTime <= Now)
+		{
+			Due.Add(EventQueue[i]);
+			EventQueue.RemoveAtSwap(i);
+		}
+	}
+
+	for (const FSourceQueuedEvent& Event : Due)
+	{
+		TArray<ASourceEntity*> Targets;
+		ResolveTargets(Event.Target, Event.Activator.Get(), Event.Caller.Get(), Targets);
+		if (Targets.Num() == 0)
+		{
+			UE_LOG(LogLambdaSource, Warning, TEXT("I/O: no entity named '%s' for input '%s'"), *Event.Target, *Event.Input);
+			continue;
+		}
+		for (ASourceEntity* Target : Targets)
+		{
+			UE_LOG(LogLambdaSource, Verbose, TEXT("I/O fire: %s.%s(%s)"), *Event.Target, *Event.Input, *Event.Parameter);
+			Target->AcceptInput(Event.Input, Event.Activator.Get(), Event.Caller.Get(), Event.Parameter);
+		}
 	}
 }

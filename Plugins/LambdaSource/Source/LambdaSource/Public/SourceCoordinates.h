@@ -52,6 +52,20 @@ struct LAMBDASOURCE_API FSourceCoords
 		return FRotator(Pitch, -Yaw, 0.0f);
 	}
 
+	/**
+	 * Source's AngleVectors() forward vector, in Source space. Used for keyvalues such as "movedir" that store a
+	 * direction as (pitch, yaw, roll) angles:
+	 *     forward.x = cos(pitch)*cos(yaw), forward.y = cos(pitch)*sin(yaw), forward.z = -sin(pitch)
+	 */
+	static FORCEINLINE FVector3f AngleVectorsForward(const FVector3f& Angles)
+	{
+		const float Pitch = FMath::DegreesToRadians(Angles.X);
+		const float Yaw = FMath::DegreesToRadians(Angles.Y);
+		const float SP = FMath::Sin(Pitch), CP = FMath::Cos(Pitch);
+		const float SY = FMath::Sin(Yaw), CY = FMath::Cos(Yaw);
+		return FVector3f(CP * CY, CP * SY, -SP);
+	}
+
 	/** Parses "x y z" (also tolerates commas and extra whitespace). */
 	static bool ParseVector(const FString& Text, FVector3f& Out);
 	/** Parses a whitespace separated list of numbers. */
