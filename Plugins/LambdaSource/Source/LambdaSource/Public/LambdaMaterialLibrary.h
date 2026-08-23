@@ -23,7 +23,9 @@ struct LAMBDASOURCE_API FSourceMaterialInfo
 	bool bSelfIllum = false;
 	bool bIsPatch = false;
 	FString SurfaceProp;	// $surfaceprop: the key into scripts/surfaceproperties*.txt
+	float DecalScale = 1.0f;	// $decalscale: decal world size = texture width * this (Source's decal sizing)
 	bool bIgnoreZ = false;	// $ignorez: draw without depth testing (first-person effect sprites)
+	bool bAdditive = false;	// $additive: additive blend (flashes, glows) rather than alpha
 
 	// Authored decal maps. $bumpmap is Source's own normal-map key; the rest are a Lambda extension written by
 	// Tools/ImportSource2Decals.py for decals that come with height and occlusion maps (Source 2's bullet holes).
@@ -125,6 +127,9 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInterface> SpriteMasterMaterialNoZ;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInterface> SpriteMasterMaterialTranslucent;
 
 	UPROPERTY(Transient)
 	TMap<FString, TObjectPtr<UMaterialInterface>> DecalCache;

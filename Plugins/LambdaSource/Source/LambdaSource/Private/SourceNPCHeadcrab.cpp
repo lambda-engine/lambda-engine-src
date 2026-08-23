@@ -25,6 +25,7 @@ void ASourceNPCHeadcrab::Spawn()
 	SetHull(12.0f, 24.0f);						// HULL_TINY: (-12,-12,0) to (12,12,24)
 	ViewOffsetUnits = FVector3f(6, 0, 11);		// SetViewOffset: position of the eyes relative to the origin
 	FieldOfView = 0.5f;							// m_flFieldOfView
+	BloodColor = ESourceBloodColor::Green;		// SetBloodColor(BLOOD_COLOR_GREEN)
 	MaxHealth = Health = FSourceAmmoDef::Get().GetSkillValue(TEXT("sk_headcrab_health"), 10.0f);
 	MeleeDamage = FSourceAmmoDef::Get().GetSkillValue(TEXT("sk_headcrab_melee_dmg"), 5.0f);
 

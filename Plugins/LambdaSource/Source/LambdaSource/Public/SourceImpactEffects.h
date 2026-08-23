@@ -4,6 +4,7 @@
 
 class ULambdaMaterialLibrary;
 struct FHitResult;
+enum class ESourceBloodColor : uint8;
 
 namespace SourceImpact
 {
@@ -26,8 +27,22 @@ namespace SourceImpact
 	/**
 	 * UTIL_ImpactTrace / FX_Impact: stamps the decal the surface's game material calls for and plays its
 	 * bullet impact sound. Does nothing for surfaces whose game material is '-' ("don't decal this surface").
+	 * A hit on an NPC bleeds instead: SpawnBlood at the wound and TraceBleed onto the world behind it.
+	 * ShotDirection is the bullet's travel direction; Damage sizes the bleed.
 	 */
-	LAMBDASOURCE_API void PlayImpact(const FHitResult& Hit, ULambdaMaterialLibrary* Materials, UObject* SoundOuter);
+	LAMBDASOURCE_API void PlayImpact(const FHitResult& Hit, ULambdaMaterialLibrary* Materials, UObject* SoundOuter,
+		const FVector& ShotDirection, float Damage);
+
+	/** Stamps one decal material at a hit (random roll, DecalSizeVariance), attached to what was hit. */
+	LAMBDASOURCE_API void SpawnDecal(const FHitResult& Hit, ULambdaMaterialLibrary* Materials, const FString& DecalName);
+
+	/** UTIL_BloodImpact -> FX_BloodBulletImpact: the blood spray at a wound. */
+	LAMBDASOURCE_API void SpawnBlood(UWorld* World, ULambdaMaterialLibrary* Materials, const FVector& Origin,
+		const FVector& Normal, ESourceBloodColor Color);
+
+	/** CBaseEntity::TraceBleed: blood decals on the world behind the wound, along the shot. */
+	LAMBDASOURCE_API void TraceBleed(UWorld* World, ULambdaMaterialLibrary* Materials, const FHitResult& Wound,
+		const FVector& ShotDirection, float Damage, ESourceBloodColor Color, const TArray<const AActor*>& Ignore);
 
 	/**
 	 * CDecalEmitterSystem::LevelInitPreEntity + the surface property precache: builds every impact decal material

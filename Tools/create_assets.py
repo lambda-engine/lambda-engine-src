@@ -17,6 +17,7 @@ DECAL_NAME = 'M_LambdaDecal'
 DECAL_PBR_NAME = 'M_LambdaDecalPBR'
 SPRITE_NAME = 'M_LambdaSprite'
 SPRITE_NOZ_NAME = 'M_LambdaSpriteNoZ'
+SPRITE_TRANSLUCENT_NAME = 'M_LambdaSpriteTranslucent'
 LEVEL_PATH = '/Game/LambdaEngine/Maps/LambdaEntry'
 
 
@@ -631,7 +632,7 @@ def ensure_decal_pbr_material():
     return material
 
 
-def build_sprite_material(name, ignore_z):
+def build_sprite_material(name, ignore_z, translucent=False):
     # Unlit additive master for Source's UnlitGeneric "$additive 1" effect sprites.
     #
     # Source's flash VMTs also set "$vertexcolor 1", and the first-person ones set "$ignorez 1" so the flash draws
@@ -649,7 +650,7 @@ def build_sprite_material(name, ignore_z):
 
     material.set_editor_property('material_domain', unreal.MaterialDomain.MD_SURFACE)
     material.set_editor_property('shading_model', unreal.MaterialShadingModel.MSM_UNLIT)
-    material.set_editor_property('blend_mode', unreal.BlendMode.BLEND_ADDITIVE)
+    material.set_editor_property('blend_mode', unreal.BlendMode.BLEND_TRANSLUCENT if translucent else unreal.BlendMode.BLEND_ADDITIVE)
     material.set_editor_property('two_sided', True)
     if ignore_z:
         try:
@@ -665,10 +666,8 @@ def build_sprite_material(name, ignore_z):
     if default_tex:
         tex_param.set_editor_property('texture', default_tex)
 
-    # "$vertexcolor 1": Source tints each particle through its vertex colour. A MaterialExpressionVertexColor
-    # cannot be wired up from Python - all five of its outputs are named "", so neither the RGB output nor a
-    # ComponentMask can be addressed by name and the multiply silently collapses to black. A Tint parameter set
-    # on the material instance carries the same colour, one value per effect instead of one per particle.
+    # A Tint parameter on the instance colours a whole effect (the muzzle flash); "$vertexcolor 1" / "$vertexalpha 1"
+    # particles carry their own ramp in the vertex colour, multiplied in below.
     tint = mel.create_material_expression(material, unreal.MaterialExpressionVectorParameter, -700, 300)
     tint.set_editor_property('parameter_name', 'Tint')
     tint.set_editor_property('default_value', unreal.LinearColor(1.0, 1.0, 1.0, 1.0))
@@ -677,19 +676,63 @@ def build_sprite_material(name, ignore_z):
     connect(tex_param, 'RGB', tinted, 'A')
     connect(tint, 'RGB', tinted, 'B')
 
+    # "$vertexcolor 1" / "$vertexalpha 1": particles carry their colour ramp in the vertex colour. Every output of
+    # MaterialExpressionVertexColor is named "", and "" resolves to output 0 - the float3 RGB - so the alpha output
+    # cannot be reached from Python. The particle mesh therefore also writes its alpha into UV1.x, which a
+    # TextureCoordinate node can read.
+    vertex_colour = mel.create_material_expression(material, unreal.MaterialExpressionVertexColor, -700, 620)
+    vc_rgb = vertex_colour
+    uv1 = mel.create_material_expression(material, unreal.MaterialExpressionTextureCoordinate, -700, 720)
+    uv1.set_editor_property('coordinate_index', 1)
+    vc_a = mel.create_material_expression(material, unreal.MaterialExpressionComponentMask, -560, 720)
+    vc_a.set_editor_property('r', True); vc_a.set_editor_property('g', False)
+    vc_a.set_editor_property('b', False); vc_a.set_editor_property('a', False)
+    connect(uv1, '', vc_a, '')
+
+    # "Subrect" sprites (effects/blood_gore & co. are tiles of particle/particle_composite): UVRect =
+    # (offsetU, offsetV, scaleU, scaleV) selects the tile, default the whole texture.
+    uv0 = mel.create_material_expression(material, unreal.MaterialExpressionTextureCoordinate, -1100, 0)
+    uv_rect = mel.create_material_expression(material, unreal.MaterialExpressionVectorParameter, -1100, 120)
+    uv_rect.set_editor_property('parameter_name', 'UVRect')
+    uv_rect.set_editor_property('default_value', unreal.LinearColor(0.0, 0.0, 1.0, 1.0))
+    uv_scale = mel.create_material_expression(material, unreal.MaterialExpressionAppendVector, -960, 120)
+    connect(uv_rect, 'B', uv_scale, 'A')
+    connect(uv_rect, 'A', uv_scale, 'B')
+    uv_offset = mel.create_material_expression(material, unreal.MaterialExpressionAppendVector, -960, 240)
+    connect(uv_rect, 'R', uv_offset, 'A')
+    connect(uv_rect, 'G', uv_offset, 'B')
+    uv_mul = mel.create_material_expression(material, unreal.MaterialExpressionMultiply, -860, 60)
+    connect(uv0, '', uv_mul, 'A')
+    connect(uv_scale, '', uv_mul, 'B')
+    uv_add = mel.create_material_expression(material, unreal.MaterialExpressionAdd, -780, 60)
+    connect(uv_mul, '', uv_add, 'A')
+    connect(uv_offset, '', uv_add, 'B')
+    connect(uv_add, '', tex_param, 'UVs')
+
+    vertex_tinted = mel.create_material_expression(material, unreal.MaterialExpressionMultiply, -320, 120)
+    connect(tinted, '', vertex_tinted, 'A')
+    connect(vc_rgb, '', vertex_tinted, 'B')
+
     brightness = mel.create_material_expression(material, unreal.MaterialExpressionScalarParameter, -700, 480)
     brightness.set_editor_property('parameter_name', 'Brightness')
     brightness.set_editor_property('default_value', 1.0)
 
-    emissive = mel.create_material_expression(material, unreal.MaterialExpressionMultiply, -220, 60)
-    connect(tinted, '', emissive, 'A')
+    emissive = mel.create_material_expression(material, unreal.MaterialExpressionMultiply, -180, 60)
+    connect(vertex_tinted, '', emissive, 'A')
     connect(brightness, '', emissive, 'B')
     connect_property(emissive, '', unreal.MaterialProperty.MP_EMISSIVE_COLOR)
 
-    # Additive blending still reads opacity; the flash textures carry their shape in RGB.
-    one = mel.create_material_expression(material, unreal.MaterialExpressionConstant, -220, 380)
-    one.set_editor_property('r', 1.0)
-    connect_property(one, '', unreal.MaterialProperty.MP_OPACITY)
+    if translucent:
+        # alpha blend: the texture's alpha times the vertex alpha (the particle's fade)
+        opacity = mel.create_material_expression(material, unreal.MaterialExpressionMultiply, -180, 300)
+        connect(tex_param, 'A', opacity, 'A')
+        connect(vc_a, '', opacity, 'B')
+        connect_property(opacity, '', unreal.MaterialProperty.MP_OPACITY)
+    else:
+        # Additive blending still reads opacity; the flash textures carry their shape in RGB.
+        one = mel.create_material_expression(material, unreal.MaterialExpressionConstant, -220, 380)
+        one.set_editor_property('r', 1.0)
+        connect_property(one, '', unreal.MaterialProperty.MP_OPACITY)
 
     mel.recompile_material(material)
     unreal.EditorAssetLibrary.save_asset(full_path, only_if_is_dirty=False)
@@ -700,6 +743,7 @@ def build_sprite_material(name, ignore_z):
 def ensure_sprite_materials():
     build_sprite_material(SPRITE_NAME, ignore_z=False)
     build_sprite_material(SPRITE_NOZ_NAME, ignore_z=True)
+    build_sprite_material(SPRITE_TRANSLUCENT_NAME, ignore_z=False, translucent=True)
 
 
 scan_assets()

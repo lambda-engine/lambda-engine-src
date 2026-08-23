@@ -28,6 +28,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "Engine/Engine.h"
 #include "SourceStudioModelComponent.h"
+#include "UnrealClient.h"
 #include "CollisionQueryParams.h"
 #include "TimerManager.h"
 #include "SourceImpactEffects.h"
@@ -50,6 +51,14 @@ static FAutoConsoleVariableRef CVarDecalTestAuto(
 	TEXT("lambda.decaltest.auto"),
 	GDecalTestAuto,
 	TEXT("\"<distance_cm> <angle_deg>\": stamp test impact decals and move to that viewpoint 2s after spawn"));
+
+// lambda.fire.auto "<shots> [interval_s] [start_delay_s]" pulls the trigger from Tick, so a scripted launch can shoot
+// without injecting input (which needs the game window in the foreground). A screenshot is taken after each shot.
+static FString GFireAuto;
+static FAutoConsoleVariableRef CVarFireAuto(
+	TEXT("lambda.fire.auto"),
+	GFireAuto,
+	TEXT("\"<shots> [interval_s] [start_delay_s]\": fire the active weapon that many times from Tick, screenshot each"));
 
 ALambdaCharacter::ALambdaCharacter()
 {
@@ -416,19 +425,93 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 				// "<classname> [distance_cm]"
 				TArray<FString> Parts;
 				GNPCCreateAuto.ParseIntoArrayWS(Parts);
-				NPCCreate(Parts[0], Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : 5000.0f);
+				AutoFireTarget = NPCCreate(Parts[0], Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : 5000.0f);
 			}
 			if (!GDecalTestAuto.IsEmpty())
 			{
 				TArray<FString> Parts;
 				GDecalTestAuto.ParseIntoArrayWS(Parts);
-				RunDecalTest(Parts.Num() > 0 ? FCString::Atof(*Parts[0]) : 90.0f, Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : 45.0f);
+				RunDecalTest(Parts.Num() > 0 ? FCString::Atof(*Parts[0]) : 90.0f, Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : 45.0f,
+					3, Parts.Num() > 2 ? Parts[2] : FString());
+			}
+			if (!GFireAuto.IsEmpty())
+			{
+				TArray<FString> Parts;
+				GFireAuto.ParseIntoArrayWS(Parts);
+				AutoFireShotsLeft = Parts.Num() > 0 ? FCString::Atoi(*Parts[0]) : 1;
+				AutoFireInterval = Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : 0.6f;
+				AutoFireTimer = -(Parts.Num() > 2 ? FCString::Atof(*Parts[2]) : 2.0f);
+			}
+		}
+	}
+
+	if (DecalTestScreenshotTimer > 0.0f)
+	{
+		DecalTestScreenshotTimer -= DeltaSeconds;
+		if (DecalTestScreenshotTimer <= 0.0f)
+		{
+			FScreenshotRequest::RequestScreenshot(TEXT("decaltest.png"), false, false);
+		}
+	}
+
+	// lambda.fire.auto: a one-frame trigger pull per shot (the pistol is semi-automatic), screenshot shortly after.
+	if (AutoFireShotsLeft > 0 || AutoFireShotTaken > 0)
+	{
+		AutoFireTimer += DeltaSeconds;
+		if (ActiveWeapon && ActiveWeapon->bAttackHeld && AutoFirePulse)
+		{
+			ActiveWeapon->bAttackHeld = false;
+			AutoFirePulse = false;
+		}
+		if (AutoFireShotsLeft > 0 && AutoFireTimer >= 0.0f)
+		{
+			// aim at whatever lambda.npc_create.auto spawned, so the scripted shots land on it
+			if (AutoFireTarget.IsValid() && Controller)
+			{
+				FVector Eye;
+				FRotator EyeRot;
+				GetActorEyesViewPoint(Eye, EyeRot);
+				Controller->SetControlRotation((AutoFireTarget->GetActorLocation() - Eye).Rotation());
+			}
+			if (ActiveWeapon)
+			{
+				ActiveWeapon->bAttackHeld = true;
+				AutoFirePulse = true;
+			}
+			--AutoFireShotsLeft;
+			++AutoFireShotTaken;
+			AutoFireTimer = -AutoFireInterval;
+			AutoFireScreenshotTimer = 0.15f;
+		}
+		if (AutoFireScreenshotTimer > 0.0f)
+		{
+			AutoFireScreenshotTimer -= DeltaSeconds;
+			if (AutoFireScreenshotTimer <= 0.0f)
+			{
+				FScreenshotRequest::RequestScreenshot(FString::Printf(TEXT("fire_auto_%02d.png"), AutoFireShotTaken), false, false);
+				if (AutoFireShotsLeft == 0)
+				{
+					// one more, a couple of seconds after the last shot, for what is left behind
+					if (AutoFireShotTaken > 0 && AutoFireFinalTimer <= 0.0f)
+					{
+						AutoFireFinalTimer = 2.0f;
+					}
+				}
+			}
+		}
+		if (AutoFireFinalTimer > 0.0f)
+		{
+			AutoFireFinalTimer -= DeltaSeconds;
+			if (AutoFireFinalTimer <= 0.0f)
+			{
+				FScreenshotRequest::RequestScreenshot(TEXT("fire_auto_after.png"), false, false);
+				AutoFireShotTaken = 0;
 			}
 		}
 	}
 }
 
-void ALambdaCharacter::RunDecalTest(float DistanceCm, float AngleDeg, int32 Count)
+void ALambdaCharacter::RunDecalTest(float DistanceCm, float AngleDeg, int32 Count, const FString& DecalName)
 {
 	UWorld* World = GetWorld();
 	if (!World)
@@ -455,7 +538,15 @@ void ALambdaCharacter::RunDecalTest(float DistanceCm, float AngleDeg, int32 Coun
 		FHitResult Hit;
 		if (World->LineTraceSingleByChannel(Hit, Start, Start + Forward * 5000.0f, ECC_Visibility, Params))
 		{
-			SourceImpact::PlayImpact(Hit, GetWorldMaterialLibrary(), this);
+			if (DecalName.IsEmpty())
+			{
+				SourceImpact::PlayImpact(Hit, GetWorldMaterialLibrary(), this, Forward, 10.0f);
+			}
+			else
+			{
+				// a named decal material (e.g. "decals/hla/yblood/yblood1"), to look at one in isolation
+				SourceImpact::SpawnDecal(Hit, GetWorldMaterialLibrary(), DecalName);
+			}
 			if (i == (Count - 1) / 2)
 			{
 				Centre = Hit;
@@ -485,6 +576,7 @@ void ALambdaCharacter::RunDecalTest(float DistanceCm, float AngleDeg, int32 Coun
 	}
 	UE_LOG(LogLambda, Log, TEXT("decaltest: %d decals at %s, viewing from %.0f cm at %.0f deg"),
 		Count, *Centre.ImpactPoint.ToString(), DistanceCm, AngleDeg);
+	DecalTestScreenshotTimer = 1.5f;	// Saved/Screenshots/.../decaltest.png once the view has settled
 }
 
 ALambdaWeapon* ALambdaCharacter::GiveWeapon(const FString& WeaponClassName)
@@ -803,11 +895,21 @@ void ALambdaCharacter::DoMuzzleFlash()
 	// off the view model by its lighting channel so it cannot blow out the hands a few centimetres away.
 	if (MuzzleFlashLight && Settings.bMuzzleFlashLight)
 	{
-		MuzzleFlashLightRadius = Settings.MuzzleFlashLightRadiusUnits * Scale;
+		// Only push a changed radius: SetAttenuationRadius writes the proxy directly (PushRadiusToRenderThread) and,
+		// done in the same frame the light becomes visible, trips the "GPU Scene Lights is stale" ensure - a
+		// multi-second stack walk on the first shot in development builds.
+		const float NewRadius = Settings.MuzzleFlashLightRadiusUnits * Scale;
+		if (NewRadius != MuzzleFlashLightRadius)
+		{
+			MuzzleFlashLightRadius = NewRadius;
+			MuzzleFlashLight->SetAttenuationRadius(MuzzleFlashLightRadius);
+		}
 		MuzzleFlashLight->SetWorldLocation(MuzzleWorld);
-		MuzzleFlashLight->SetAttenuationRadius(MuzzleFlashLightRadius);
 		MuzzleFlashLight->SetIntensity(Settings.MuzzleFlashLightIntensity);
-		MuzzleFlashLight->SetLightingChannels(Settings.bMuzzleFlashLightsViewModel, true, false);
+		if (MuzzleFlashLight->LightingChannels.bChannel0 != Settings.bMuzzleFlashLightsViewModel)
+		{
+			MuzzleFlashLight->SetLightingChannels(Settings.bMuzzleFlashLightsViewModel, true, false);
+		}
 		MuzzleFlashLight->SetVisibility(true);
 		MuzzleFlashLightDieTime = Now + FMath::Max(0.05f, GMuzzleFlashHoldTime);	// el->die
 	}
@@ -840,12 +942,9 @@ void ALambdaCharacter::UpdateMuzzleFlash()
 		{
 			MuzzleFlashLight->SetVisibility(false);
 		}
-		else
-		{
-			// el->decay = radius / 0.05: the light shrinks away over its lifetime rather than popping off.
-			const float Remaining = FMath::Max(0.0f, MuzzleFlashLightDieTime - Now) / 0.05f;
-			MuzzleFlashLight->SetAttenuationRadius(FMath::Max(1.0f, MuzzleFlashLightRadius * Remaining));
-		}
+		// Source's elight decays its radius to zero over the 0.05 s (el->decay = radius / 0.05); over three frames
+		// that is invisible, and pushing a new radius every frame trips UE's "GPU Scene Lights is stale" ensure
+		// (a ~1 s stack walk on the first shot in development builds), so the light simply holds and goes out.
 	}
 }
 

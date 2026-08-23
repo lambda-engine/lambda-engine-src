@@ -269,7 +269,8 @@ static void LambdaDecalTestCommand(const TArray<FString>& Args, UWorld* World)
 	ALambdaCharacter* Player = PC ? Cast<ALambdaCharacter>(PC->GetPawn()) : nullptr;
 	if (Player)
 	{
-		Player->RunDecalTest(Args.Num() > 0 ? FCString::Atof(*Args[0]) : 90.0f, Args.Num() > 1 ? FCString::Atof(*Args[1]) : 45.0f);
+		Player->RunDecalTest(Args.Num() > 0 ? FCString::Atof(*Args[0]) : 90.0f, Args.Num() > 1 ? FCString::Atof(*Args[1]) : 45.0f,
+			3, Args.Num() > 2 ? Args[2] : FString());
 	}
 }
 

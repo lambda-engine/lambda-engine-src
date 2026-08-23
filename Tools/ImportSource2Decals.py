@@ -98,11 +98,13 @@ def parse_kv1_groups(text):
 
 def parse_vmat_data(text):
     """Pulls the texture params and the handful of floats we use out of VRF's KV3 text dump of a vmat_c."""
-    info = {'textures': {}, 'floats': {}}
+    info = {'textures': {}, 'floats': {}, 'ints': {}}
     for m in re.finditer(r'm_name = "(g_t\w+)"\s*m_pValue = resource:"([^"]+)"', text):
         info['textures'][m.group(1)] = m.group(2)
     for m in re.finditer(r'm_name = "(\w+)"\s*m_flValue = ([0-9.\-eE]+)', text):
         info['floats'][m.group(1)] = float(m.group(2))
+    for m in re.finditer(r'm_name = "(\w+)"\s*m_nValue = (-?\d+)', text):
+        info['ints'][m.group(1)] = int(m.group(2))
     m = re.search(r'm_name = "PhysicsSurfaceProperties"\s*m_value = "([^"]*)"', text)
     info['surfaceprop'] = m.group(1) if m else ''
     return info
@@ -210,7 +212,12 @@ def main():
         rel = f'{args.prefix}/{sub}/{base}'
 
         def png_for(vtex):
-            return os.path.join(tmp, vtex.replace('.vtex', '.png'))
+            png = os.path.join(tmp, vtex.replace('.vtex', '.png'))
+            if not os.path.exists(png):
+                # Referenced from outside materials/decals/ (the blood decals keep theirs under materials/particle/):
+                # decode just that one.
+                run_vrf(args.vrf, ['-i', args.pak, '-f', vtex + '_c', '-d', '-o', tmp])
+            return png
 
         tex_out = {}
         jobs = [('color', 'g_tColor', IMAGE_FORMAT_BGRA8888, TEXTUREFLAGS_EIGHTBITALPHA),
@@ -240,7 +247,10 @@ def main():
             continue
 
         floats = info['floats']
-        size_inches = floats.get('DecalWorldWidth', 3.25)
+        # Bullet holes carry DecalWorldWidth; the blood and fluid decals have none and are sized by their
+        # WorldMappingWidth attribute instead (32 inches for yblood - HL2's yblood is 128 texels * $decalscale
+        # 0.25 = 32 units, the same ballpark).
+        size_inches = floats.get('DecalWorldWidth', float(info['ints'].get('WorldMappingWidth', 0)) or 3.25)
         # DecalSizeVariance is an absolute +/- on the size, in the same inches (0.5 on a 2.0-inch metal hole,
         # 1.25 on a 3.25-inch concrete one), so it converts to Hammer units the same way.
         write_vmt(os.path.join(args.out, 'materials', rel + '.vmt'), tex_out, info['surfaceprop'],

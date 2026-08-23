@@ -9,6 +9,17 @@ class USourceStudioModelComponent;
 class ULambdaMaterialLibrary;
 class ASourceBSPWorldActor;
 
+/** BLOOD_COLOR_* from shareddefs.h. */
+UENUM()
+enum class ESourceBloodColor : uint8
+{
+	DontBleed,
+	Red,
+	Yellow,
+	Green,
+	Mech
+};
+
 /** NPC_STATE_* from ai_npcstate.h, the subset a combat NPC moves through. */
 UENUM()
 enum class ESourceNPCState : uint8
@@ -51,6 +62,8 @@ public:
 	const FString& GetClassName() const { return Entity.ClassName; }
 	ESourceNPCState GetNPCState() const { return NPCState; }
 	float GetHealth() const { return Health; }
+	/** CBaseCombatCharacter::BloodColor. */
+	ESourceBloodColor GetBloodColor() const { return BloodColor; }
 	bool IsAlive() const { return NPCState != ESourceNPCState::Dead; }
 
 	// ---- CAI_BaseNPC-style helpers, all in UE space unless named "Units" ----
@@ -130,6 +143,8 @@ protected:
 	ESourceNPCState NPCState = ESourceNPCState::None;
 	float Health = 0.0f;
 	float MaxHealth = 0.0f;
+	/** SetBloodColor in Spawn. */
+	ESourceBloodColor BloodColor = ESourceBloodColor::Red;
 
 	/** m_flFieldOfView: cosine of the half-angle; 0.5 is 120 degrees. */
 	float FieldOfView = 0.5f;

@@ -290,7 +290,7 @@ void ALambdaWeapon::FireBullet(float Damage, const FVector& Spread)
 			*GetNameSafe(Hit.GetActor()), *Hit.ImpactPoint.ToString(), Damage);
 
 		// UTIL_ImpactTrace: the decal and impact sound come from the surface that was struck.
-		SourceImpact::PlayImpact(Hit, WeaponOwner->GetWorldMaterialLibrary(), this);
+		SourceImpact::PlayImpact(Hit, WeaponOwner->GetWorldMaterialLibrary(), this, Dir, Damage);
 
 		// Nothing in the map takes damage yet (no NPCs or breakables), so this is where TakeDamage would go.
 		if (AActor* HitActor = Hit.GetActor())

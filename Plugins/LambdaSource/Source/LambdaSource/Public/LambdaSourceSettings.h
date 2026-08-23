@@ -87,6 +87,10 @@ public:
 	UPROPERTY(config, EditAnywhere, Category = "Materials", meta = (AllowedClasses = "/Script/Engine.MaterialInterface"))
 	FSoftObjectPath SpriteMaterialNoZ;
 
+	/** Alpha-blended unlit sprite master, vertex-coloured, for UnlitGeneric $translucent effects (blood, dust, smoke). */
+	UPROPERTY(config, EditAnywhere, Category = "Materials", meta = (AllowedClasses = "/Script/Engine.MaterialInterface"))
+	FSoftObjectPath SpriteMaterialTranslucent;
+
 	// ---- Effects ----
 
 	/** Seconds a bullet-impact decal stays before it fades out (Source's r_decal_cullsize/decal lifetime analogue). */

@@ -192,7 +192,14 @@ void FSourceSoundScripts::LoadScriptFile(const FString& RelativePath)
 
 		if (Entry.Waves.Num() > 0)
 		{
-			Entries.Add(Entry.Name.ToLower(), MoveTemp(Entry));
+			// CSoundEmitterSystemBase::AddSoundsFromFile: a name already defined by an earlier manifest file is
+			// "duplicated, skipping" - the first definition wins, so a mod's script listed before the stock one
+			// overrides it. (Per-map level_sounds overrides are the exception; not ported.)
+			const FString Key = Entry.Name.ToLower();
+			if (!Entries.Contains(Key))
+			{
+				Entries.Add(Key, MoveTemp(Entry));
+			}
 		}
 	}
 }

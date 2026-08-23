@@ -74,7 +74,7 @@ public:
 	 * DistanceCm from the middle one, looking at it from AngleDeg off its normal - the same framing every run,
 	 * which is what tuning a decal's depth by screenshot needs (Source's setpos/setang serve the same purpose).
 	 */
-	void RunDecalTest(float DistanceCm, float AngleDeg, int32 Count = 3);
+	void RunDecalTest(float DistanceCm, float AngleDeg, int32 Count = 3, const FString& DecalName = FString());
 
 	USourceStudioModelComponent* GetViewModelMesh() const { return ViewModelMesh; }
 
@@ -126,6 +126,16 @@ protected:
 	float MuzzleFlashLightRadius = 0.0f;
 	float AutoCommandTimer = 0.0f;
 	bool bAutoCommandsRun = false;
+	// lambda.fire.auto state
+	int32 AutoFireShotsLeft = 0;
+	int32 AutoFireShotTaken = 0;
+	float AutoFireInterval = 0.6f;
+	float AutoFireTimer = 0.0f;
+	float AutoFireScreenshotTimer = 0.0f;
+	float AutoFireFinalTimer = 0.0f;
+	bool AutoFirePulse = false;
+	TWeakObjectPtr<AActor> AutoFireTarget;
+	float DecalTestScreenshotTimer = 0.0f;
 
 	/** Frames the flash is held visible regardless of its die time, so a sub-frame lifetime still renders once. */
 	int32 MuzzleFlashHoldFrames = 0;

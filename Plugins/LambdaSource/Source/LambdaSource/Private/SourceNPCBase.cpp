@@ -37,10 +37,17 @@ ASourceNPCBase::ASourceNPCBase(const FObjectInitializer& ObjectInitializer)
 	// Only a player controller may possess this; there is no AIController behind it.
 	AutoPossessAI = EAutoPossessAI::Disabled;
 
+	// UE's Pawn profile ignores the Visibility channel (so camera traces pass through pawns); our bullets trace that
+	// channel, and Source's MASK_SHOT most certainly hits NPCs. Block it.
+	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+
 	Model = CreateDefaultSubobject<USourceStudioModelComponent>(TEXT("StudioModel"));
 	Model->SetupAttachment(GetCapsuleComponent());
 	Model->SetMobility(EComponentMobility::Movable);
 	Model->SetCastShadow(true);
+	// World decals are projected boxes in UE and would paint the NPC standing in its own blood pool; Source's
+	// world decals live on the brush surface only (model decals are a separate system, not ported).
+	Model->SetReceivesDecals(false);
 
 	// Hide the placeholder skeletal mesh a character comes with; the studio model is the body.
 	if (USkeletalMeshComponent* Skel = GetMesh())

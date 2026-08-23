@@ -11,6 +11,7 @@ PATHS = [
     '/LambdaSource/Materials/M_LambdaBase',
     '/LambdaSource/Materials/M_LambdaSprite',
     '/LambdaSource/Materials/M_LambdaSpriteNoZ',
+    '/LambdaSource/Materials/M_LambdaSpriteTranslucent',
     '/LambdaSource/Materials/M_LambdaDecal',
 ]
 

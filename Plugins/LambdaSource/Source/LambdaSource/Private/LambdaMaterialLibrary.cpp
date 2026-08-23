@@ -78,6 +78,10 @@ void ULambdaMaterialLibrary::Initialize()
 	{
 		SpriteMasterMaterialNoZ = Cast<UMaterialInterface>(Settings.SpriteMaterialNoZ.TryLoad());
 	}
+	if (Settings.SpriteMaterialTranslucent.IsValid())
+	{
+		SpriteMasterMaterialTranslucent = Cast<UMaterialInterface>(Settings.SpriteMaterialTranslucent.TryLoad());
+	}
 	if (!FallbackMaterial)
 	{
 		FallbackMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/EngineMaterials/WorldGridMaterial.WorldGridMaterial"));
@@ -185,6 +189,8 @@ bool ULambdaMaterialLibrary::LoadMaterialInfo(const FString& SourceMaterialName,
 	OutInfo.bSelfIllum = Root.GetBool(TEXT("$selfillum"));
 	OutInfo.SurfaceProp = Root.GetString(TEXT("$surfaceprop"));
 	OutInfo.bIgnoreZ = Root.GetBool(TEXT("$ignorez"));
+	OutInfo.DecalScale = Root.GetFloat(TEXT("$decalscale"), 1.0f);
+	OutInfo.bAdditive = Root.GetBool(TEXT("$additive"));
 	OutInfo.BumpMap = NormalizeTextureName(Root.GetString(TEXT("$bumpmap")));
 	OutInfo.HeightMap = NormalizeTextureName(Root.GetString(TEXT("$heightmap")));
 	OutInfo.AOTexture = NormalizeTextureName(Root.GetString(TEXT("$aotexture")));
@@ -607,10 +613,13 @@ UMaterialInterface* ULambdaMaterialLibrary::GetDecalMaterial(const FString& Sour
 		FString SheetTexture;
 		FString TextureName;
 		FVector4 UVRect(0.0, 0.0, 1.0, 1.0);	// (offsetU, offsetV, scaleU, scaleV)
+		bool bModulate = false;			// DecalModulate (mod2x) rather than alpha-blended
+		float PlainDecalScale = 0.0f;	// > 0: a plain decal, sized texture width * $decalscale (Source)
 
 		if (LoadDecalSubrect(Name, Subrect, SheetTexture))
 		{
 			TextureName = SheetTexture;
+			bModulate = Subrect.bModulate;
 			OutSizeUnits = FMath::Max(Subrect.Size.X, Subrect.Size.Y) * Subrect.DecalScale;
 		}
 		else
@@ -620,32 +629,41 @@ UMaterialInterface* ULambdaMaterialLibrary::GetDecalMaterial(const FString& Sour
 			if (LoadMaterialInfo(Name, Info))
 			{
 				TextureName = Info.BaseTexture;
+				bModulate = Info.Shader.Equals(TEXT("DecalModulate"), ESearchCase::IgnoreCase);
+				PlainDecalScale = Info.DecalScale;
 
-				// A decal that brings its own normal, height and occlusion maps (Source 2 imports) is drawn by the
-				// PBR master: authored crater data instead of depth derived from a scorch mark's brightness.
-				if (DecalPBRMasterMaterial && !Info.HeightMap.IsEmpty())
+				// A decal that brings its own normal, height or occlusion maps (Source 2 imports) is drawn by the
+				// PBR master: authored crater data instead of depth derived from a scorch mark's brightness. A
+				// blood splat has normal and occlusion but no height - it is simply flat (HeightScale 0).
+				const bool bAuthored = !Info.HeightMap.IsEmpty() || !Info.BumpMap.IsEmpty() || !Info.AOTexture.IsEmpty();
+				if (DecalPBRMasterMaterial && bAuthored)
 				{
 					UTexture2D* Color = TextureName.IsEmpty() ? nullptr : GetTexture(TextureName, true);
 					UTexture2D* Normal = Info.BumpMap.IsEmpty() ? nullptr : GetTexture(Info.BumpMap, false);
-					UTexture2D* Height = GetTexture(Info.HeightMap, false);
+					UTexture2D* Height = Info.HeightMap.IsEmpty() ? nullptr : GetTexture(Info.HeightMap, false);
 					UTexture2D* AO = Info.AOTexture.IsEmpty() ? nullptr : GetTexture(Info.AOTexture, false);
-					if (Color && Height)
+					if (Color)
 					{
 						UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(DecalPBRMasterMaterial, this,
 							*FString::Printf(TEXT("DecalPBR_%s"), *Name.Replace(TEXT("/"), TEXT("_"))));
 						if (MID)
 						{
 							MID->SetTextureParameterValue(ULambdaSourceSettings::Get().BaseTextureParameterName, Color);
-							MID->SetTextureParameterValue(TEXT("HeightMap"), Height);
+							if (Height) { MID->SetTextureParameterValue(TEXT("HeightMap"), Height); }
 							if (Normal) { MID->SetTextureParameterValue(TEXT("NormalMap"), Normal); }
 							if (AO) { MID->SetTextureParameterValue(TEXT("AOMap"), AO); }
-							MID->SetScalarParameterValue(TEXT("HeightScale"),
-								Info.HeightMapScale * ULambdaSourceSettings::Get().DecalParallaxMultiplier * GDecalHeightScaleMultiplier);
-							MID->SetScalarParameterValue(TEXT("DecalDepth"), GDecalDepth);
+							MID->SetScalarParameterValue(TEXT("HeightScale"), Height
+								? Info.HeightMapScale * ULambdaSourceSettings::Get().DecalParallaxMultiplier * GDecalHeightScaleMultiplier
+								: 0.0f);
+							MID->SetScalarParameterValue(TEXT("DecalDepth"), Height ? GDecalDepth : 0.0f);
 							MID->SetScalarParameterValue(TEXT("FlipGreen"), GDecalFlipGreen);
 							if (Info.DecalSizeUnits > 0.0f)
 							{
 								OutSizeUnits = Info.DecalSizeUnits;
+							}
+							else if (Color->GetSizeX() > 0)
+							{
+								OutSizeUnits = Color->GetSizeX() * Info.DecalScale;
 							}
 							DecalCache.Add(Name, MID);
 							DecalSizeCache.Add(Name, OutSizeUnits);
@@ -654,14 +672,18 @@ UMaterialInterface* ULambdaMaterialLibrary::GetDecalMaterial(const FString& Sour
 						}
 					}
 				}
+				if (Info.DecalSizeUnits > 0.0f)
+				{
+					OutSizeUnits = Info.DecalSizeUnits;
+					PlainDecalScale = 0.0f;
+				}
 			}
 		}
 
 		// decalmodulate_dx9.cpp disables sRGB read and write - "keep everything in gamma space" - because mod2x
 		// is a gamma-space blend where raw 128 is neutral. Read as sRGB, that neutral grey decodes to 0.216 and
 		// the whole tile darkens the wall; the material converts the gamma factor to linear itself.
-		const bool bRawAtlas = !SheetTexture.IsEmpty() && Subrect.bModulate;
-		if (UTexture2D* Texture = TextureName.IsEmpty() ? nullptr : GetTexture(TextureName, !bRawAtlas))
+		if (UTexture2D* Texture = TextureName.IsEmpty() ? nullptr : GetTexture(TextureName, !bModulate))
 		{
 			if (Subrect.Size.X > 0.0 && Texture->GetSizeX() > 0 && Texture->GetSizeY() > 0 && !SheetTexture.IsEmpty())
 			{
@@ -670,9 +692,15 @@ UMaterialInterface* ULambdaMaterialLibrary::GetDecalMaterial(const FString& Sour
 				UVRect = FVector4(Subrect.Pos.X / SheetW, Subrect.Pos.Y / SheetH,
 					Subrect.Size.X / SheetW, Subrect.Size.Y / SheetH);
 			}
+			if (PlainDecalScale > 0.0f && Texture->GetSizeX() > 0)
+			{
+				// Source: a decal is its texture's mapping width times $decalscale, in world units.
+				OutSizeUnits = Texture->GetSizeX() * PlainDecalScale;
+			}
 
 			// The parallax and the normal come from a height tile cut from this decal's part of the atlas, so
 			// every decal in the group - concrete, metal, wood - gets its own shape, not one generic crater.
+			// A plain (non-atlas) decal has no height tile and stays flat.
 			UTexture2D* HeightMap = SheetTexture.IsEmpty() ? nullptr
 				: CreateDecalHeightTexture(Name, SheetTexture, Subrect, Subrect.bModulate);
 
@@ -687,9 +715,9 @@ UMaterialInterface* ULambdaMaterialLibrary::GetDecalMaterial(const FString& Sour
 				}
 				MID->SetVectorParameterValue(TEXT("UVRect"), FLinearColor(UVRect.X, UVRect.Y, UVRect.Z, UVRect.W));
 				// DecalModulate atlases carry their shape as brightness; translucent ones carry it in alpha.
-				MID->SetScalarParameterValue(TEXT("Modulate"), Subrect.bModulate ? 1.0f : 0.0f);
-				MID->SetScalarParameterValue(TEXT("DecalDepth"), GDecalDepth);
-				MID->SetScalarParameterValue(TEXT("NormalStrength"), GDecalNormalStrength);
+				MID->SetScalarParameterValue(TEXT("Modulate"), bModulate ? 1.0f : 0.0f);
+				MID->SetScalarParameterValue(TEXT("DecalDepth"), HeightMap ? GDecalDepth : 0.0f);
+				MID->SetScalarParameterValue(TEXT("NormalStrength"), HeightMap ? GDecalNormalStrength : 0.0f);
 				Result = MID;
 			}
 		}
@@ -716,13 +744,37 @@ UMaterialInterface* ULambdaMaterialLibrary::GetSpriteMaterial(const FString& Sou
 	UMaterialInterface* Result = nullptr;
 	if (SpriteMasterMaterial)
 	{
+		// Many effect sprites (effects/blood_gore, blood_drop, the dust and smoke puffs) are "Subrect" VMTs: a tile
+		// of the particle/particle_composite atlas. The atlas material supplies shader flags and texture, the
+		// subrect the UV rectangle.
 		FSourceMaterialInfo Info;
-		if (LoadMaterialInfo(Name, Info))
+		FSourceDecalSubrect Subrect;
+		FString SheetTexture;
+		bool bLoaded = false;
+		bool bIsSubrect = false;
+		if (LoadDecalSubrect(Name, Subrect, SheetTexture))
+		{
+			bIsSubrect = true;
+			bLoaded = LoadMaterialInfo(Subrect.SheetMaterial, Info);
+		}
+		else
+		{
+			bLoaded = LoadMaterialInfo(Name, Info);
+		}
+		if (bLoaded)
 		{
 			// "$ignorez 1" sprites draw without a depth test - Source uses them for the first-person muzzle
-			// flash so it is not occluded by the very view model it is attached to.
-			UMaterialInterface* Master = (Info.bIgnoreZ && SpriteMasterMaterialNoZ)
-				? SpriteMasterMaterialNoZ.Get() : SpriteMasterMaterial.Get();
+			// flash so it is not occluded by the very view model it is attached to. "$additive" picks the additive
+			// blend; a translucent sprite (blood, smoke, dust) alpha-blends and is tinted by vertex colour.
+			UMaterialInterface* Master = SpriteMasterMaterial.Get();
+			if (Info.bIgnoreZ && SpriteMasterMaterialNoZ)
+			{
+				Master = SpriteMasterMaterialNoZ.Get();
+			}
+			else if (!Info.bAdditive && SpriteMasterMaterialTranslucent)
+			{
+				Master = SpriteMasterMaterialTranslucent.Get();
+			}
 			if (UTexture2D* Texture = Info.BaseTexture.IsEmpty() ? nullptr : GetTexture(Info.BaseTexture))
 			{
 				UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(Master, this,
@@ -730,6 +782,12 @@ UMaterialInterface* ULambdaMaterialLibrary::GetSpriteMaterial(const FString& Sou
 				if (MID)
 				{
 					MID->SetTextureParameterValue(ULambdaSourceSettings::Get().BaseTextureParameterName, Texture);
+					if (bIsSubrect && Texture->GetSizeX() > 0 && Texture->GetSizeY() > 0)
+					{
+						const double SheetW = Texture->GetSizeX(), SheetH = Texture->GetSizeY();
+						MID->SetVectorParameterValue(TEXT("UVRect"), FLinearColor(
+							Subrect.Pos.X / SheetW, Subrect.Pos.Y / SheetH, Subrect.Size.X / SheetW, Subrect.Size.Y / SheetH));
+					}
 					Result = MID;
 				}
 			}
