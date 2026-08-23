@@ -1,0 +1,80 @@
+#pragma once
+
+#include "CoreMinimal.h"
+#include "UObject/Object.h"
+#include "LambdaMaterialLibrary.generated.h"
+
+class UMaterialInterface;
+class UMaterialInstanceDynamic;
+class UTexture2D;
+class FSourceVTFFile;
+struct FSourceKeyValues;
+
+/** Minimal description of a parsed VMT. */
+struct LAMBDASOURCE_API FSourceMaterialInfo
+{
+	FString Name;			// normalised material name, e.g. "dev/dev_measuregeneric01"
+	FString Shader;			// e.g. "LightmappedGeneric"
+	FString BaseTexture;	// normalised texture name (no extension), may be empty
+	FString BaseTexture2;	// WorldVertexTransition second layer
+	bool bTranslucent = false;
+	bool bAlphaTest = false;
+	bool bNoCull = false;
+	bool bSelfIllum = false;
+	bool bIsPatch = false;
+};
+
+/**
+ * Creates and caches UE materials/textures for Source material names (VMT + VTF) at runtime.
+ * One instance per loaded map (owned by the BSP world actor) so everything is released with the map.
+ */
+UCLASS()
+class LAMBDASOURCE_API ULambdaMaterialLibrary : public UObject
+{
+	GENERATED_BODY()
+
+public:
+	/** Loads the master/fallback materials from settings. Safe to call multiple times. */
+	void Initialize();
+
+	/** Returns a (cached) UE material for a Source material name ("dev/dev_measuregeneric01", "DEV/DEV_X", "materials/dev/x.vmt"...). Never null after Initialize. */
+	UMaterialInterface* GetMaterial(const FString& SourceMaterialName);
+
+	/** Returns a (cached) UE texture for a Source texture name ("dev/dev_measuregeneric01", "materials/dev/x.vtf"...). May be null. */
+	UTexture2D* GetTexture(const FString& SourceTextureName);
+
+	/** Parses a VMT (following "patch" includes). */
+	bool LoadMaterialInfo(const FString& SourceMaterialName, FSourceMaterialInfo& OutInfo, FString* OutError = nullptr, int32 Depth = 0);
+
+	UMaterialInterface* GetFallbackMaterial() const { return FallbackMaterial; }
+	UMaterialInterface* GetMasterMaterial() const { return MasterMaterial; }
+	int32 GetNumMaterials() const { return MaterialCache.Num(); }
+	int32 GetNumTextures() const { return TextureCache.Num(); }
+
+	/** Lower-case, forward slashes, no "materials/" prefix, no ".vmt". */
+	static FString NormalizeMaterialName(const FString& InName);
+	/** Lower-case, forward slashes, no "materials/" prefix, no ".vtf". */
+	static FString NormalizeTextureName(const FString& InName);
+
+	/** Builds a transient UTexture2D (with mip chain) from a parsed VTF. Returns null and sets OutError on failure. */
+	static UTexture2D* CreateTextureFromVTF(const FSourceVTFFile& VTF, const FString& DebugName, FString* OutError = nullptr);
+
+private:
+	UMaterialInterface* CreateMaterial(const FString& NormalizedName);
+	UTexture2D* CreateTexture(const FString& NormalizedName);
+	static void ApplyPatchBlock(const FSourceKeyValues* Block, FSourceKeyValues& Target, bool bInsertOnly);
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInterface> MasterMaterial;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInterface> FallbackMaterial;
+
+	UPROPERTY(Transient)
+	TMap<FString, TObjectPtr<UMaterialInterface>> MaterialCache;
+
+	UPROPERTY(Transient)
+	TMap<FString, TObjectPtr<UTexture2D>> TextureCache;
+
+	bool bInitialized = false;
+};
