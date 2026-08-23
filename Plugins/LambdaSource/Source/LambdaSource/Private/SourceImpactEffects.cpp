@@ -95,4 +95,58 @@ void PlayImpact(const FHitResult& Hit, ULambdaMaterialLibrary* Materials, UObjec
 		*Info.MaterialName, *Info.SurfaceProp, Info.GameMaterial, *DecalName);
 }
 
+void Precache(ULambdaMaterialLibrary* Materials, UObject* SoundOuter)
+{
+	const double Start = FPlatformTime::Seconds();
+
+	FSourceSurfaceProps& Props = FSourceSurfaceProps::Get();
+	FSourceDecalScript& Decals = FSourceDecalScript::Get();
+	Props.Initialize();
+	Decals.Initialize();
+
+	int32 NumDecals = 0, NumSounds = 0;
+	if (Materials)
+	{
+		// Every decal in every group, as CDecalEmitterSystem precaches them all rather than guessing which
+		// surfaces the player will shoot.
+		TArray<FString> DecalNames;
+		Decals.GetAllDecalMaterials(DecalNames);
+		for (const FString& DecalName : DecalNames)
+		{
+			float Size = 0.0f;
+			if (Materials->GetDecalMaterial(DecalName, Size))
+			{
+				++NumDecals;
+			}
+		}
+
+		// The bullet impact sound of every surface the loaded materials declare.
+		if (SoundOuter)
+		{
+			TArray<FString> MaterialNames;
+			Materials->GetMaterialNames(MaterialNames);
+			TSet<FString> Done;
+			for (const FString& MaterialName : MaterialNames)
+			{
+				const FString SurfaceProp = Materials->GetSurfaceProp(MaterialName);
+				const FSourceSurfaceProp* Prop = Props.Find(SurfaceProp);
+				if (!Prop) { Prop = Props.Find(TEXT("default")); }
+				if (!Prop || Prop->BulletImpactSound.IsEmpty() || Done.Contains(Prop->BulletImpactSound))
+				{
+					continue;
+				}
+				Done.Add(Prop->BulletImpactSound);
+				float Volume, Pitch;
+				if (FLambdaSoundCache::Get().CreateWaveResolved(SoundOuter, Prop->BulletImpactSound, false, Volume, Pitch))
+				{
+					++NumSounds;
+				}
+			}
+		}
+	}
+
+	UE_LOG(LogLambdaSource, Log, TEXT("Precached %d impact decals and %d impact sounds in %.0f ms"),
+		NumDecals, NumSounds, (FPlatformTime::Seconds() - Start) * 1000.0);
+}
+
 }	// namespace SourceImpact

@@ -151,3 +151,14 @@ FString FSourceDecalScript::GetImpactDecalMaterial(TCHAR GameMaterial) const
 	const FString Group = TranslateDecalForGameMaterial(ImpactConcrete, GameMaterial);
 	return Group.IsEmpty() ? FString() : PickDecalMaterial(Group);
 }
+
+void FSourceDecalScript::GetAllDecalMaterials(TArray<FString>& OutNames) const
+{
+	for (const auto& Pair : Groups)
+	{
+		for (const FSourceDecalEntry& Entry : Pair.Value)
+		{
+			OutNames.AddUnique(Entry.MaterialName);
+		}
+	}
+}

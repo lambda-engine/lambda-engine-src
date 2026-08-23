@@ -28,4 +28,11 @@ namespace SourceImpact
 	 * bullet impact sound. Does nothing for surfaces whose game material is '-' ("don't decal this surface").
 	 */
 	LAMBDASOURCE_API void PlayImpact(const FHitResult& Hit, ULambdaMaterialLibrary* Materials, UObject* SoundOuter);
+
+	/**
+	 * CDecalEmitterSystem::LevelInitPreEntity + the surface property precache: builds every impact decal material
+	 * (and its height tile) and decodes the bullet-impact sound of every surface the map's materials use, so the
+	 * first shot does not pay for all of it in one frame.
+	 */
+	LAMBDASOURCE_API void Precache(ULambdaMaterialLibrary* Materials, UObject* SoundOuter);
 }

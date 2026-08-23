@@ -52,6 +52,9 @@ public:
 
 	int32 NumGroups() const { return Groups.Num(); }
 
+	/** Every decal material name in every group, for precaching. */
+	void GetAllDecalMaterials(TArray<FString>& OutNames) const;
+
 private:
 	TMap<FString, TArray<FSourceDecalEntry>> Groups;	// keyed by lower-case group name ("impact.concrete")
 	TMap<TCHAR, FString> GameMaterialTranslation;		// 'M' -> "Impact.Metal"

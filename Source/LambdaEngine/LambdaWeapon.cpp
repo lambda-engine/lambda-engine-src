@@ -38,6 +38,14 @@ void ALambdaWeapon::InitializeFromScript(const FString& InClassName)
 	// CBaseCombatWeapon::Spawn gives the weapon a full clip.
 	Clip1 = WeaponInfo.ClipSize;
 
+	// CBaseCombatWeapon::Precache -> PrecacheScriptSound for every SoundData entry: decode them now rather than
+	// on the first shot.
+	for (const auto& Pair : WeaponInfo.Sounds)
+	{
+		float Volume, Pitch;
+		FLambdaSoundCache::Get().CreateWaveResolved(this, Pair.Value, false, Volume, Pitch);
+	}
+
 	UE_LOG(LogLambda, Log, TEXT("Weapon '%s': clip %d/%d, ammo '%s', single_shot '%s'"),
 		*WeaponInfo.ClassName, Clip1, WeaponInfo.ClipSize, *WeaponInfo.PrimaryAmmo, *WeaponInfo.GetSound(TEXT("single_shot")));
 }

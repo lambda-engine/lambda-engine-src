@@ -5,6 +5,7 @@
 #include "SourceKeyValues.h"
 #include "SourceVTFFile.h"
 #include "SourceDecalScript.h"
+#include "SourceDXTDecode.h"
 #include "Engine/Texture2D.h"
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -611,11 +612,20 @@ UMaterialInterface* ULambdaMaterialLibrary::GetDecalMaterial(const FString& Sour
 					Subrect.Size.X / SheetW, Subrect.Size.Y / SheetH);
 			}
 
+			// The parallax and the normal come from a height tile cut from this decal's part of the atlas, so
+			// every decal in the group - concrete, metal, wood - gets its own shape, not one generic crater.
+			UTexture2D* HeightMap = SheetTexture.IsEmpty() ? nullptr
+				: CreateDecalHeightTexture(Name, SheetTexture, Subrect, Subrect.bModulate);
+
 			UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(DecalMasterMaterial, this,
 				*FString::Printf(TEXT("Decal_%s"), *Name.Replace(TEXT("/"), TEXT("_"))));
 			if (MID)
 			{
 				MID->SetTextureParameterValue(ULambdaSourceSettings::Get().BaseTextureParameterName, Texture);
+				if (HeightMap)
+				{
+					MID->SetTextureParameterValue(TEXT("HeightMap"), HeightMap);
+				}
 				MID->SetVectorParameterValue(TEXT("UVRect"), FLinearColor(UVRect.X, UVRect.Y, UVRect.Z, UVRect.W));
 				// DecalModulate atlases carry their shape as brightness; translucent ones carry it in alpha.
 				MID->SetScalarParameterValue(TEXT("Modulate"), Subrect.bModulate ? 1.0f : 0.0f);
@@ -673,5 +683,160 @@ UMaterialInterface* ULambdaMaterialLibrary::GetSpriteMaterial(const FString& Sou
 			*Name, *GetNameSafe(SpriteMasterMaterial));
 	}
 	SpriteCache.Add(Name, Result);
+	return Result;
+}
+
+void ULambdaMaterialLibrary::GetMaterialNames(TArray<FString>& OutNames) const
+{
+	MaterialCache.GetKeys(OutNames);
+}
+
+UTexture2D* ULambdaMaterialLibrary::CreateDecalHeightTexture(const FString& NormalizedName, const FString& SheetTexture,
+	const FSourceDecalSubrect& Subrect, bool bModulate)
+{
+	if (TObjectPtr<UTexture2D>* Found = DecalHeightCache.Find(NormalizedName))
+	{
+		return Found->Get();
+	}
+
+	UTexture2D* Result = nullptr;
+
+	TArray<uint8> Bytes;
+	FSourceVTFFile VTF;
+	TArray<FColor> Pixels;
+	int32 SheetW = 0, SheetH = 0;
+	if (FLambdaFileSystem::Get().ReadFile(FString::Printf(TEXT("materials/%s.vtf"), *SheetTexture), Bytes)
+		&& VTF.Load(MoveTemp(Bytes))
+		&& SourceDXT::DecodeToRGBA(VTF, 0, Pixels, SheetW, SheetH))
+	{
+		const int32 X0 = FMath::Clamp((int32)Subrect.Pos.X, 0, SheetW - 1);
+		const int32 Y0 = FMath::Clamp((int32)Subrect.Pos.Y, 0, SheetH - 1);
+		const int32 W = FMath::Clamp((int32)Subrect.Size.X, 1, SheetW - X0);
+		const int32 H = FMath::Clamp((int32)Subrect.Size.Y, 1, SheetH - Y0);
+
+		// Depth in 0..1: a mod2x tile's darkness (raw 128 is neutral, so depth = 1 - saturate(2 * luma)), or a
+		// translucent tile's alpha.
+		TArray<float> Depth;
+		Depth.SetNumZeroed(W * H);
+		for (int32 y = 0; y < H; ++y)
+		{
+			for (int32 x = 0; x < W; ++x)
+			{
+				const FColor& C = Pixels[(Y0 + y) * SheetW + (X0 + x)];
+				float D;
+				if (bModulate)
+				{
+					const float Luma = (0.30f * C.R + 0.59f * C.G + 0.11f * C.B) / 255.0f;
+					D = 1.0f - FMath::Clamp(2.0f * Luma, 0.0f, 1.0f);
+				}
+				else
+				{
+					D = C.A / 255.0f;
+				}
+				Depth[y * W + x] = D;
+			}
+		}
+
+		// Two passes of a 3x3 box blur: the atlas is a painted scorch mark, and as a height field its hard
+		// texel edges would read as a pit with vertical walls rather than a crater with a rim.
+		for (int32 Pass = 0; Pass < 2; ++Pass)
+		{
+			TArray<float> Blurred;
+			Blurred.SetNumZeroed(W * H);
+			for (int32 y = 0; y < H; ++y)
+			{
+				for (int32 x = 0; x < W; ++x)
+				{
+					float Sum = 0.0f;
+					for (int32 dy = -1; dy <= 1; ++dy)
+					{
+						for (int32 dx = -1; dx <= 1; ++dx)
+						{
+							const int32 SX = FMath::Clamp(x + dx, 0, W - 1);
+							const int32 SY = FMath::Clamp(y + dy, 0, H - 1);
+							Sum += Depth[SY * W + SX];
+						}
+					}
+					Blurred[y * W + x] = Sum / 9.0f;
+				}
+			}
+			Depth = MoveTemp(Blurred);
+		}
+
+		// Stored as height: white is the undisturbed surface, which is what the POM reference plane sits at.
+		UTexture2D* Texture = UTexture2D::CreateTransient(W, H, PF_G8, NAME_None);
+		if (Texture)
+		{
+			Texture->SRGB = false;
+			Texture->NeverStream = true;
+			Texture->Filter = TF_Trilinear;
+			Texture->AddressX = TA_Clamp;
+			Texture->AddressY = TA_Clamp;
+			Texture->CompressionSettings = TC_Grayscale;
+
+			// A full mip chain, so a hole seen from across the room minifies to a soft dot instead of aliasing
+			// into a scratchy smudge. Each level is a 2x2 box average of the one above.
+			TArray<uint8> Level;
+			Level.SetNumUninitialized(W * H);
+			for (int32 i = 0; i < W * H; ++i)
+			{
+				Level[i] = (uint8)FMath::RoundToInt((1.0f - FMath::Clamp(Depth[i], 0.0f, 1.0f)) * 255.0f);
+			}
+
+			FTexturePlatformData* PlatformData = Texture->GetPlatformData();
+			int32 LevelW = W, LevelH = H;
+			for (int32 MipLevel = 0; ; ++MipLevel)
+			{
+				FTexture2DMipMap* Mip;
+				if (MipLevel == 0)
+				{
+					Mip = &PlatformData->Mips[0];
+				}
+				else
+				{
+					Mip = new FTexture2DMipMap(LevelW, LevelH);
+					PlatformData->Mips.Add(Mip);
+					Mip->BulkData.Lock(LOCK_READ_WRITE);
+					Mip->BulkData.Realloc((int64)LevelW * LevelH);
+					Mip->BulkData.Unlock();
+				}
+				uint8* Dst = (uint8*)Mip->BulkData.Lock(LOCK_READ_WRITE);
+				FMemory::Memcpy(Dst, Level.GetData(), LevelW * LevelH);
+				Mip->BulkData.Unlock();
+
+				if (LevelW == 1 && LevelH == 1)
+				{
+					break;
+				}
+				const int32 NextW = FMath::Max(1, LevelW / 2);
+				const int32 NextH = FMath::Max(1, LevelH / 2);
+				TArray<uint8> Next;
+				Next.SetNumUninitialized(NextW * NextH);
+				for (int32 y = 0; y < NextH; ++y)
+				{
+					for (int32 x = 0; x < NextW; ++x)
+					{
+						const int32 SX0 = FMath::Min(x * 2, LevelW - 1), SX1 = FMath::Min(x * 2 + 1, LevelW - 1);
+						const int32 SY0 = FMath::Min(y * 2, LevelH - 1), SY1 = FMath::Min(y * 2 + 1, LevelH - 1);
+						const int32 Sum = Level[SY0 * LevelW + SX0] + Level[SY0 * LevelW + SX1]
+							+ Level[SY1 * LevelW + SX0] + Level[SY1 * LevelW + SX1];
+						Next[y * NextW + x] = (uint8)((Sum + 2) / 4);
+					}
+				}
+				Level = MoveTemp(Next);
+				LevelW = NextW;
+				LevelH = NextH;
+			}
+			PlatformData->SetNumSlices(1);
+			Texture->UpdateResource();
+			Result = Texture;
+		}
+	}
+	else
+	{
+		UE_LOG(LogLambdaSource, Warning, TEXT("Decal '%s': could not decode atlas '%s' for its height tile"), *NormalizedName, *SheetTexture);
+	}
+
+	DecalHeightCache.Add(NormalizedName, Result);
 	return Result;
 }

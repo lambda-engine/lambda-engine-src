@@ -64,6 +64,9 @@ public:
 	/** Builds an additive unlit sprite material (muzzle flashes and other UnlitGeneric $additive effects). */
 	UMaterialInterface* GetSpriteMaterial(const FString& SourceMaterialName);
 
+	/** Names of every material created so far (normalised), for precaching what goes with them. */
+	void GetMaterialNames(TArray<FString>& OutNames) const;
+
 	UMaterialInterface* GetFallbackMaterial() const { return FallbackMaterial; }
 	UMaterialInterface* GetMasterMaterial() const { return MasterMaterial; }
 	int32 GetNumMaterials() const { return MaterialCache.Num(); }
@@ -81,6 +84,14 @@ private:
 	UMaterialInterface* CreateMaterial(const FString& NormalizedName);
 	/** Reads a "Subrect" VMT and the atlas material it references. */
 	bool LoadDecalSubrect(const FString& NormalizedName, struct FSourceDecalSubrect& OutSubrect, FString& OutSheetTexture);
+
+	/**
+	 * Builds the single-channel height tile a decal's parallax and normal are driven from: the decal's own tile
+	 * of the atlas, decoded on the CPU, turned into depth (a DecalModulate tile's darkness, a translucent
+	 * tile's alpha) and lightly smoothed. White is the undisturbed surface, dark is deep.
+	 */
+	UTexture2D* CreateDecalHeightTexture(const FString& NormalizedName, const FString& SheetTexture,
+		const struct FSourceDecalSubrect& Subrect, bool bModulate);
 	UTexture2D* CreateTexture(const FString& NormalizedName, bool bSRGB);
 	static void ApplyPatchBlock(const FSourceKeyValues* Block, FSourceKeyValues& Target, bool bInsertOnly);
 
@@ -107,6 +118,9 @@ private:
 
 	/** Decal world size in Hammer units, keyed the same way as DecalCache. */
 	TMap<FString, float> DecalSizeCache;
+
+	UPROPERTY(Transient)
+	TMap<FString, TObjectPtr<UTexture2D>> DecalHeightCache;
 
 	/** $surfaceprop per material name, so a bullet impact does not re-parse the VMT every shot. */
 	TMap<FString, FString> SurfacePropCache;

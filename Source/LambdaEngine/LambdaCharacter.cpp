@@ -456,6 +456,12 @@ bool ALambdaCharacter::SetViewModel(const FString& ModelPath)
 	ViewModelMesh->SetRelativeRotation(Settings.ViewModelRotation);
 	ViewModelMesh->SetRelativeLocation(Settings.ViewModelOffset);
 
+	// CTempEnts::CacheMuzzleFlashes: build the flash materials with the weapon, not on its first shot.
+	for (int32 i = 1; i <= 4; ++i)
+	{
+		ViewModelMaterials->GetSpriteMaterial(FString::Printf(TEXT("effects/muzzleflash%d_noz"), i));
+	}
+
 	// ACT_VM_DRAW is what Source plays when a weapon is deployed; it settles into the idle pose at its end.
 	if (!SendViewModelAnim(TEXT("ACT_VM_DRAW")))
 	{

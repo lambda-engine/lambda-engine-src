@@ -1,4 +1,5 @@
 #include "SourceBSPWorldActor.h"
+#include "SourceImpactEffects.h"
 #include "LambdaFileSystem.h"
 #include "LambdaMaterialLibrary.h"
 #include "LambdaSourceModule.h"
@@ -97,6 +98,10 @@ bool ASourceBSPWorldActor::LoadBSPFile(const FString& RelativePath)
 
 	BuildWorldGeometry();
 	SpawnEntities();
+
+	// Source precaches decals in LevelInitPreEntity and impact sounds with the surface properties; doing it here
+	// keeps the first shot from building all of it inside one frame.
+	SourceImpact::Precache(MaterialLibrary, this);
 
 	Stats.NumMaterials = MaterialLibrary->GetNumMaterials();
 	Stats.NumTextures = MaterialLibrary->GetNumTextures();
