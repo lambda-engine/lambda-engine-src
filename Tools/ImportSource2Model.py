@@ -440,7 +440,7 @@ def main():
             def vline(v):
                 p = pos_to_source(list(pos[v]))
                 nn = m_vec(PERM, list(nrm[v]))
-                u, vv = uv[v]
+                u, vv = uv[v]  # SMD's V axis points up; studiomdl flips it back to the top-left origin
                 wmap = {}
                 for k in range(4):
                     if we[v][k] > 0.001:

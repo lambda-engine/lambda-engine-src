@@ -1,7 +1,7 @@
 {
   "comment": "Conversion profile for HL:A models/creatures/zombie_classic -> Source 1 MDL (Tools/ImportSource2Model.py). Sequences map HL:A animations onto the HL2 activities npc_zombie drives; events come from the vmdl's own AnimEvents. Joint limits are authored here because HL:A's compiled physics joints are not exported.",
   "meshes": [
-    "zombie_classic_v2_a"
+    "zombie_classic_v2_b"
   ],
   "bodygroups": [
     {
