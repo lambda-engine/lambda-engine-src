@@ -634,7 +634,10 @@ def main():
         fn = f'anims/{seq["name"]}.smd'
         os.makedirs(os.path.join(work, 'anims'), exist_ok=True)
         frames, steps = write_animation(seq, os.path.join(work, fn))
-        opts = [f'"{fn}"', f'activity {seq["activity"]} {seq.get("weight", 1)}', f'fps {int(FPS)}']
+        # studiomdl rotates animation SMDs by +90 degrees of yaw (SMD animations are authored facing +Y, models
+        # face +X); the reference SMD is left alone. Measured on this model: every animated bone came out yawed
+        # +90 against the file. "rotate -90" takes it back.
+        opts = [f'"{fn}"', f'activity {seq["activity"]} {seq.get("weight", 1)}', f'fps {int(FPS)}', 'rotate -90']
         if seq.get('loop'):
             opts.append('loop')
         if seq.get('motion'):
