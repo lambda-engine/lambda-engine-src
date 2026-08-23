@@ -5,6 +5,8 @@
 #include "LambdaCharacter.generated.h"
 
 class UCameraComponent;
+class UProceduralMeshComponent;
+class ULambdaMaterialLibrary;
 class ALambdaWeapon;
 class UInputAction;
 class UInputMappingContext;
@@ -46,6 +48,10 @@ public:
 	int32 GiveAmmo(const FString& AmmoType, int32 Count);
 	void RemoveAmmo(const FString& AmmoType, int32 Count);
 
+	/** Builds the first-person view model from a Source .mdl and shows it on the camera. */
+	UFUNCTION(BlueprintCallable, Category = "Lambda")
+	bool SetViewModel(const FString& ModelPath);
+
 	UFUNCTION(BlueprintPure, Category = "Lambda") float GetHealth() const { return Health; }
 	UFUNCTION(BlueprintPure, Category = "Lambda") float GetArmor() const { return Armor; }
 
@@ -72,6 +78,13 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Lambda")
 	TObjectPtr<UCameraComponent> FirstPersonCamera;
+
+	/** The first-person weapon model, parented to the camera. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Lambda")
+	TObjectPtr<UProceduralMeshComponent> ViewModelMesh;
+
+	UPROPERTY(Transient)
+	TObjectPtr<ULambdaMaterialLibrary> ViewModelMaterials;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UInputMappingContext> MappingContext;

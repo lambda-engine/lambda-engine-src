@@ -93,6 +93,24 @@ public:
 	UPROPERTY(config, EditAnywhere, Category = "Lighting", meta = (UIMin = "-5.0", UIMax = "5.0"))
 	float ExposureBias = 0.0f;
 
+	// ---- View model ----
+
+	/**
+	 * Where the first-person weapon model sits relative to the camera, in centimetres (forward, right, up).
+	 * Source positions the view model through its idle animation; until sequence decoding exists we place the
+	 * model's reference pose here instead, so this is a presentation setting rather than a ported value.
+	 */
+	UPROPERTY(config, EditAnywhere, Category = "View Model")
+	FVector ViewModelOffset = FVector(38.0, 12.0, -14.0);
+
+	/** Extra yaw/pitch/roll applied to the view model, for models whose reference pose is not facing forward. */
+	UPROPERTY(config, EditAnywhere, Category = "View Model")
+	FRotator ViewModelRotation = FRotator(0.0f, 0.0f, 0.0f);
+
+	/** Uniform scale on the view model. */
+	UPROPERTY(config, EditAnywhere, Category = "View Model", meta = (ClampMin = "0.01"))
+	float ViewModelScale = 1.0f;
+
 	// ---- Player (Hammer units; HL2 defaults) ----
 
 	UPROPERTY(config, EditAnywhere, Category = "Player", meta = (ClampMin = "1.0"))

@@ -14,6 +14,8 @@ public class LambdaEngine : ModuleRules
 			"InputCore",
 			"EnhancedInput",
 			"EngineSettings",
+			// The view model is a procedural mesh built from a Source .mdl at runtime.
+			"ProceduralMeshComponent",
 			"LambdaSource"
 		});
 

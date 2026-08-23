@@ -20,6 +20,11 @@
 #include "Engine/HitResult.h"
 #include "LambdaWeapon.h"
 #include "SourceAmmoDef.h"
+#include "SourceMDLFile.h"
+#include "SourceGeometryBuilder.h"
+#include "LambdaMaterialLibrary.h"
+#include "LambdaSourceSettings.h"
+#include "ProceduralMeshComponent.h"
 #include "Engine/World.h"
 
 ALambdaCharacter::ALambdaCharacter()
@@ -45,6 +50,14 @@ ALambdaCharacter::ALambdaCharacter()
 	FirstPersonCamera->SetRelativeLocation(FVector(0.0f, 0.0f, EyeHeightCm - HalfHeightCm));
 	FirstPersonCamera->bUsePawnControlRotation = true;
 	FirstPersonCamera->FieldOfView = 90.0f;
+
+	// Source draws the view model with its own narrower FOV (viewmodel_fov 54) so it does not distort at the edges.
+	ViewModelMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("ViewModel"));
+	ViewModelMesh->SetupAttachment(FirstPersonCamera);
+	ViewModelMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	ViewModelMesh->SetCastShadow(false);
+	ViewModelMesh->bUseComplexAsSimpleCollision = false;
+	ViewModelMesh->SetMobility(EComponentMobility::Movable);
 
 	// No visible body for the POC.
 	if (USkeletalMeshComponent* MeshComp = GetMesh())
@@ -370,7 +383,66 @@ ALambdaWeapon* ALambdaCharacter::GiveWeapon(const FString& WeaponClassName)
 		ActiveWeapon->Destroy();
 	}
 	ActiveWeapon = Weapon;
+
+	// Show the weapon's view model (models/weapons/v_pistol.mdl and friends, from the weapon script).
+	SetViewModel(Weapon->GetWeaponInfo().ViewModel);
+
 	return Weapon;
+}
+
+
+bool ALambdaCharacter::SetViewModel(const FString& ModelPath)
+{
+	if (!ViewModelMesh)
+	{
+		return false;
+	}
+	if (ModelPath.IsEmpty())
+	{
+		ViewModelMesh->ClearAllMeshSections();
+		return true;
+	}
+
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+	FSourceMDLFile Model;
+	FString Error;
+	if (!Model.Load(ModelPath, Scale, &Error))
+	{
+		UE_LOG(LogLambda, Warning, TEXT("View model '%s': %s"), *ModelPath, *Error);
+		return false;
+	}
+
+	if (!ViewModelMaterials)
+	{
+		ViewModelMaterials = NewObject<ULambdaMaterialLibrary>(this);
+		ViewModelMaterials->Initialize();
+	}
+	SourceGeometry::ApplyToComponent(ViewModelMesh, Model.Sections, ViewModelMaterials);
+
+	// A view model's in-game position comes from its idle animation, which needs sequence decoding we do not have
+	// yet - the .vvd holds only the reference pose, which for v_pistol sits about a metre above the eye. Until then,
+	// centre the model on a configurable camera-relative offset so it reads as a held weapon.
+	FBox Bounds(ForceInit);
+	for (const FSourceMeshSection& Section : Model.Sections)
+	{
+		for (const FVector& V : Section.Vertices)
+		{
+			Bounds += V;
+		}
+	}
+
+	const ULambdaSourceSettings& Settings = ULambdaSourceSettings::Get();
+	const FVector Centre = Bounds.IsValid ? Bounds.GetCenter() : FVector::ZeroVector;
+	ViewModelMesh->SetRelativeScale3D(FVector(Settings.ViewModelScale));
+	ViewModelMesh->SetRelativeRotation(Settings.ViewModelRotation);
+	// The component rotates about its own origin, not about the mesh, so the centre-cancelling offset has to be
+	// rotated too - otherwise any non-zero ViewModelRotation swings the model away from the camera.
+	const FVector ScaledCentre = Settings.ViewModelRotation.RotateVector(Centre * Settings.ViewModelScale);
+	ViewModelMesh->SetRelativeLocation(Settings.ViewModelOffset - ScaledCentre);
+
+	UE_LOG(LogLambda, Log, TEXT("View model '%s': %d tris, bounds %s, placed at %s"),
+		*ModelPath, Model.GetNumTriangles(), *Bounds.GetSize().ToString(), *ViewModelMesh->GetRelativeLocation().ToString());
+	return true;
 }
 
 int32 ALambdaCharacter::GetAmmoCount(const FString& AmmoType) const

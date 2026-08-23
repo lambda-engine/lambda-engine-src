@@ -187,3 +187,24 @@ static FAutoConsoleCommandWithWorldAndArgs GLambdaGiveAmmoCommand(
 	TEXT("lambda.giveammo"),
 	TEXT("Give the player ammo: lambda.giveammo <ammotype> <count>"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaGiveAmmoCommand));
+
+// lambda.viewmodel <models/path.mdl> - load any Source model as the view model, for checking MDL support
+static void LambdaViewModelCommand(const TArray<FString>& Args, UWorld* World)
+{
+	if (!World || Args.Num() < 1)
+	{
+		UE_LOG(LogLambda, Display, TEXT("Usage: lambda.viewmodel <models/weapons/v_pistol.mdl>"));
+		return;
+	}
+	APlayerController* PC = World->GetFirstPlayerController();
+	ALambdaCharacter* Player = PC ? Cast<ALambdaCharacter>(PC->GetPawn()) : nullptr;
+	if (Player)
+	{
+		UE_LOG(LogLambda, Display, TEXT("viewmodel %s: %s"), *Args[0], Player->SetViewModel(Args[0]) ? TEXT("ok") : TEXT("failed"));
+	}
+}
+
+static FAutoConsoleCommandWithWorldAndArgs GLambdaViewModelCommand(
+	TEXT("lambda.viewmodel"),
+	TEXT("Load a Source .mdl as the first-person view model"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaViewModelCommand));
