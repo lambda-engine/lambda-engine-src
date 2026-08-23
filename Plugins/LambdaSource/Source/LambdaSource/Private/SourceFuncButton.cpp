@@ -69,16 +69,17 @@ void ASourceFuncButton::InitializeFromEntity(const FSourceBSPFile& Map, int32 Mo
 
 	// m_vecPosition2 = m_vecPosition1 + movedir * (|movedir . OBBSize| - lip)
 	// The brush mesh is built around the entity origin, so its local bounds are the OBB, in UE units.
+	// Source computes this from CollisionProp()->OBBSize() and then subtracts 2, because its model loader grows
+	// brush-model bounds by 1 in every direction (Mod_LoadSubmodels). Our mesh bounds come straight from the BSP
+	// geometry and are never grown, so they already equal Source's (OBBSize - 2) and must not be shrunk again.
 	const float Scale = ULambdaSourceSettings::Get().UnitScale;
 	const FVector LocalSizeUE = LocalBounds.GetSize();
-	FVector3f OBBSize(
+	const FVector3f OBBSize(
 		(float)FMath::Abs(LocalSizeUE.X) / Scale,
 		(float)FMath::Abs(LocalSizeUE.Y) / Scale,
 		(float)FMath::Abs(LocalSizeUE.Z) / Scale);
 
-	// "Subtract 2 from size because the engine expands bboxes by 1 in all directions making the size too big"
-	OBBSize -= FVector3f(2.0f, 2.0f, 2.0f);
-
+	// DotProductAbs( m_vecMoveDir, vecButtonOBB )
 	const float MoveAmount = FMath::Abs(MoveDir.X * OBBSize.X) + FMath::Abs(MoveDir.Y * OBBSize.Y) + FMath::Abs(MoveDir.Z * OBBSize.Z);
 	Position2 = Position1 + MoveDir * (MoveAmount - Lip);
 
