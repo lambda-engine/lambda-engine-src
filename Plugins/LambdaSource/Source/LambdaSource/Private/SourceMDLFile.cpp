@@ -55,6 +55,8 @@ namespace
 
 		constexpr int32 OFF_HULLMIN = 104, OFF_HULLMAX = 116;
 		constexpr int32 OFF_SURFACEPROPINDEX = 308;
+		// studiohdr_t::KeyValueText - the model's own keyvalues, which is where prop_data lives.
+		constexpr int32 OFF_KEYVALUEINDEX = 312, OFF_KEYVALUESIZE = 316;
 		constexpr int32 OFF_SZANIMBLOCKNAMEINDEX = 348, OFF_NUMANIMBLOCKS = 352, OFF_ANIMBLOCKINDEX = 356;
 		constexpr int32 SIZE_ANIMBLOCK = 8;		// mstudioanimblock_t: datastart, dataend
 		constexpr int32 SIZE_ANIMSECTION = 8;	// mstudioanimsections_t: animblock, animindex
@@ -514,6 +516,14 @@ bool FSourceMDLFile::Load(const FString& RelativeModelPath, float Scale, FString
 	ReadAttachments(Mdl);
 
 	SurfaceProp = ReadCString(Mdl, ReadInt(Mdl, MDL::OFF_SURFACEPROPINDEX));
+
+	// The keyvalue text is a plain KeyValues block: "mdlkeyvalue { prop_data { ... } }".
+	const int32 KeyValueIndex = ReadInt(Mdl, MDL::OFF_KEYVALUEINDEX);
+	const int32 KeyValueSize = ReadInt(Mdl, MDL::OFF_KEYVALUESIZE);
+	if (KeyValueSize > 0 && KeyValueIndex > 0 && KeyValueIndex + KeyValueSize <= Mdl.Num())
+	{
+		KeyValueText = ReadCString(Mdl, KeyValueIndex);
+	}
 	HullMin = ReadVec3(Mdl, MDL::OFF_HULLMIN);
 	HullMax = ReadVec3(Mdl, MDL::OFF_HULLMAX);
 

@@ -3,6 +3,8 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "SourceBSPFile.h"
+#include "SourcePHYFile.h"
+#include "SourcePropData.h"
 #include "SourcePropPhysics.generated.h"
 
 class USourceStudioModelComponent;
@@ -15,8 +17,10 @@ class ULambdaMaterialLibrary;
  * is what decides the sound and decal a bullet leaves on it. Shooting it pushes it (VPhysicsTakeDamage), and the
  * player can pick it up, carry it and throw it with +USE (CPlayerPickupController).
  *
- * Not ported: prop_data (breakable props, their health, gibs and interactions), physics damage from collisions,
- * motion disabling and the constraint spawnflags.
+ * Its prop_data decides how much damage it takes before it comes apart and what it leaves behind: the pieces the
+ * model's own .phy names, or a handful of generic chunks from propdata.txt when it names none.
+ *
+ * Not ported: prop_data's interaction sections, damage from physics collisions, and explosive props.
  */
 UCLASS()
 class LAMBDASOURCE_API ASourcePropPhysics : public AActor
@@ -26,10 +30,23 @@ class LAMBDASOURCE_API ASourcePropPhysics : public AActor
 public:
 	ASourcePropPhysics(const FObjectInitializer& ObjectInitializer);
 
-	/** Reads the keyvalues ("model", "origin", "angles", "massscale") and builds the body. Destroys itself on failure. */
-	void InitializeFromEntity(const FSourceEntity& InEntity, ULambdaMaterialLibrary* Materials);
+	/**
+	 * Reads the keyvalues ("model", "origin", "angles", "massscale") and builds the body. Destroys itself on
+	 * failure. bPlaceClearOfWorld sets the prop down out of whatever it starts inside of, which is right for a
+	 * prop the mapper placed but not for a piece of one that has just broken where it stood.
+	 */
+	void InitializeFromEntity(const FSourceEntity& InEntity, ULambdaMaterialLibrary* Materials, bool bPlaceClearOfWorld = true);
 
 	static bool IsPropClass(const FString& ClassName);
+
+	/** Builds one piece of a broken prop: BreakModelCreateSingle. */
+	void InitializeAsGib(const FString& ModelPath, ULambdaMaterialLibrary* Materials, const FTransform& Where,
+		const FVector& Velocity, const FVector& AngularVelocity, float FadeTime);
+
+	/** CBreakableProp::Break: the prop comes apart, leaves its pieces behind and is removed. */
+	void Break(AActor* Breaker);
+	/** Whether this prop has the health to come apart at all. */
+	bool IsBreakable() const { return PropData.IsBreakable(); }
 
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void BeginPlay() override;
@@ -60,6 +77,9 @@ public:
 private:
 	/** CreatePhysicsProp: sets the prop down clear of whatever it is starting inside of, before physics runs. */
 	void PlaceClearOfWorld(const FVector3f& HullMin, const FVector3f& HullMax, float Scale);
+	/** BreakModelCreateSingle: one piece of a prop that has just broken. */
+	bool SpawnGib(const FString& ModelName, const FTransform& Where, const FVector& Velocity,
+		const FVector& AngularVelocity, float FadeTime, bool bMotionDisabled);
 
 public:
 
@@ -90,6 +110,17 @@ private:
 	TObjectPtr<ULambdaMaterialLibrary> MaterialLibrary;
 
 	TWeakObjectPtr<APawn> Carrier;
+	/** What this model's prop_data says about taking damage and breaking. */
+	FSourcePropDataEntry PropData;
+	/** The pieces this model breaks into, from its .phy. */
+	TArray<FSourcePHYBreak> BreakPieces;
+	/** m_iHealth: what is left before it breaks. */
+	float Health = 0.0f;
+	/** How far up a chunk list this prop's size lets it reach (SetMaxBreakableSize). */
+	int32 MaxBreakableSize = -1;
+	/** A gib is taken away when its fade time runs out. */
+	float FadeOutTime = 0.0f;
+	bool bBreaking = false;
 	/** When the prop last made an impact noise: Source will not play them closer together than 0.05s. */
 	float LastImpactSoundTime = 0.0f;
 	/**

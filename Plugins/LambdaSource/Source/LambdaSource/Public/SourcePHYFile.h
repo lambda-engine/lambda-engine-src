@@ -6,6 +6,26 @@
  * One "solid" of a .phy: a vphysics collision object attached to a bone - its convex hulls (in bone space, UE
  * units and UE axes) plus the keyvalues studiomdl wrote for it ($collisionjoints: mass, damping, surfaceprop).
  */
+/**
+ * One "break" block from the .phy text section: a piece this model comes apart into (props_shared.cpp's
+ * breakmodel_t, as read by CBreakParser). A crate names its own chunks this way.
+ */
+struct LAMBDASOURCE_API FSourcePHYBreak
+{
+	FString ModelName;				// "props_junk/wood_crate001a_Chunk01" (no extension)
+	/** Where the piece sits relative to the prop, in UE cm/axes. */
+	FVector Offset = FVector::ZeroVector;
+	float FadeTime = 0.0f;			// seconds before the piece is taken away; 0 means it stays
+	float Health = 1.0f;
+	/** How hard the piece is thrown out from the middle when it is created. */
+	float BurstScale = 0.0f;
+	bool bIsRagdoll = false;
+	bool bMotionDisabled = false;
+	/** "placementbone"/"placementattachment": where on the parent the piece starts. */
+	FString PlacementName;
+	bool bPlacementIsBone = false;
+};
+
 struct LAMBDASOURCE_API FSourcePHYSolid
 {
 	int32 Index = 0;
@@ -50,6 +70,8 @@ public:
 
 	bool IsLoaded() const { return bLoaded; }
 	const TArray<FSourcePHYSolid>& GetSolids() const { return Solids; }
+	/** BreakModelList: the pieces this model breaks into, in the order the .phy lists them. */
+	const TArray<FSourcePHYBreak>& GetBreaks() const { return Breaks; }
 	const TArray<FSourcePHYConstraint>& GetConstraints() const { return Constraints; }
 	bool AllowsSelfCollisions() const { return bSelfCollisions; }
 	float GetTotalMass() const;
@@ -58,9 +80,10 @@ public:
 
 private:
 	bool ParseBinary(const TArray<uint8>& Bytes, float Scale, int32& OutTextOffset, FString* OutError);
-	bool ParseText(const TArray<uint8>& Bytes, int32 TextOffset, FString* OutError);
+	bool ParseText(const TArray<uint8>& Bytes, int32 TextOffset, float Scale, FString* OutError);
 
 	TArray<FSourcePHYSolid> Solids;
+	TArray<FSourcePHYBreak> Breaks;
 	TArray<FSourcePHYConstraint> Constraints;
 	bool bSelfCollisions = false;
 	bool bLoaded = false;

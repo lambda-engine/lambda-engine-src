@@ -10,6 +10,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "SourceDamage.h"
 #include "SourcePHYFile.h"
+#include "SourcePropData.h"
 #include "SourceStudioModelComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
@@ -43,6 +44,11 @@ namespace
 	constexpr float IMPACT_MIN_INTERVAL = 0.05f;
 	/** surfacedata_t::audio.hardThreshold's default: a surface softer than this gets the "impactsoft" sound. */
 	constexpr float IMPACT_HARD_THRESHOLD = 0.5f;
+	/** breakablepropparams_t::defBurstScale for a breaking prop: how hard its pieces are thrown apart. */
+	constexpr float BREAK_BURST_SCALE = 100.0f;
+	/** CBreakableProp::Break gives the propdata chunks a random fade time in this range. */
+	constexpr float CHUNK_FADE_MIN = 5.0f;
+	constexpr float CHUNK_FADE_MAX = 10.0f;
 	/** m_shadow.maxSpeed / DEFAULT_MAX_ANGULAR: how fast the controller may drag a held object about. */
 	constexpr float SHADOW_MAX_SPEED_UNITS = 1000.0f;
 	constexpr float SHADOW_MAX_ANGULAR_DEGREES = 360.0f * 10.0f;
@@ -83,7 +89,7 @@ ASourcePropPhysics::ASourcePropPhysics(const FObjectInitializer& ObjectInitializ
 	Model->SetMobility(EComponentMobility::Movable);
 }
 
-void ASourcePropPhysics::InitializeFromEntity(const FSourceEntity& InEntity, ULambdaMaterialLibrary* Materials)
+void ASourcePropPhysics::InitializeFromEntity(const FSourceEntity& InEntity, ULambdaMaterialLibrary* Materials, bool bPlaceClearOfWorld)
 {
 	Entity = InEntity;
 	MaterialLibrary = Materials;
@@ -196,16 +202,41 @@ void ASourcePropPhysics::InitializeFromEntity(const FSourceEntity& InEntity, ULa
 	const FVector3f HullMax = Model->GetModel()->GetHullMax();
 	SizeUnits = FMath::Max3(HullMax.X - HullMin.X, HullMax.Y - HullMin.Y, HullMax.Z - HullMin.Z);
 
+	// CBaseProp::ParsePropData: the model says which kind of prop it is, and propdata.txt says what that kind can
+	// take. A "prop_physics_override" keeps the health the mapper gave it instead.
+	const bool bOverride = Entity.ClassName.Equals(TEXT("prop_physics_override"), ESearchCase::IgnoreCase);
+	FSourcePropData::Get().ResolveForModel(Model->GetModel()->GetKeyValueText(), PropData);
+	Health = Entity.GetFloat(TEXT("health"), bOverride ? 0.0f : FMath::Max(PropData.Health, 0.0f));
+	if (bOverride)
+	{
+		PropData.Health = Health;
+	}
+	BreakPieces = Phy.GetBreaks();
+
+	// "Calculate the maximum size of the breakables this breakable will produce": a big prop may use the larger
+	// chunks in its list, a small one may not.
+	FVector3f Size = HullMax - HullMin;
+	const int32 SmallestAxis = (Size.X < Size.Y) ? ((Size.X < Size.Z) ? 0 : 2) : ((Size.Y < Size.Z) ? 1 : 2);
+	Size[SmallestAxis] = 1.0f;
+	MaxBreakableSize = FMath::FloorToInt((Size.X * Size.Y * Size.Z) / (32.0f * 32.0f));
+
 	const FVector HullA = FSourceCoords::ToUE(HullMin, Scale);
 	const FVector HullB = FSourceCoords::ToUE(HullMax, Scale);
 	HullExtentLocal = (FVector::Max(HullA, HullB) - FVector::Min(HullA, HullB)) * 0.5f;
 
-	PlaceClearOfWorld(HullMin, HullMax, Scale);
+	if (bPlaceClearOfWorld)
+	{
+		PlaceClearOfWorld(HullMin, HullMax, Scale);
+	}
 
 	const FBoxSphereBounds LocalBounds = Body->CalcLocalBounds();
-	UE_LOG(LogLambdaSource, Log, TEXT("%s '%s': %.1f kg, %.0f units across, surfaceprop '%s', %d hulls, collision %s +/- %s units"),
+	UE_LOG(LogLambdaSource, Log, TEXT("%s '%s': %.1f kg, %.0f units across, surfaceprop '%s', %d hulls, %s"),
 		*Entity.ClassName, *ModelPath, GetMass(), SizeUnits, *SurfaceProp, NumHulls,
-		*(LocalBounds.Origin / Scale).ToCompactString(), *(LocalBounds.BoxExtent / Scale).ToCompactString());
+		Health > 0.0f
+			? *FString::Printf(TEXT("%.0f health, breaks into %s"), Health,
+				BreakPieces.Num() > 0 ? *FString::Printf(TEXT("%d pieces"), BreakPieces.Num())
+				: *FString::Printf(TEXT("%d %s chunks"), PropData.BreakableCount, *PropData.BreakableModel))
+			: TEXT("cannot be broken"));
 }
 
 void ASourcePropPhysics::PlaceClearOfWorld(const FVector3f& HullMin, const FVector3f& HullMax, float Scale)
@@ -343,6 +374,13 @@ void ASourcePropPhysics::Tick(float DeltaSeconds)
 		StopCarry(false);
 	}
 
+	// A piece of a broken prop is taken away when its fade time runs out (breakmodel_t::fadeTime).
+	if (FadeOutTime > 0.0f && GetWorld()->GetTimeSeconds() >= FadeOutTime)
+	{
+		Destroy();
+		return;
+	}
+
 	// CBaseEntity::IsInWorld: anything that has left the map's coordinate space (fallen out of the level, or been
 	// flung at a speed the engine cannot represent) is removed rather than simulated forever.
 	if (Body && Body->IsSimulatingPhysics())
@@ -384,7 +422,177 @@ float ASourcePropPhysics::TakeDamage(float DamageAmount, const FDamageEvent& Dam
 		Force *= Body->GetMass() / CarriedMassKg;
 	}
 	Body->AddImpulseAtLocation(Force, Info.DamagePosition);
+
+	// GetBreakableDamage: what the blow is worth against this kind of prop. Buckshot counts double.
+	if (!PropData.IsBreakable() || Health <= 0.0f)
+	{
+		return DamageAmount;
+	}
+	float Damage = DamageAmount;
+	if ((Info.DamageType & SourceDamageType::DMG_BULLET) != 0)
+	{
+		Damage *= PropData.DmgModBullet * ((Info.DamageType & SourceDamageType::DMG_BUCKSHOT) != 0 ? 2.0f : 1.0f);
+	}
+	if ((Info.DamageType & SourceDamageType::DMG_CLUB) != 0)
+	{
+		Damage *= PropData.DmgModClub;
+	}
+	if ((Info.DamageType & SourceDamageType::DMG_BLAST) != 0)
+	{
+		Damage *= PropData.DmgModExplosive;
+	}
+
+	Health -= Damage;
+	UE_LOG(LogLambdaSource, Verbose, TEXT("%s '%s' took %.1f (of %.1f): health %.1f"),
+		*Entity.ClassName, *Entity.Get(TEXT("model")), Damage, DamageAmount, FMath::Max(Health, 0.0f));
+	if (Health <= 0.0f)
+	{
+		Break(EventInstigator ? EventInstigator->GetPawn() : DamageCauser);
+	}
 	return DamageAmount;
+}
+
+void ASourcePropPhysics::Break(AActor* Breaker)
+{
+	UWorld* World = GetWorld();
+	if (!World || bBreaking)
+	{
+		return;
+	}
+	bBreaking = true;
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+
+	// The pieces carry on from where the prop was and how it was moving.
+	const FTransform Where = GetActorTransform();
+	FVector Velocity = FVector::ZeroVector;
+	FVector Angular = FVector::ZeroVector;
+	if (Body && Body->IsSimulatingPhysics())
+	{
+		Velocity = Body->GetPhysicsLinearVelocity();
+		Angular = Body->GetPhysicsAngularVelocityInDegrees();
+	}
+	if (IsHeld())
+	{
+		StopCarry(false);
+	}
+
+	// PhysBreakSound: the surface's own break sound, at the prop's position.
+	const FSourceSurfaceProp* Surface = FSourceSurfaceProps::Get().Find(SurfaceProp);
+	if (Surface && !Surface->BreakSound.IsEmpty())
+	{
+		float Volume = 1.0f, Pitch = 1.0f;
+		if (ULambdaSoundWave* Wave = FLambdaSoundCache::Get().CreateWaveResolved(this, Surface->BreakSound, false, Volume, Pitch))
+		{
+			const FSourceSoundScriptEntry* Entry = FSourceSoundScripts::Get().Find(Surface->BreakSound);
+			UGameplayStatics::SpawnSoundAtLocation(World, Wave, Where.GetLocation(), FRotator::ZeroRotator, Volume, Pitch,
+				0.0f, FLambdaSoundCache::Get().GetAttenuationForSoundLevel(Entry ? Entry->SoundLevel : 75.0f));
+		}
+	}
+
+	int32 Spawned = 0;
+	if (BreakPieces.Num() > 0)
+	{
+		// The model names its own pieces: a crate comes apart into its planks, each where it sat on the whole.
+		for (const FSourcePHYBreak& Piece : BreakPieces)
+		{
+			const FVector PieceLocation = Where.TransformPosition(Piece.Offset);
+			FVector PieceVelocity = Velocity;
+			// "If burst scale is set, this piece should 'burst' away from the origin".
+			if (Piece.BurstScale != 0.0f)
+			{
+				const FVector BurstDir = (PieceLocation - Where.GetLocation()).GetSafeNormal();
+				PieceVelocity += BurstDir * Piece.BurstScale * Scale;
+			}
+			Spawned += SpawnGib(Piece.ModelName, FTransform(Where.GetRotation(), PieceLocation), PieceVelocity, Angular,
+				Piece.FadeTime, Piece.bMotionDisabled) ? 1 : 0;
+		}
+	}
+	else if (!PropData.BreakableModel.IsEmpty() && PropData.BreakableCount > 0)
+	{
+		// Otherwise the propdata says how many generic chunks of what kind it leaves: they start at random points
+		// across the prop and are pushed out from its middle.
+		const FVector Extent = Body ? Body->Bounds.BoxExtent : FVector::ZeroVector;
+		for (int32 i = 0; i < PropData.BreakableCount; ++i)
+		{
+			const FString ChunkModel = FSourcePropData::Get().GetRandomChunkModel(PropData.BreakableModel, MaxBreakableSize);
+			if (ChunkModel.IsEmpty())
+			{
+				break;
+			}
+			const FVector Offset(FMath::FRandRange(-Extent.X, Extent.X), FMath::FRandRange(-Extent.Y, Extent.Y),
+				FMath::FRandRange(-Extent.Z, Extent.Z));
+			const FVector ChunkLocation = Where.GetLocation() + Offset;
+			const FVector BurstDir = Offset.GetSafeNormal();
+			Spawned += SpawnGib(ChunkModel, FTransform(Where.GetRotation(), ChunkLocation),
+				Velocity + BurstDir * BREAK_BURST_SCALE * Scale, Angular,
+				FMath::FRandRange(CHUNK_FADE_MIN, CHUNK_FADE_MAX), false) ? 1 : 0;
+		}
+	}
+
+	UE_LOG(LogLambdaSource, Log, TEXT("%s '%s' broken by %s into %d pieces"), *Entity.ClassName,
+		*Entity.Get(TEXT("model")), *GetNameSafe(Breaker), Spawned);
+	Destroy();
+}
+
+bool ASourcePropPhysics::SpawnGib(const FString& ModelName, const FTransform& Where, const FVector& Velocity,
+	const FVector& AngularVelocity, float FadeTime, bool bMotionDisabled)
+{
+	UWorld* World = GetWorld();
+	if (!World || ModelName.IsEmpty())
+	{
+		return false;
+	}
+	// The .phy names pieces without a path or extension ("props_junk/wood_crate001a_Chunk01").
+	FString ModelPath = ModelName.Replace(TEXT("\\"), TEXT("/"));
+	if (!ModelPath.StartsWith(TEXT("models/"), ESearchCase::IgnoreCase))
+	{
+		ModelPath = TEXT("models/") + ModelPath;
+	}
+	if (!ModelPath.EndsWith(TEXT(".mdl"), ESearchCase::IgnoreCase))
+	{
+		ModelPath += TEXT(".mdl");
+	}
+
+	FActorSpawnParameters Params;
+	Params.ObjectFlags |= RF_Transient;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	ASourcePropPhysics* Gib = World->SpawnActor<ASourcePropPhysics>(ASourcePropPhysics::StaticClass(), FTransform::Identity, Params);
+	if (!Gib)
+	{
+		return false;
+	}
+	Gib->InitializeAsGib(ModelPath, MaterialLibrary, Where, Velocity, AngularVelocity, FadeTime);
+	if (!IsValid(Gib))
+	{
+		return false;
+	}
+	if (bMotionDisabled && Gib->Body)
+	{
+		Gib->Body->SetSimulatePhysics(false);
+	}
+	return true;
+}
+
+void ASourcePropPhysics::InitializeAsGib(const FString& ModelPath, ULambdaMaterialLibrary* Materials,
+	const FTransform& Where, const FVector& Velocity, const FVector& AngularVelocity, float FadeTime)
+{
+	// A piece of a broken prop is a physics prop like any other, built from the same keyvalues the map would have
+	// given it, and taken away again once its fade time is up.
+	FSourceEntity GibEntity;
+	GibEntity.ClassName = TEXT("prop_physics");
+	GibEntity.Pairs.Emplace(TEXT("model"), ModelPath);
+	InitializeFromEntity(GibEntity, Materials, false);
+	if (!IsValid(this))
+	{
+		return;
+	}
+	SetActorTransform(Where, false, nullptr, ETeleportType::TeleportPhysics);
+	if (Body && Body->IsSimulatingPhysics())
+	{
+		Body->SetPhysicsLinearVelocity(Velocity);
+		Body->SetPhysicsAngularVelocityInDegrees(AngularVelocity);
+	}
+	FadeOutTime = FadeTime > 0.0f ? GetWorld()->GetTimeSeconds() + FadeTime : 0.0f;
 }
 
 void ASourcePropPhysics::StartCarry(APawn* Player)

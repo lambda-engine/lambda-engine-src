@@ -526,6 +526,12 @@ void ALambdaCharacter::UpdatePropCarry(float DeltaSeconds)
 	ASourcePropPhysics* Prop = CarriedProp.Get();
 	if (!Prop)
 	{
+		// The prop was destroyed while it was being held - shot to pieces, or it left the world. Let go properly so
+		// the weapon comes back out.
+		if (!CarriedProp.IsExplicitlyNull())
+		{
+			DropCarriedProp(false);
+		}
 		return;
 	}
 	UWorld* World = GetWorld();

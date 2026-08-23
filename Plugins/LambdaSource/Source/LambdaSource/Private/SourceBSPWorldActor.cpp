@@ -3,6 +3,7 @@
 #include "SourceNPCHeadcrab.h"
 #include "SourceNPCZombie.h"
 #include "SourceItem.h"
+#include "SourcePropData.h"
 #include "SourcePropPhysics.h"
 #include "LambdaFileSystem.h"
 #include "LambdaMaterialLibrary.h"
@@ -95,6 +96,9 @@ bool ASourceBSPWorldActor::LoadBSPFile(const FString& RelativePath)
 
 	MaterialLibrary = NewObject<ULambdaMaterialLibrary>(this);
 	MaterialLibrary->Initialize();
+
+	// CPropData::LevelInitPreEntity: how much punishment each kind of prop takes, read before any prop spawns.
+	FSourcePropData::Get().Load();
 
 	Stats = FSourceBSPLoadStats();
 	Stats.NumFaces = BSP->Faces.Num();

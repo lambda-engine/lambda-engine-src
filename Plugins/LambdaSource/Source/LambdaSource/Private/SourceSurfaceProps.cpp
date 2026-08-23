@@ -95,6 +95,7 @@ void FSourceSurfaceProps::LoadFile(const FString& RelativePath)
 		Prop.ScrapeRoughSound = Root.GetString(TEXT("scraperough"));
 		Prop.ImpactHardSound = Root.GetString(TEXT("impacthard"));
 		Prop.ImpactSoftSound = Root.GetString(TEXT("impactsoft"));
+		Prop.BreakSound = Root.GetString(TEXT("break"));
 		// -1 means the entry did not say, so the value is inherited from "base" (or left at the default).
 		const float Hardness = Root.GetFloat(TEXT("audiohardnessfactor"), -1.0f);
 		if (Hardness >= 0.0f)
@@ -117,6 +118,7 @@ void FSourceSurfaceProps::LoadFile(const FString& RelativePath)
 				if (Prop.BulletImpactSound.IsEmpty()) { Prop.BulletImpactSound = Parent->BulletImpactSound; }
 				if (Prop.ImpactHardSound.IsEmpty()) { Prop.ImpactHardSound = Parent->ImpactHardSound; }
 				if (Prop.ImpactSoftSound.IsEmpty()) { Prop.ImpactSoftSound = Parent->ImpactSoftSound; }
+				if (Prop.BreakSound.IsEmpty()) { Prop.BreakSound = Parent->BreakSound; }
 				if (Hardness < 0.0f) { Prop.AudioHardnessFactor = Parent->AudioHardnessFactor; }
 				if (Prop.ScrapeRoughSound.IsEmpty()) { Prop.ScrapeRoughSound = Parent->ScrapeRoughSound; }
 				if (Prop.StepLeftSound.IsEmpty()) { Prop.StepLeftSound = Parent->StepLeftSound; }

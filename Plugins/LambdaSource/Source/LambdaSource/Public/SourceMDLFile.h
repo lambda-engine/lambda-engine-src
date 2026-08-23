@@ -208,6 +208,8 @@ public:
 
 	/** $surfaceprop of the model ("alienflesh", "metal"...), from studiohdr_t::surfacepropindex. */
 	const FString& GetSurfaceProp() const { return SurfaceProp; }
+	/** studiohdr_t::KeyValueText: the model's own keyvalues, which is where a prop's prop_data section lives. */
+	const FString& GetKeyValueText() const { return KeyValueText; }
 
 	/**
 	 * Decodes one sequence at a normalised cycle (0..1) into bone-to-model transforms, in Source space.
@@ -309,6 +311,7 @@ private:
 	FString AnimBlockName;
 	TArray<TPair<int32, int32>> AnimBlocks;	// (datastart, dataend) per block; block 0 is "in the .mdl"
 	FString SurfaceProp;
+	FString KeyValueText;
 	FVector3f HullMin = FVector3f::ZeroVector;
 	FVector3f HullMax = FVector3f::ZeroVector;
 };

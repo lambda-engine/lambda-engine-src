@@ -94,7 +94,7 @@ bool FSourcePHYFile::Load(const FString& RelativeModelPath, float Scale, FString
 	}
 
 	int32 TextOffset = 0;
-	if (!ParseBinary(Bytes, Scale, TextOffset, OutError) || !ParseText(Bytes, TextOffset, OutError))
+	if (!ParseBinary(Bytes, Scale, TextOffset, OutError) || !ParseText(Bytes, TextOffset, Scale, OutError))
 	{
 		return false;
 	}
@@ -205,7 +205,7 @@ bool FSourcePHYFile::ParseBinary(const TArray<uint8>& Bytes, float Scale, int32&
 	return true;
 }
 
-bool FSourcePHYFile::ParseText(const TArray<uint8>& Bytes, int32 TextOffset, FString* OutError)
+bool FSourcePHYFile::ParseText(const TArray<uint8>& Bytes, int32 TextOffset, float Scale, FString* OutError)
 {
 	// The trailing keyvalues: one "solid" block per collision object, "ragdollconstraint" blocks, "collisionrules",
 	// "editparams" - the same text CRagdollProp/RagdollCreateObjects parses with IVPhysicsKeyParser.
@@ -248,6 +248,34 @@ bool FSourcePHYFile::ParseText(const TArray<uint8>& Bytes, int32 TextOffset, FSt
 			C.Min = FVector(Block.GetFloat(TEXT("xmin")), Block.GetFloat(TEXT("ymin")), Block.GetFloat(TEXT("zmin")));
 			C.Max = FVector(Block.GetFloat(TEXT("xmax")), Block.GetFloat(TEXT("ymax")), Block.GetFloat(TEXT("zmax")));
 			C.Friction = FVector(Block.GetFloat(TEXT("xfriction")), Block.GetFloat(TEXT("yfriction")), Block.GetFloat(TEXT("zfriction")));
+		}
+		else if (Block.Key.Equals(TEXT("break"), ESearchCase::IgnoreCase))
+		{
+			// CBreakParser: one piece of the model, named without an extension and relative to models/.
+			FSourcePHYBreak& Piece = Breaks.AddDefaulted_GetRef();
+			Piece.ModelName = Block.GetString(TEXT("model"));
+			if (Piece.ModelName.IsEmpty())
+			{
+				Piece.ModelName = Block.GetString(TEXT("ragdoll"));
+				Piece.bIsRagdoll = !Piece.ModelName.IsEmpty();
+			}
+			FVector3f Offset = FVector3f::ZeroVector;
+			FSourceCoords::ParseVector(Block.GetString(TEXT("offset")), Offset);
+			Piece.Offset = FSourceCoords::ToUE(Offset, Scale);
+			Piece.FadeTime = Block.GetFloat(TEXT("fadetime"), 0.0f);
+			Piece.Health = Block.GetFloat(TEXT("health"), 1.0f);
+			Piece.BurstScale = Block.GetFloat(TEXT("burst"), 0.0f);
+			Piece.bMotionDisabled = Block.GetBool(TEXT("motiondisabled"), false);
+			Piece.PlacementName = Block.GetString(TEXT("placementbone"));
+			Piece.bPlacementIsBone = !Piece.PlacementName.IsEmpty();
+			if (Piece.PlacementName.IsEmpty())
+			{
+				Piece.PlacementName = Block.GetString(TEXT("placementattachment"));
+			}
+			if (Piece.ModelName.IsEmpty())
+			{
+				Breaks.Pop();
+			}
 		}
 		else if (Block.Key.Equals(TEXT("collisionrules"), ESearchCase::IgnoreCase))
 		{
