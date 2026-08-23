@@ -53,6 +53,8 @@ public:
 	 * now. The grab controller uses this to work out how much room the prop needs to clear the player.
 	 */
 	float GetExtentAlong(const FVector& Direction) const;
+	/** The prop's collision box in its own space, in cm. */
+	const FVector& GetHullExtent() const { return HullExtentLocal; }
 	UPrimitiveComponent* GetPhysicsBody() const;
 
 private:

@@ -172,6 +172,12 @@ protected:
 	float AutoCarryGrabTimer = -1.0f;
 	float AutoCarryThrowTimer = -1.0f;
 	float AutoCarryLookPitch = 0.0f;
+	/** lambda.pitchsweep.auto state. */
+	float SweepFromPitch = 0.0f;
+	float SweepToPitch = 0.0f;
+	float SweepSeconds = 0.0f;
+	float SweepDelay = 0.0f;
+	float SweepElapsed = 0.0f;
 	/** lambda.walk.auto state. */
 	float AutoWalkSeconds = 0.0f;
 	float AutoWalkDelay = 0.0f;

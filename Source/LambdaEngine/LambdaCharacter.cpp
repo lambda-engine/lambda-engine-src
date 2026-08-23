@@ -81,6 +81,13 @@ static FAutoConsoleVariableRef CVarPropCreateAuto(
 
 // lambda.propcarry.auto "<grab_delay_s> [throw_delay_s]" exercises the +USE carry without injecting input.
 // lambda.walk.auto "<seconds> [delay_s]" walks the player forward, for testing what he bumps into.
+// lambda.pitchsweep.auto "<from> <to> <seconds> [delay_s]" sweeps the view up or down, Source pitch (+ is down).
+static FString GPitchSweepAuto;
+static FAutoConsoleVariableRef CVarPitchSweepAuto(
+	TEXT("lambda.pitchsweep.auto"),
+	GPitchSweepAuto,
+	TEXT("\"<from> <to> <seconds> [delay_s]\": sweep the view pitch"));
+
 static FString GWalkAuto;
 static FAutoConsoleVariableRef CVarWalkAuto(
 	TEXT("lambda.walk.auto"),
@@ -557,24 +564,42 @@ void ALambdaCharacter::UpdatePropCarry(float DeltaSeconds)
 		Target = Eye + Forward * (RadiusCm * 0.5f);
 	}
 
-	// ...and it is kept out of the player's own column, so looking down does not stuff it into his feet.
-	const FVector PlayerLine = GetActorLocation();
-	FVector Nearest = FVector(PlayerLine.X, PlayerLine.Y, FMath::Clamp(Target.Z,
-		PlayerLine.Z - GetCapsuleComponent()->GetScaledCapsuleHalfHeight(),
-		PlayerLine.Z + GetCapsuleComponent()->GetScaledCapsuleHalfHeight()));
-	FVector Delta = Target - Nearest;
-	const float Len = Delta.Size();
-	if (Len < RadiusCm)
-	{
-		// Straight down the player's own axis there is no direction to push along; put it out in front instead of
-		// leaving it inside his head.
-		const FVector Out = Len > KINDA_SMALL_NUMBER ? Delta / Len : Forward.GetSafeNormal2D();
-		Target = Nearest + Out * RadiusCm;
-	}
+	// Source then pushes the hold point radially away from the player's own column, so that a held object cannot
+	// end up inside him. A prop being carried here already ignores the player, so it has no such work to do - and
+	// doing it anyway is what threw the prop up over the player's head: with something in front pulling the hold
+	// point in close, a sideways shove of a crate's radius keeps the height it had, which reads as the prop
+	// climbing out of view while you look down at the floor. The hold point stays on the view ray instead, and
+	// the sweep below is what keeps it out of the world.
 
-	UE_LOG(LogLambda, VeryVerbose, TEXT("carry view: pitch %.1f fwd %s eye %s radius %.1f dist %.1f target %s"),
-		EyeRot.Pitch, *Forward.ToCompactString(), *Eye.ToCompactString(), RadiusCm / Scale, DistanceCm / Scale,
-		*Target.ToCompactString());
+	// How the prop actually reads on screen: how far it is from the eye, and how far above the crosshair it sits.
+	const FVector ToProp = Prop->GetActorLocation() - Eye;
+	const float PropDistance = ToProp.Size();
+	const float AboveCrosshair = FMath::RadiansToDegrees(
+		FMath::Asin(FMath::Clamp(ToProp.GetSafeNormal().Z, -1.0f, 1.0f)) - FMath::Asin(FMath::Clamp(Forward.Z, -1.0f, 1.0f)));
+	UE_LOG(LogLambda, VeryVerbose, TEXT("carry: pitch %.1f radius %.1f hold %.1f | prop %.1f units away, %+.1f deg above crosshair, target %.1f units off"),
+		EyeRot.Pitch, RadiusCm / Scale, (DistanceCm - RadiusCm) / Scale, PropDistance / Scale, AboveCrosshair,
+		(Target - Prop->GetActorLocation()).Size() / Scale);
+
+	// Where the prop can actually be held: the hold point is only useful if the prop fits there. Source keeps it
+	// clear of what the player is looking at by stopping the object's centre a radius short of the hit; sweeping
+	// the prop's own shape does the same job for the floor a steeply-angled view runs into, which a line trace
+	// stopping short by a radius does not - and a prop driven into the floor every frame squeezes out of it and up
+	// past the player.
+	const FVector SweepExtent = Prop->GetHullExtent() * 0.9f;
+	if (SweepExtent.GetMin() > 0.0f)
+	{
+		FHitResult Clear;
+		if (World->SweepSingleByObjectType(Clear, Eye, Target, Prop->GetActorQuat(),
+			FCollisionObjectQueryParams(ECC_WorldStatic), FCollisionShape::MakeBox(FVector3f(SweepExtent)), Params)
+			&& !Clear.bStartPenetrating)
+		{
+			// Never closer than half a radius, the same floor Source puts under its own pull-in: a prop shoved
+			// against a wall comes back towards the player, it does not end up inside his head.
+			const FVector ToTarget = Target - Eye;
+			const float Reach = FMath::Max((Clear.Location - Eye).Size(), RadiusCm * 0.5f);
+			Target = Eye + ToTarget.GetSafeNormal() * FMath::Min(Reach, ToTarget.Size());
+		}
+	}
 
 	const FRotator TargetRotation = (FQuat(CarriedPropRelativeRotation) * FQuat(FRotator(0.0f, EyeRot.Yaw, 0.0f))).Rotator();
 	// ComputeError() > 12 units and the object is considered stuck; Source drops it.
@@ -687,6 +712,22 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 		ActiveWeapon->ItemPostFrame();
 	}
 
+	// lambda.pitchsweep.auto: drag the view up or down at a steady rate, as a player would with the mouse.
+	if (SweepSeconds > 0.0f)
+	{
+		if (SweepDelay > 0.0f)
+		{
+			SweepDelay -= DeltaSeconds;
+		}
+		else if (AController* PC = GetController())
+		{
+			SweepElapsed = FMath::Min(SweepElapsed + DeltaSeconds, SweepSeconds);
+			FRotator View = PC->GetControlRotation();
+			View.Pitch = FMath::Lerp(SweepFromPitch, SweepToPitch, SweepElapsed / SweepSeconds);
+			PC->SetControlRotation(View);
+		}
+	}
+
 	// lambda.walk.auto: walk forward, so what the player bumps into can be tested.
 	if (AutoWalkSeconds > 0.0f)
 	{
@@ -796,6 +837,19 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 				if (Parts.Num() > 0)
 				{
 					PropCreate(Parts[0], Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : 300.0f);
+				}
+			}
+			if (!GPitchSweepAuto.IsEmpty())
+			{
+				TArray<FString> Parts;
+				GPitchSweepAuto.ParseIntoArrayWS(Parts);
+				if (Parts.Num() >= 3)
+				{
+					SweepFromPitch = -FCString::Atof(*Parts[0]);
+					SweepToPitch = -FCString::Atof(*Parts[1]);
+					SweepSeconds = FCString::Atof(*Parts[2]);
+					SweepDelay = Parts.Num() > 3 ? FCString::Atof(*Parts[3]) : 8.0f;
+					SweepElapsed = 0.0f;
 				}
 			}
 			if (!GWalkAuto.IsEmpty())
