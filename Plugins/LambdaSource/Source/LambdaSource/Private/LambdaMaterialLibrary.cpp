@@ -66,6 +66,10 @@ void ULambdaMaterialLibrary::Initialize()
 	{
 		DecalMasterMaterial = Cast<UMaterialInterface>(Settings.DecalMaterial.TryLoad());
 	}
+	if (Settings.DecalPBRMaterial.IsValid())
+	{
+		DecalPBRMasterMaterial = Cast<UMaterialInterface>(Settings.DecalPBRMaterial.TryLoad());
+	}
 	if (Settings.SpriteMaterial.IsValid())
 	{
 		SpriteMasterMaterial = Cast<UMaterialInterface>(Settings.SpriteMaterial.TryLoad());
@@ -181,6 +185,12 @@ bool ULambdaMaterialLibrary::LoadMaterialInfo(const FString& SourceMaterialName,
 	OutInfo.bSelfIllum = Root.GetBool(TEXT("$selfillum"));
 	OutInfo.SurfaceProp = Root.GetString(TEXT("$surfaceprop"));
 	OutInfo.bIgnoreZ = Root.GetBool(TEXT("$ignorez"));
+	OutInfo.BumpMap = NormalizeTextureName(Root.GetString(TEXT("$bumpmap")));
+	OutInfo.HeightMap = NormalizeTextureName(Root.GetString(TEXT("$heightmap")));
+	OutInfo.AOTexture = NormalizeTextureName(Root.GetString(TEXT("$aotexture")));
+	OutInfo.HeightMapScale = Root.GetFloat(TEXT("$heightmapscale"), 0.1f);
+	OutInfo.DecalSizeUnits = Root.GetFloat(TEXT("$decalsize"), 0.0f);
+	OutInfo.DecalSizeVariance = Root.GetFloat(TEXT("$decalsizevariance"), 0.0f);
 	return true;
 }
 
@@ -560,6 +570,21 @@ static FAutoConsoleVariableRef CVarDecalNormalStrength(
 	GDecalNormalStrength,
 	TEXT("NormalStrength parameter on new impact decals (0 = no normal perturbation)"));
 
+// Authored (Source 2) decals: Source 2's g_flHeightMapScale is tuned for VR at arm's length, and the
+// multiplier lets a flat screen at a few metres read the same depth; FlipGreen is for a normal map authored in
+// the other handedness, which shades a crater as a bump.
+static float GDecalHeightScaleMultiplier = 1.0f;
+static FAutoConsoleVariableRef CVarDecalHeightScaleMultiplier(
+	TEXT("lambda.decal.heightscale"),
+	GDecalHeightScaleMultiplier,
+	TEXT("Multiplier on an authored decal's $heightmapscale (its parallax depth)"));
+
+static float GDecalFlipGreen = 0.0f;
+static FAutoConsoleVariableRef CVarDecalFlipGreen(
+	TEXT("lambda.decal.flipgreen"),
+	GDecalFlipGreen,
+	TEXT("1 = flip the green channel of authored decal normal maps"));
+
 UMaterialInterface* ULambdaMaterialLibrary::GetDecalMaterial(const FString& SourceMaterialName, float& OutSizeUnits)
 {
 	Initialize();
@@ -595,6 +620,40 @@ UMaterialInterface* ULambdaMaterialLibrary::GetDecalMaterial(const FString& Sour
 			if (LoadMaterialInfo(Name, Info))
 			{
 				TextureName = Info.BaseTexture;
+
+				// A decal that brings its own normal, height and occlusion maps (Source 2 imports) is drawn by the
+				// PBR master: authored crater data instead of depth derived from a scorch mark's brightness.
+				if (DecalPBRMasterMaterial && !Info.HeightMap.IsEmpty())
+				{
+					UTexture2D* Color = TextureName.IsEmpty() ? nullptr : GetTexture(TextureName, true);
+					UTexture2D* Normal = Info.BumpMap.IsEmpty() ? nullptr : GetTexture(Info.BumpMap, false);
+					UTexture2D* Height = GetTexture(Info.HeightMap, false);
+					UTexture2D* AO = Info.AOTexture.IsEmpty() ? nullptr : GetTexture(Info.AOTexture, false);
+					if (Color && Height)
+					{
+						UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(DecalPBRMasterMaterial, this,
+							*FString::Printf(TEXT("DecalPBR_%s"), *Name.Replace(TEXT("/"), TEXT("_"))));
+						if (MID)
+						{
+							MID->SetTextureParameterValue(ULambdaSourceSettings::Get().BaseTextureParameterName, Color);
+							MID->SetTextureParameterValue(TEXT("HeightMap"), Height);
+							if (Normal) { MID->SetTextureParameterValue(TEXT("NormalMap"), Normal); }
+							if (AO) { MID->SetTextureParameterValue(TEXT("AOMap"), AO); }
+							MID->SetScalarParameterValue(TEXT("HeightScale"),
+								Info.HeightMapScale * ULambdaSourceSettings::Get().DecalParallaxMultiplier * GDecalHeightScaleMultiplier);
+							MID->SetScalarParameterValue(TEXT("DecalDepth"), GDecalDepth);
+							MID->SetScalarParameterValue(TEXT("FlipGreen"), GDecalFlipGreen);
+							if (Info.DecalSizeUnits > 0.0f)
+							{
+								OutSizeUnits = Info.DecalSizeUnits;
+							}
+							DecalCache.Add(Name, MID);
+							DecalSizeCache.Add(Name, OutSizeUnits);
+							DecalVarianceCache.Add(Name, FMath::Max(0.0f, Info.DecalSizeVariance));
+							return MID;
+						}
+					}
+				}
 			}
 		}
 
@@ -839,4 +898,10 @@ UTexture2D* ULambdaMaterialLibrary::CreateDecalHeightTexture(const FString& Norm
 
 	DecalHeightCache.Add(NormalizedName, Result);
 	return Result;
+}
+
+float ULambdaMaterialLibrary::GetDecalSizeVariance(const FString& SourceMaterialName) const
+{
+	const float* Found = DecalVarianceCache.Find(NormalizeMaterialName(SourceMaterialName));
+	return Found ? *Found : 0.0f;
 }

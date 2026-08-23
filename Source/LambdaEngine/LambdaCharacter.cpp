@@ -27,10 +27,21 @@
 #include "SourceBSPWorldActor.h"
 #include "Kismet/GameplayStatics.h"
 #include "SourceStudioModelComponent.h"
+#include "CollisionQueryParams.h"
+#include "TimerManager.h"
+#include "SourceImpactEffects.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "ProceduralMeshComponent.h"
 #include "Components/PointLightComponent.h"
 #include "Engine/World.h"
+
+// lambda.decaltest.auto "<distance_cm> <angle_deg>" runs RunDecalTest shortly after spawn, so a scripted launch can
+// frame decals identically every time (-ExecCmds runs before the pawn exists, hence the cvar + timer).
+static FString GDecalTestAuto;
+static FAutoConsoleVariableRef CVarDecalTestAuto(
+	TEXT("lambda.decaltest.auto"),
+	GDecalTestAuto,
+	TEXT("\"<distance_cm> <angle_deg>\": stamp test impact decals and move to that viewpoint 2s after spawn"));
 
 ALambdaCharacter::ALambdaCharacter()
 {
@@ -147,6 +158,16 @@ void ALambdaCharacter::BeginPlay()
 	// are implemented these come from the map instead.
 	GiveWeapon(TEXT("weapon_pistol"));
 	GiveAmmo(TEXT("Pistol"), 68);
+
+	if (!GDecalTestAuto.IsEmpty())
+	{
+		TArray<FString> Parts;
+		GDecalTestAuto.ParseIntoArrayWS(Parts);
+		const float Dist = Parts.Num() > 0 ? FCString::Atof(*Parts[0]) : 90.0f;
+		const float Angle = Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : 45.0f;
+		FTimerHandle Handle;
+		GetWorldTimerManager().SetTimer(Handle, [this, Dist, Angle]() { RunDecalTest(Dist, Angle); }, 2.0f, false);
+	}
 
 	FirstPersonCamera->FirstPersonFieldOfView = Settings.ViewModelFOV;
 	FirstPersonCamera->FirstPersonScale = Settings.ViewModelFirstPersonScale;
@@ -383,6 +404,65 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 	}
 
 	UpdateMuzzleFlash();
+}
+
+void ALambdaCharacter::RunDecalTest(float DistanceCm, float AngleDeg, int32 Count)
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	FVector EyeLocation;
+	FRotator EyeRotation;
+	GetActorEyesViewPoint(EyeLocation, EyeRotation);
+	const FVector Forward = EyeRotation.Vector();
+	const FVector Right = FRotationMatrix(EyeRotation).GetUnitAxis(EAxis::Y);
+
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(LambdaDecalTest), /*bTraceComplex=*/ true, this);
+	Params.bReturnFaceIndex = true;
+
+	// A row of impacts across the wall ahead, 15 cm apart, through the same path a bullet takes.
+	FHitResult Centre;
+	bool bHaveCentre = false;
+	for (int32 i = 0; i < Count; ++i)
+	{
+		const float Offset = (i - (Count - 1) * 0.5f) * 15.0f;
+		const FVector Start = EyeLocation + Right * Offset;
+		FHitResult Hit;
+		if (World->LineTraceSingleByChannel(Hit, Start, Start + Forward * 5000.0f, ECC_Visibility, Params))
+		{
+			SourceImpact::PlayImpact(Hit, GetWorldMaterialLibrary(), this);
+			if (i == (Count - 1) / 2)
+			{
+				Centre = Hit;
+				bHaveCentre = true;
+			}
+		}
+	}
+	if (!bHaveCentre)
+	{
+		UE_LOG(LogLambda, Warning, TEXT("decaltest: nothing ahead to stamp on"));
+		return;
+	}
+
+	// Viewpoint: DistanceCm from the middle decal, swung AngleDeg off its normal around the wall's up axis.
+	const FVector N = Centre.ImpactNormal;
+	const FVector WallRight = FVector::CrossProduct(FVector::UpVector, N).GetSafeNormal();
+	const float Rad = FMath::DegreesToRadians(AngleDeg);
+	const FVector ViewDir = (N * FMath::Cos(Rad) + WallRight * FMath::Sin(Rad)).GetSafeNormal();
+	const FVector CameraLocation = Centre.ImpactPoint + ViewDir * DistanceCm;
+
+	// The camera sits above the capsule centre by its relative offset; place the actor so the camera lands there.
+	const FVector CameraOffset = FirstPersonCamera ? FirstPersonCamera->GetRelativeLocation() : FVector::ZeroVector;
+	SetActorLocation(CameraLocation - CameraOffset, false, nullptr, ETeleportType::TeleportPhysics);
+	if (AController* C = GetController())
+	{
+		C->SetControlRotation((Centre.ImpactPoint - CameraLocation).Rotation());
+	}
+	UE_LOG(LogLambda, Log, TEXT("decaltest: %d decals at %s, viewing from %.0f cm at %.0f deg"),
+		Count, *Centre.ImpactPoint.ToString(), DistanceCm, AngleDeg);
 }
 
 ALambdaWeapon* ALambdaCharacter::GiveWeapon(const FString& WeaponClassName)

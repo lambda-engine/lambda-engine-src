@@ -65,8 +65,10 @@ void PlayImpact(const FHitResult& Hit, ULambdaMaterialLibrary* Materials, UObjec
 		if (UMaterialInterface* DecalMaterial = Materials->GetDecalMaterial(DecalName, SizeUnits))
 		{
 			// UDecalComponent projects along its +X axis, so face it down the surface normal. Source picks a
-			// random roll for each decal; without it repeated hits stamp an identical image.
-			const float SizeCm = SizeUnits * Settings.UnitScale;
+			// random roll for each decal; without it repeated hits stamp an identical image. Source 2's
+			// DecalSizeVariance varies each stamp's size by a random +/- on top.
+			const float Variance = Materials->GetDecalSizeVariance(DecalName);
+			const float SizeCm = FMath::Max(0.5f, SizeUnits + FMath::FRandRange(-Variance, Variance)) * Settings.UnitScale;
 			FRotator Rotation = (-Hit.ImpactNormal).Rotation();
 			Rotation.Roll = FMath::FRandRange(0.0f, 360.0f);
 

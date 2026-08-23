@@ -67,6 +67,18 @@ public:
 	UPROPERTY(config, EditAnywhere, Category = "Materials", meta = (AllowedClasses = "/Script/Engine.MaterialInterface"))
 	FSoftObjectPath DecalMaterial;
 
+	/** Decal master for decals with authored normal/height/AO maps (Tools/ImportSource2Decals.py output). */
+	UPROPERTY(config, EditAnywhere, Category = "Materials", meta = (AllowedClasses = "/Script/Engine.MaterialInterface"))
+	FSoftObjectPath DecalPBRMaterial;
+
+	/**
+	 * Multiplier on an authored decal's $heightmapscale. Half-Life: Alyx's g_flHeightMapScale (0.1) is tuned for VR
+	 * at arm's length; on a flat screen a few metres away that is under a centimetre of parallax and a bullet hole
+	 * reads as printed on. 3 makes the same decals read as holes; 1 is HL:A's own value.
+	 */
+	UPROPERTY(config, EditAnywhere, Category = "Effects", meta = (ClampMin = "0.0"))
+	float DecalParallaxMultiplier = 3.0f;
+
 	/** Unlit additive master material used for muzzle flashes and other sprite effects. */
 	UPROPERTY(config, EditAnywhere, Category = "Materials", meta = (AllowedClasses = "/Script/Engine.MaterialInterface"))
 	FSoftObjectPath SpriteMaterial;

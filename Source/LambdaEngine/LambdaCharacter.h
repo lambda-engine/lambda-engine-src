@@ -63,6 +63,13 @@ public:
 	/** The material library the loaded map built, used to resolve $surfaceprop at a bullet impact. */
 	ULambdaMaterialLibrary* GetWorldMaterialLibrary() const;
 
+	/**
+	 * Dev aid: stamps a row of impact decals on the wall ahead and moves the player to a fixed viewpoint at
+	 * DistanceCm from the middle one, looking at it from AngleDeg off its normal - the same framing every run,
+	 * which is what tuning a decal's depth by screenshot needs (Source's setpos/setang serve the same purpose).
+	 */
+	void RunDecalTest(float DistanceCm, float AngleDeg, int32 Count = 3);
+
 	USourceStudioModelComponent* GetViewModelMesh() const { return ViewModelMesh; }
 
 	UFUNCTION(BlueprintPure, Category = "Lambda") float GetHealth() const { return Health; }

@@ -242,6 +242,22 @@ static void LambdaSurfaceInfoCommand(const TArray<FString>& Args, UWorld* World)
 	}
 }
 
+// lambda.decaltest [distance_cm] [angle_deg] - stamp test impact decals ahead and jump to a fixed viewpoint
+static void LambdaDecalTestCommand(const TArray<FString>& Args, UWorld* World)
+{
+	APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
+	ALambdaCharacter* Player = PC ? Cast<ALambdaCharacter>(PC->GetPawn()) : nullptr;
+	if (Player)
+	{
+		Player->RunDecalTest(Args.Num() > 0 ? FCString::Atof(*Args[0]) : 90.0f, Args.Num() > 1 ? FCString::Atof(*Args[1]) : 45.0f);
+	}
+}
+
+static FAutoConsoleCommandWithWorldAndArgs GLambdaDecalTestCommand(
+	TEXT("lambda.decaltest"),
+	TEXT("Stamp a row of impact decals on the wall ahead and view them from <distance_cm> at <angle_deg>"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaDecalTestCommand));
+
 static FAutoConsoleCommandWithWorldAndArgs GLambdaSurfaceInfoCommand(
 	TEXT("lambda.surfaceinfo"),
 	TEXT("Show the surfaceprop -> game material -> impact decal chain for one or more surfaces"),

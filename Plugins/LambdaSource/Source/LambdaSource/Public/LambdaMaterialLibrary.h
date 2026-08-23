@@ -24,6 +24,15 @@ struct LAMBDASOURCE_API FSourceMaterialInfo
 	bool bIsPatch = false;
 	FString SurfaceProp;	// $surfaceprop: the key into scripts/surfaceproperties*.txt
 	bool bIgnoreZ = false;	// $ignorez: draw without depth testing (first-person effect sprites)
+
+	// Authored decal maps. $bumpmap is Source's own normal-map key; the rest are a Lambda extension written by
+	// Tools/ImportSource2Decals.py for decals that come with height and occlusion maps (Source 2's bullet holes).
+	FString BumpMap;			// $bumpmap: tangent-space normal
+	FString HeightMap;			// $heightmap: single channel, white = undisturbed surface
+	FString AOTexture;			// $aotexture: single channel occlusion
+	float HeightMapScale = 0.1f;	// $heightmapscale: parallax depth as a fraction of the decal's width
+	float DecalSizeUnits = 0.0f;	// $decalsize: world size in Hammer units (0 = not specified)
+	float DecalSizeVariance = 0.0f;	// $decalsizevariance: random +/- on the size, in Hammer units (0 = none)
 };
 
 /**
@@ -60,6 +69,9 @@ public:
 	 * indirection every HL2 impact decal uses. OutSizeUnits is the decal's world size in Hammer units.
 	 */
 	UMaterialInterface* GetDecalMaterial(const FString& SourceMaterialName, float& OutSizeUnits);
+
+	/** $decalsizevariance (random +/- in Hammer units) of a decal built with GetDecalMaterial; 0 when it has none. */
+	float GetDecalSizeVariance(const FString& SourceMaterialName) const;
 
 	/** Builds an additive unlit sprite material (muzzle flashes and other UnlitGeneric $additive effects). */
 	UMaterialInterface* GetSpriteMaterial(const FString& SourceMaterialName);
@@ -104,6 +116,10 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInterface> DecalMasterMaterial;
 
+	/** Decal master for decals with authored normal/height/AO maps (Source 2 imports). */
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInterface> DecalPBRMasterMaterial;
+
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInterface> SpriteMasterMaterial;
 
@@ -121,6 +137,8 @@ private:
 
 	UPROPERTY(Transient)
 	TMap<FString, TObjectPtr<UTexture2D>> DecalHeightCache;
+
+	TMap<FString, float> DecalVarianceCache;
 
 	/** $surfaceprop per material name, so a bullet impact does not re-parse the VMT every shot. */
 	TMap<FString, FString> SurfacePropCache;

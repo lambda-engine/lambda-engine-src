@@ -1,7 +1,8 @@
 """
 Creates the editor-side assets the Lambda Engine runtime expects:
   * /LambdaSource/Materials/M_LambdaBase   - master material with a "BaseTexture" parameter (plugin content)
-  * /LambdaSource/Materials/M_LambdaDecal  - deferred decal master for bullet impacts
+  * /LambdaSource/Materials/M_LambdaDecal  - deferred decal master for bullet impacts (Source 1 atlas decals)
+  * /LambdaSource/Materials/M_LambdaDecalPBR - deferred decal master for decals with authored normal/height/AO
   * /LambdaSource/Materials/M_LambdaSprite - unlit additive master for effect sprites
   * /LambdaSource/Materials/M_LambdaSpriteNoZ - the same, depth test off, for Source's "$ignorez" sprites
   * /Game/LambdaEngine/Maps/LambdaEntry    - empty startup level
@@ -13,6 +14,7 @@ import unreal
 MATERIAL_PATH = '/LambdaSource/Materials'
 MATERIAL_NAME = 'M_LambdaBase'
 DECAL_NAME = 'M_LambdaDecal'
+DECAL_PBR_NAME = 'M_LambdaDecalPBR'
 SPRITE_NAME = 'M_LambdaSprite'
 SPRITE_NOZ_NAME = 'M_LambdaSpriteNoZ'
 LEVEL_PATH = '/Game/LambdaEngine/Maps/LambdaEntry'
@@ -52,6 +54,56 @@ def scan_assets():
     registry = unreal.AssetRegistryHelpers.get_asset_registry()
     registry.scan_paths_synchronous([MATERIAL_PATH, '/Game/LambdaEngine'], force_rescan=True)
     registry.wait_for_completion()
+
+
+def build_cutoff_fade(material, x, y):
+    """Source 2's F_CUTOFF_ANGLE for projected decals (vr_projected_decals: g_flCutoffAngle 60, softness 5 on
+    every HL:A bullet hole): a pixel whose surface faces more than the cutoff away from the decal's projection
+    axis is discarded, which is what stops a decal stamped near a corner from smearing down the adjacent face.
+
+    A DBuffer decal cannot read the scene normal (it runs before the base pass), so the receiving surface's
+    normal is rebuilt from the screen-space derivatives of world position. Returns a 0..1 factor for opacity.
+    """
+    mel = unreal.MaterialEditingLibrary
+
+    def expr(cls, dx, dy):
+        return mel.create_material_expression(material, cls, x + dx, y + dy)
+
+    wp = expr(unreal.MaterialExpressionWorldPosition, 0, 0)
+    ddx = expr(unreal.MaterialExpressionDDX, 160, -40)
+    ddy = expr(unreal.MaterialExpressionDDY, 160, 40)
+    connect(wp, '', ddx, '')
+    connect(wp, '', ddy, '')
+    cross = expr(unreal.MaterialExpressionCrossProduct, 320, 0)
+    connect(ddx, '', cross, 'A')
+    connect(ddy, '', cross, 'B')
+    surface_n = expr(unreal.MaterialExpressionNormalize, 460, 0)
+    connect(cross, '', surface_n, '')
+
+    # The decal projects along its local X; in world space that is the axis to compare against.
+    local_x = expr(unreal.MaterialExpressionConstant3Vector, 0, 160)
+    local_x.set_editor_property('constant', unreal.LinearColor(1.0, 0.0, 0.0, 1.0))
+    axis = expr(unreal.MaterialExpressionTransform, 160, 160)
+    axis.set_editor_property('transform_source_type', unreal.MaterialVectorCoordTransformSource.TRANSFORMSOURCE_LOCAL)
+    axis.set_editor_property('transform_type', unreal.MaterialVectorCoordTransform.TRANSFORM_WORLD)
+    connect(local_x, '', axis, '')
+
+    dot = expr(unreal.MaterialExpressionDotProduct, 600, 80)
+    connect(surface_n, '', dot, 'A')
+    connect(axis, '', dot, 'B')
+    facing = expr(unreal.MaterialExpressionAbs, 700, 80)
+    connect(dot, '', facing, '')
+
+    # cos(60 deg) = 0.5; a 5 degree soft edge spans cos(55) - cos(60) = 0.0736.
+    above = expr(unreal.MaterialExpressionSubtract, 800, 80)
+    connect(facing, '', above, 'A')
+    above.set_editor_property('const_b', 0.5)
+    soft = expr(unreal.MaterialExpressionDivide, 900, 80)
+    connect(above, '', soft, 'A')
+    soft.set_editor_property('const_b', 0.0736)
+    fade = expr(unreal.MaterialExpressionSaturate, 1000, 80)
+    connect(soft, '', fade, '')
+    return fade
 
 
 def ensure_master_material():
@@ -368,13 +420,209 @@ def ensure_decal_material():
     connect(tex_param, 'A', opacity_sel, 'A')
     connect(opacity_mod, '', opacity_sel, 'B')
     connect(modulate, '', opacity_sel, 'Alpha')
-    opacity = expr(unreal.MaterialExpressionMultiply, -220, 1200)
-    connect(opacity_sel, '', opacity, 'A')
-    connect(in_tile, '', opacity, 'B')
+    opacity_tile = expr(unreal.MaterialExpressionMultiply, -220, 1200)
+    connect(opacity_sel, '', opacity_tile, 'A')
+    connect(in_tile, '', opacity_tile, 'B')
+    cutoff = build_cutoff_fade(material, -1400, 1700)
+    opacity = expr(unreal.MaterialExpressionMultiply, -100, 1200)
+    connect(opacity_tile, '', opacity, 'A')
+    connect(cutoff, '', opacity, 'B')
     connect_property(opacity, '', unreal.MaterialProperty.MP_OPACITY)
 
     # A bullet hole is a rough pit, not a polished one.
     roughness = scalar('Roughness', 0.95, -360, 1380)
+    connect_property(roughness, '', unreal.MaterialProperty.MP_ROUGHNESS)
+
+    mel.recompile_material(material)
+    unreal.EditorAssetLibrary.save_asset(full_path, only_if_is_dirty=False)
+    log(f'created {full_path}')
+    return material
+
+
+def ensure_decal_pbr_material():
+    # Deferred decal master for decals that bring their own maps: colour (alpha = coverage), tangent-space normal,
+    # height (white = undisturbed surface, dark = deep) and ambient occlusion. This is what Source 2's
+    # vr_projected_decals draws Half-Life: Alyx's bullet holes with (F_PARALLAX, 8-32 samples, g_flHeightMapScale
+    # 0.1, a 60-degree cutoff), and Tools/ImportSource2Decals.py writes those decals for this master.
+    #
+    # The parallax, grazing fade and out-of-tile masking are the same as M_LambdaDecal's; the difference is that
+    # nothing here is derived - the height drives POM directly, the normal is the authored one, and AO darkens the
+    # colour since a DBuffer decal has no occlusion channel of its own.
+    full_path = f'{MATERIAL_PATH}/{DECAL_PBR_NAME}'
+    if unreal.EditorAssetLibrary.does_asset_exist(full_path):
+        log(f'{full_path} already exists')
+        return unreal.load_asset(full_path)
+
+    tools = unreal.AssetToolsHelpers.get_asset_tools()
+    material = tools.create_asset(DECAL_PBR_NAME, MATERIAL_PATH, unreal.Material, unreal.MaterialFactoryNew())
+    if material is None:
+        raise RuntimeError(f'Could not create {full_path}')
+
+    material.set_editor_property('material_domain', unreal.MaterialDomain.MD_DEFERRED_DECAL)
+    material.set_editor_property('blend_mode', unreal.BlendMode.BLEND_TRANSLUCENT)
+
+    mel = unreal.MaterialEditingLibrary
+
+    def expr(cls, x, y):
+        return mel.create_material_expression(material, cls, x, y)
+
+    def scalar(name, value, x, y):
+        e = expr(unreal.MaterialExpressionScalarParameter, x, y)
+        e.set_editor_property('parameter_name', name)
+        e.set_editor_property('default_value', value)
+        return e
+
+    default_tex = unreal.load_asset('/Engine/EngineResources/DefaultTexture')
+    default_normal = unreal.load_asset('/Engine/EngineMaterials/DefaultNormal')
+    white_tex = unreal.load_asset('/Engine/EngineResources/WhiteSquareTexture')
+
+    # ---- parameters ----
+    texcoord = expr(unreal.MaterialExpressionTextureCoordinate, -2200, 0)
+    depth = scalar('DecalDepth', 1.0, -2200, 200)
+    height_scale = scalar('HeightScale', 0.1, -2200, 300)      # Source 2 g_flHeightMapScale
+    flip_green = scalar('FlipGreen', 0.0, -2200, 400)          # 1 if the normal map's green points the other way
+
+    height_obj = expr(unreal.MaterialExpressionTextureObjectParameter, -2200, 850)
+    height_obj.set_editor_property('parameter_name', 'HeightMap')
+    if white_tex:
+        height_obj.set_editor_property('texture', white_tex)
+    height_obj.set_editor_property('sampler_type', unreal.MaterialSamplerType.SAMPLERTYPE_LINEAR_GRAYSCALE)
+
+    # ---- grazing fade (see M_LambdaDecal) ----
+    cam_ts = expr(unreal.MaterialExpressionTransform, -2200, 100)
+    cam_ts.set_editor_property('transform_source_type', unreal.MaterialVectorCoordTransformSource.TRANSFORMSOURCE_WORLD)
+    cam_ts.set_editor_property('transform_type', unreal.MaterialVectorCoordTransform.TRANSFORM_TANGENT)
+    cam_world = expr(unreal.MaterialExpressionCameraVectorWS, -2400, 100)
+    connect(cam_world, '', cam_ts, '')
+    cam_z = expr(unreal.MaterialExpressionComponentMask, -2040, 100)
+    cam_z.set_editor_property('r', False); cam_z.set_editor_property('g', False)
+    cam_z.set_editor_property('b', True); cam_z.set_editor_property('a', False)
+    connect(cam_ts, '', cam_z, '')
+    cam_abs = expr(unreal.MaterialExpressionAbs, -1940, 100)
+    connect(cam_z, '', cam_abs, '')
+    fade_sub = expr(unreal.MaterialExpressionSubtract, -1860, 100)
+    connect(cam_abs, '', fade_sub, 'A')
+    fade_sub.set_editor_property('const_b', 0.15)
+    fade_div = expr(unreal.MaterialExpressionDivide, -1780, 100)
+    connect(fade_sub, '', fade_div, 'A')
+    fade_div.set_editor_property('const_b', 0.35)
+    grazing_fade = expr(unreal.MaterialExpressionSaturate, -1700, 100)
+    connect(fade_div, '', grazing_fade, '')
+
+    depth_eff = expr(unreal.MaterialExpressionMultiply, -2000, 200)
+    connect(depth, '', depth_eff, 'A')
+    connect(grazing_fade, '', depth_eff, 'B')
+    height_ratio = expr(unreal.MaterialExpressionMultiply, -1900, 200)
+    connect(depth_eff, '', height_ratio, 'A')
+    connect(height_scale, '', height_ratio, 'B')
+
+    # ---- POM ----
+    pom = expr(unreal.MaterialExpressionMaterialFunctionCall, -1800, 200)
+    pom_fn = unreal.load_asset('/Engine/Functions/Engine_MaterialFunctions01/Texturing/ParallaxOcclusionMapping')
+    if pom_fn is None:
+        raise RuntimeError('ParallaxOcclusionMapping material function not found')
+    pom.set_editor_property('material_function', pom_fn)
+    min_steps = expr(unreal.MaterialExpressionConstant, -2000, 280)
+    min_steps.set_editor_property('r', 8.0)
+    max_steps = expr(unreal.MaterialExpressionConstant, -2000, 340)
+    max_steps.set_editor_property('r', 32.0)
+    channel = expr(unreal.MaterialExpressionConstant4Vector, -2000, 420)
+    channel.set_editor_property('constant', unreal.LinearColor(1.0, 0.0, 0.0, 0.0))
+    ref_plane = expr(unreal.MaterialExpressionConstant, -2000, 520)
+    ref_plane.set_editor_property('r', 1.0)
+    connect(height_obj, '', pom, 'Heightmap Texture')
+    connect(height_ratio, '', pom, 'Height Ratio')
+    connect(min_steps, '', pom, 'Min Steps')
+    connect(max_steps, '', pom, 'Max Steps')
+    connect(channel, '', pom, 'Heightmap Channel')
+    connect(ref_plane, '', pom, 'Reference Plane')
+    connect_any(texcoord, '', pom, ['UVs', 'UV', 'Coordinates'])
+
+    puv = expr(unreal.MaterialExpressionClamp, -1500, 200)
+    puv.set_editor_property('min_default', 0.0)
+    puv.set_editor_property('max_default', 1.0)
+    connect(pom, 'Parallax UVs', puv, '')
+
+    # in_tile: a ray that leaves the decal is transparent, not stretched edge texels
+    puv_u = expr(unreal.MaterialExpressionComponentMask, -1500, 40)
+    puv_u.set_editor_property('r', True); puv_u.set_editor_property('g', False)
+    puv_u.set_editor_property('b', False); puv_u.set_editor_property('a', False)
+    connect(pom, 'Parallax UVs', puv_u, '')
+    puv_v = expr(unreal.MaterialExpressionComponentMask, -1500, -40)
+    puv_v.set_editor_property('r', False); puv_v.set_editor_property('g', True)
+    puv_v.set_editor_property('b', False); puv_v.set_editor_property('a', False)
+    connect(pom, 'Parallax UVs', puv_v, '')
+
+    def inside01(v, x, y):
+        lo = expr(unreal.MaterialExpressionStep, x, y)
+        connect(v, '', lo, 'X')
+        lo.set_editor_property('const_y', 0.0)
+        hi = expr(unreal.MaterialExpressionStep, x, y + 60)
+        connect(v, '', hi, 'Y')
+        hi.set_editor_property('const_x', 1.0)
+        both = expr(unreal.MaterialExpressionMultiply, x + 120, y + 30)
+        connect(lo, '', both, 'A')
+        connect(hi, '', both, 'B')
+        return both
+
+    in_u = inside01(puv_u, -1380, 40)
+    in_v = inside01(puv_v, -1380, -80)
+    in_tile = expr(unreal.MaterialExpressionMultiply, -1180, 0)
+    connect(in_u, '', in_tile, 'A')
+    connect(in_v, '', in_tile, 'B')
+
+    # ---- the authored maps at the parallax UV ----
+    color_tex = expr(unreal.MaterialExpressionTextureSampleParameter2D, -1000, 600)
+    color_tex.set_editor_property('parameter_name', 'BaseTexture')
+    if default_tex:
+        color_tex.set_editor_property('texture', default_tex)
+    connect(puv, '', color_tex, 'UVs')
+
+    normal_tex = expr(unreal.MaterialExpressionTextureSampleParameter2D, -1000, 900)
+    normal_tex.set_editor_property('parameter_name', 'NormalMap')
+    normal_tex.set_editor_property('sampler_type', unreal.MaterialSamplerType.SAMPLERTYPE_NORMAL)
+    if default_normal:
+        normal_tex.set_editor_property('texture', default_normal)
+    connect(puv, '', normal_tex, 'UVs')
+
+    ao_tex = expr(unreal.MaterialExpressionTextureSampleParameter2D, -1000, 1200)
+    ao_tex.set_editor_property('parameter_name', 'AOMap')
+    ao_tex.set_editor_property('sampler_type', unreal.MaterialSamplerType.SAMPLERTYPE_LINEAR_GRAYSCALE)
+    if white_tex:
+        ao_tex.set_editor_property('texture', white_tex)
+    connect(puv, '', ao_tex, 'UVs')
+
+    # colour = albedo * AO (a DBuffer decal has no AO channel of its own, so it is baked into the colour)
+    colour = expr(unreal.MaterialExpressionMultiply, -600, 700)
+    connect(color_tex, 'RGB', colour, 'A')
+    connect(ao_tex, 'R', colour, 'B')
+    connect_property(colour, '', unreal.MaterialProperty.MP_BASE_COLOR)
+
+    # normal, with an optional green flip for maps authored in the other handedness
+    flip_vec = expr(unreal.MaterialExpressionLinearInterpolate, -800, 960)
+    one_vec = expr(unreal.MaterialExpressionConstant3Vector, -1000, 1060)
+    one_vec.set_editor_property('constant', unreal.LinearColor(1.0, 1.0, 1.0, 1.0))
+    flip_const = expr(unreal.MaterialExpressionConstant3Vector, -1000, 1120)
+    flip_const.set_editor_property('constant', unreal.LinearColor(1.0, -1.0, 1.0, 1.0))
+    connect(one_vec, '', flip_vec, 'A')
+    connect(flip_const, '', flip_vec, 'B')
+    connect(flip_green, '', flip_vec, 'Alpha')
+    normal = expr(unreal.MaterialExpressionMultiply, -600, 920)
+    connect(normal_tex, 'RGB', normal, 'A')
+    connect(flip_vec, '', normal, 'B')
+    connect_property(normal, '', unreal.MaterialProperty.MP_NORMAL)
+
+    # opacity = the colour map's coverage, masked to the tile and to surfaces facing the projection (cutoff angle)
+    opacity_tile = expr(unreal.MaterialExpressionMultiply, -600, 1300)
+    connect(color_tex, 'A', opacity_tile, 'A')
+    connect(in_tile, '', opacity_tile, 'B')
+    cutoff = build_cutoff_fade(material, -1400, 1700)
+    opacity = expr(unreal.MaterialExpressionMultiply, -460, 1300)
+    connect(opacity_tile, '', opacity, 'A')
+    connect(cutoff, '', opacity, 'B')
+    connect_property(opacity, '', unreal.MaterialProperty.MP_OPACITY)
+
+    roughness = scalar('Roughness', 0.9, -600, 1420)
     connect_property(roughness, '', unreal.MaterialProperty.MP_ROUGHNESS)
 
     mel.recompile_material(material)
@@ -457,6 +705,7 @@ def ensure_sprite_materials():
 scan_assets()
 ensure_master_material()
 ensure_decal_material()
+ensure_decal_pbr_material()
 ensure_sprite_materials()
 ensure_entry_level()
 log('done')
