@@ -69,6 +69,10 @@ void ULambdaMaterialLibrary::Initialize()
 	{
 		SpriteMasterMaterial = Cast<UMaterialInterface>(Settings.SpriteMaterial.TryLoad());
 	}
+	if (Settings.SpriteMaterialNoZ.IsValid())
+	{
+		SpriteMasterMaterialNoZ = Cast<UMaterialInterface>(Settings.SpriteMaterialNoZ.TryLoad());
+	}
 	if (!FallbackMaterial)
 	{
 		FallbackMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/EngineMaterials/WorldGridMaterial.WorldGridMaterial"));
@@ -175,6 +179,7 @@ bool ULambdaMaterialLibrary::LoadMaterialInfo(const FString& SourceMaterialName,
 	OutInfo.bNoCull = Root.GetBool(TEXT("$nocull"));
 	OutInfo.bSelfIllum = Root.GetBool(TEXT("$selfillum"));
 	OutInfo.SurfaceProp = Root.GetString(TEXT("$surfaceprop"));
+	OutInfo.bIgnoreZ = Root.GetBool(TEXT("$ignorez"));
 	return true;
 }
 
@@ -623,9 +628,13 @@ UMaterialInterface* ULambdaMaterialLibrary::GetSpriteMaterial(const FString& Sou
 		FSourceMaterialInfo Info;
 		if (LoadMaterialInfo(Name, Info))
 		{
+			// "$ignorez 1" sprites draw without a depth test - Source uses them for the first-person muzzle
+			// flash so it is not occluded by the very view model it is attached to.
+			UMaterialInterface* Master = (Info.bIgnoreZ && SpriteMasterMaterialNoZ)
+				? SpriteMasterMaterialNoZ.Get() : SpriteMasterMaterial.Get();
 			if (UTexture2D* Texture = Info.BaseTexture.IsEmpty() ? nullptr : GetTexture(Info.BaseTexture))
 			{
-				UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(SpriteMasterMaterial, this,
+				UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(Master, this,
 					*FString::Printf(TEXT("Sprite_%s"), *Name.Replace(TEXT("/"), TEXT("_"))));
 				if (MID)
 				{
@@ -636,6 +645,11 @@ UMaterialInterface* ULambdaMaterialLibrary::GetSpriteMaterial(const FString& Sou
 		}
 	}
 
+	if (!Result)
+	{
+		UE_LOG(LogLambdaSource, Warning, TEXT("Sprite material '%s' could not be built (master=%s)"),
+			*Name, *GetNameSafe(SpriteMasterMaterial));
+	}
 	SpriteCache.Add(Name, Result);
 	return Result;
 }

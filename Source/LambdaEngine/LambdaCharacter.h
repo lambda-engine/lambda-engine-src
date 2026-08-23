@@ -111,6 +111,8 @@ protected:
 	float MuzzleFlashSpriteDieTime = 0.0f;
 	float MuzzleFlashLightDieTime = 0.0f;
 	float MuzzleFlashLightRadius = 0.0f;
+	/** Frames the flash is held visible regardless of its die time, so a sub-frame lifetime still renders once. */
+	int32 MuzzleFlashHoldFrames = 0;
 
 	void UpdateMuzzleFlash();
 

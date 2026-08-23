@@ -27,6 +27,7 @@
 #include "SourceBSPWorldActor.h"
 #include "Kismet/GameplayStatics.h"
 #include "SourceStudioModelComponent.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "ProceduralMeshComponent.h"
 #include "Components/PointLightComponent.h"
 #include "Engine/World.h"
@@ -54,11 +55,18 @@ ALambdaCharacter::ALambdaCharacter()
 	FirstPersonCamera->SetRelativeLocation(FVector(0.0f, 0.0f, EyeHeightCm - HalfHeightCm));
 	FirstPersonCamera->bUsePawnControlRotation = true;
 	FirstPersonCamera->FieldOfView = 90.0f;
+	// Source's viewmodel_fov: the view model is drawn at its own, narrower field of view.
+	FirstPersonCamera->bEnableFirstPersonFieldOfView = true;
+	FirstPersonCamera->bEnableFirstPersonScale = true;
 
 	// Source draws the view model with its own narrower FOV (viewmodel_fov 54) so it does not distort at the edges.
 	ViewModelMesh = CreateDefaultSubobject<USourceStudioModelComponent>(TEXT("ViewModel"));
 	ViewModelMesh->SetupAttachment(FirstPersonCamera);
 	ViewModelMesh->SetMobility(EComponentMobility::Movable);
+	// Source draws the view model in its own pass with a compressed depth range so it can never intersect the
+	// world; UE's first-person primitive path is the same idea, and it is what stops the gun pushing into a wall
+	// the player stands against.
+	ViewModelMesh->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::FirstPerson);
 
 	MuzzleFlashMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("MuzzleFlash"));
 	MuzzleFlashMesh->SetupAttachment(FirstPersonCamera);
@@ -66,6 +74,8 @@ ALambdaCharacter::ALambdaCharacter()
 	MuzzleFlashMesh->SetCastShadow(false);
 	MuzzleFlashMesh->SetMobility(EComponentMobility::Movable);
 	MuzzleFlashMesh->SetVisibility(false);
+	// The flash belongs to the view model, so it has to live in the same first-person space as the gun.
+	MuzzleFlashMesh->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::FirstPerson);
 
 	MuzzleFlashLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("MuzzleFlashLight"));
 	MuzzleFlashLight->SetupAttachment(FirstPersonCamera);
@@ -75,6 +85,9 @@ ALambdaCharacter::ALambdaCharacter()
 	// el->color in ProcessMuzzleFlashEvent: a warm orange flash.
 	MuzzleFlashLight->SetLightColor(FLinearColor(FColor(255, 192, 64)));
 	MuzzleFlashLight->SetIntensityUnits(ELightUnits::Candelas);
+	// Channel 1 is "world only": the map geometry opts into it, the view model does not, so a flash bright enough
+	// to light the room does not blow out the hands holding the gun a few centimetres away.
+	MuzzleFlashLight->SetLightingChannels(false, true, false);
 
 	// No visible body for the POC.
 	if (USkeletalMeshComponent* MeshComp = GetMesh())
@@ -134,6 +147,9 @@ void ALambdaCharacter::BeginPlay()
 	// are implemented these come from the map instead.
 	GiveWeapon(TEXT("weapon_pistol"));
 	GiveAmmo(TEXT("Pistol"), 68);
+
+	FirstPersonCamera->FirstPersonFieldOfView = Settings.ViewModelFOV;
+	FirstPersonCamera->FirstPersonScale = Settings.ViewModelFirstPersonScale;
 
 	FirstPersonCamera->PostProcessBlendWeight = 1.0f;
 	FirstPersonCamera->PostProcessSettings.bOverride_AutoExposureBias = true;
@@ -545,6 +561,14 @@ void ALambdaCharacter::Input_Quit()
 // Muzzle flash - FX_MuzzleEffect (game/client/fx.cpp) and C_BaseAnimating::ProcessMuzzleFlashEvent
 // ---------------------------------------------------------------------------------------------------------------------
 
+// Debug aid: Source's first-person muzzle flash lives for 0.01s, which is a single frame and impossible to
+// inspect. Setting this holds it on screen for that many seconds instead.
+static float GMuzzleFlashHoldTime = 0.0f;
+static FAutoConsoleVariableRef CVarMuzzleFlashHoldTime(
+	TEXT("lambda.muzzleflash.holdtime"),
+	GMuzzleFlashHoldTime,
+	TEXT("Seconds to keep the muzzle flash sprite on screen (0 = Source's 0.01s)"));
+
 void ALambdaCharacter::DoMuzzleFlash()
 {
 	if (!MuzzleFlashMesh || !ViewModelMesh || !ViewModelMesh->HasModel())
@@ -570,72 +594,114 @@ void ALambdaCharacter::DoMuzzleFlash()
 		ViewModelMaterials->Initialize();
 	}
 
-	// FX_MuzzleEffect picks one of effects/muzzleflash1..4 per particle; one material for the whole burst is
-	// close enough here and keeps this to a single mesh section.
-	const FString SpriteName = FString::Printf(TEXT("effects/muzzleflash%d"), FMath::RandRange(1, 4));
-	UMaterialInterface* SpriteMaterial = ViewModelMaterials->GetSpriteMaterial(SpriteName);
-	if (!SpriteMaterial)
-	{
-		return;
-	}
-
 	// The quads are built in the muzzle flash component's space, which is the camera's, so "facing the camera"
 	// is simply "perpendicular to the component's forward axis".
 	const FTransform ToLocal = MuzzleFlashMesh->GetComponentTransform().Inverse();
 	const FVector LocalMuzzle = ToLocal.TransformPosition(MuzzleWorld);
 	const FVector LocalForward = ToLocal.TransformVectorNoScale(MuzzleForward).GetSafeNormal();
 
-	TArray<FVector> Vertices;
-	TArray<int32> Triangles;
-	TArray<FVector> Normals;
-	TArray<FVector2D> UVs;
-	TArray<FLinearColor> Colors;
-	TArray<FProcMeshTangent> Tangents;
+	// CTempEnts::MuzzleFlash_Pistol_Player (c_te_legacytempents.cpp). Note this is a different effect from the
+	// one NPCs and dropped weapons use: it is tighter, far shorter lived, and draws with the "_noz" materials so
+	// it is not swallowed by the view model it sits on top of.
+	static constexpr int32 NumFlashParticles = 5;
+	static constexpr int32 NumFlashMaterials = 4;
+	const float FlashScale = FMath::FRandRange(1.0f, 1.25f);
+	const FLinearColor FlashTint = FLinearColor(FColor(255, 255, (uint8)FMath::RandRange(200, 255)));
 
-	const float FlashScale = FMath::FRandRange(0.75f, 1.25f);
-
-	// FX_MuzzleEffect lays 8 sprites along the muzzle direction, shrinking with distance.
-	for (int32 i = 1; i < 9; ++i)
+	struct FFlashBucket
 	{
-		const FVector Centre = LocalMuzzle + LocalForward * (i * 2.0f * FlashScale * Scale);
-		const float SizeUnits = (FMath::FRandRange(6.0f, 9.0f) * (12 - i) / 9.0f) * FlashScale;
+		TArray<FVector> Vertices;
+		TArray<int32> Triangles;
+		TArray<FVector> Normals;
+		TArray<FVector2D> UVs;
+		TArray<FLinearColor> Colors;
+		TArray<FProcMeshTangent> Tangents;
+	};
+	FFlashBucket Buckets[NumFlashMaterials];
+
+	for (int32 i = 1; i < NumFlashParticles + 1; ++i)
+	{
+		// Source picks one of the four flash materials per particle, so group the quads by material and emit one
+		// mesh section per material rather than one draw per quad.
+		FFlashBucket& Bucket = Buckets[FMath::RandRange(0, NumFlashMaterials - 1)];
+
+		const FVector Centre = LocalMuzzle + LocalForward * (i * 4.0f * FlashScale * Scale);
+		const float SizeUnits = FMath::FRandRange(6.0f, 8.0f) * (8 - i) / 6.0f * FlashScale;
 		const float Half = SizeUnits * Scale * 0.5f;
 
-		// Camera-facing quad with a random roll, as Source gives each particle.
+		// Camera-facing quad with the random roll Source gives each particle.
 		const float Roll = FMath::FRandRange(0.0f, 2.0f * PI);
 		const FVector Right = FVector(0.0, FMath::Cos(Roll), FMath::Sin(Roll)) * Half;
 		const FVector Up = FVector(0.0, -FMath::Sin(Roll), FMath::Cos(Roll)) * Half;
 
-		const int32 Base = Vertices.Num();
-		Vertices.Add(Centre - Right - Up);
-		Vertices.Add(Centre + Right - Up);
-		Vertices.Add(Centre + Right + Up);
-		Vertices.Add(Centre - Right + Up);
-		UVs.Add(FVector2D(0, 1)); UVs.Add(FVector2D(1, 1)); UVs.Add(FVector2D(1, 0)); UVs.Add(FVector2D(0, 0));
+		const int32 Base = Bucket.Vertices.Num();
+		Bucket.Vertices.Add(Centre - Right - Up);
+		Bucket.Vertices.Add(Centre + Right - Up);
+		Bucket.Vertices.Add(Centre + Right + Up);
+		Bucket.Vertices.Add(Centre - Right + Up);
+		Bucket.UVs.Add(FVector2D(0, 1)); Bucket.UVs.Add(FVector2D(1, 1));
+		Bucket.UVs.Add(FVector2D(1, 0)); Bucket.UVs.Add(FVector2D(0, 0));
 		for (int32 v = 0; v < 4; ++v)
 		{
-			Normals.Add(FVector(-1, 0, 0));
-			Colors.Add(FLinearColor::White);
-			Tangents.Add(FProcMeshTangent(0, 1, 0));
+			Bucket.Normals.Add(FVector(-1, 0, 0));
+			Bucket.Colors.Add(FLinearColor::White);
+			Bucket.Tangents.Add(FProcMeshTangent(0, 1, 0));
 		}
-		Triangles.Append({ Base, Base + 1, Base + 2, Base, Base + 2, Base + 3 });
+		Bucket.Triangles.Append({ Base, Base + 1, Base + 2, Base, Base + 2, Base + 3 });
 	}
 
 	MuzzleFlashMesh->ClearAllMeshSections();
-	MuzzleFlashMesh->CreateMeshSection_LinearColor(0, Vertices, Triangles, Normals, UVs, Colors, Tangents, /*bCreateCollision=*/ false);
-	MuzzleFlashMesh->SetMaterial(0, SpriteMaterial);
-	MuzzleFlashMesh->SetVisibility(true);
-	MuzzleFlashSpriteDieTime = Now + 0.1f;		// pParticle->m_flDieTime
+	int32 SectionIndex = 0;
+	for (int32 m = 0; m < NumFlashMaterials; ++m)
+	{
+		const FFlashBucket& Bucket = Buckets[m];
+		if (Bucket.Vertices.Num() == 0)
+		{
+			continue;
+		}
+		// "_noz": the first-person flash materials set "$ignorez 1" so the flash is not swallowed by the very
+		// view model it is attached to.
+		UMaterialInterface* Material = ViewModelMaterials->GetSpriteMaterial(
+			FString::Printf(TEXT("effects/muzzleflash%d_noz"), m + 1));
+		if (!Material)
+		{
+			continue;
+		}
+		// m_uchColor: white with a slightly random warm-to-cool blue channel. Source varies this per particle
+		// through vertex colour; one value for the whole flash is as far as a shared material instance goes.
+		if (UMaterialInstanceDynamic* MID = Cast<UMaterialInstanceDynamic>(Material))
+		{
+			MID->SetVectorParameterValue(TEXT("Tint"), FlashTint);
+			MID->SetScalarParameterValue(TEXT("Brightness"), Settings.MuzzleFlashBrightness);
+		}
+		MuzzleFlashMesh->CreateMeshSection_LinearColor(SectionIndex, Bucket.Vertices, Bucket.Triangles,
+			Bucket.Normals, Bucket.UVs, Bucket.Colors, Bucket.Tangents, /*bCreateCollision=*/ false);
+		MuzzleFlashMesh->SetMaterial(SectionIndex, Material);
+		++SectionIndex;
+	}
+	if (SectionIndex == 0)
+	{
+		return;
+	}
 
-	// ProcessMuzzleFlashEvent's elight: a short warm flash lighting whatever the gun is pointed at.
+	MuzzleFlashMesh->SetVisibility(true);
+	// m_flDieTime is 0.01s, well under a frame at any sane framerate, so hold the flash for one rendered frame
+	// rather than letting it be skipped entirely.
+	MuzzleFlashSpriteDieTime = Now + FMath::Max(0.01f, GMuzzleFlashHoldTime);
+	MuzzleFlashHoldFrames = 1;
+
+	// ProcessMuzzleFlashEvent's elight. Source's version only lights models, never the world, which is why a shot
+	// in HL2 lights your hands but leaves the room dark; this one is sized to actually light the room, and is kept
+	// off the view model by its lighting channel so it cannot blow out the hands a few centimetres away.
 	if (MuzzleFlashLight && Settings.bMuzzleFlashLight)
 	{
-		MuzzleFlashLightRadius = FMath::RandRange(32, 64) * Scale;
+		MuzzleFlashLightRadius = Settings.MuzzleFlashLightRadiusUnits * Scale;
 		MuzzleFlashLight->SetWorldLocation(MuzzleWorld);
 		MuzzleFlashLight->SetAttenuationRadius(MuzzleFlashLightRadius);
 		MuzzleFlashLight->SetIntensity(Settings.MuzzleFlashLightIntensity);
+		MuzzleFlashLight->SetLightingChannels(Settings.bMuzzleFlashLightsViewModel, true, false);
 		MuzzleFlashLight->SetVisibility(true);
-		MuzzleFlashLightDieTime = Now + 0.05f;	// el->die
+		MuzzleFlashLightDieTime = Now + FMath::Max(0.05f, GMuzzleFlashHoldTime);	// el->die
 	}
 }
 
@@ -648,9 +714,16 @@ void ALambdaCharacter::UpdateMuzzleFlash()
 	}
 	const float Now = World->GetTimeSeconds();
 
-	if (MuzzleFlashMesh && MuzzleFlashMesh->IsVisible() && Now >= MuzzleFlashSpriteDieTime)
+	if (MuzzleFlashMesh && MuzzleFlashMesh->IsVisible())
 	{
-		MuzzleFlashMesh->SetVisibility(false);
+		if (MuzzleFlashHoldFrames > 0)
+		{
+			--MuzzleFlashHoldFrames;
+		}
+		else if (Now >= MuzzleFlashSpriteDieTime)
+		{
+			MuzzleFlashMesh->SetVisibility(false);
+		}
 	}
 
 	if (MuzzleFlashLight && MuzzleFlashLight->IsVisible())

@@ -2,8 +2,34 @@
 
 #include "CoreMinimal.h"
 #include "Sound/SoundWaveProcedural.h"
+#include "Sound/SoundGenerator.h"
 #include "SourceWavFile.h"
 #include "LambdaSoundLibrary.generated.h"
+
+/**
+ * Plays decoded Source PCM and, crucially, reports when it has run out.
+ *
+ * The audio mixer only ever ends a procedural voice when its ISoundGenerator says IsFinished(); the return value
+ * of OnGeneratePCMAudio is not consulted for that. A wave without a generator therefore holds its voice for the
+ * lifetime of the game, and once every channel is held no further sound can start - which is what made rapid
+ * firing go silent after a few dozen shots.
+ */
+class LAMBDASOURCE_API FLambdaSoundGenerator : public ISoundGenerator
+{
+public:
+	FLambdaSoundGenerator(TArray<uint8> InPcm, int32 InNumChannels, bool bInLoop);
+
+	virtual int32 OnGenerateAudio(float* OutAudio, int32 NumSamples) override;
+	virtual bool IsFinished() const override { return bFinished; }
+	virtual int32 GetNumChannels() const override { return NumChannels; }
+
+private:
+	TArray<uint8> Pcm;		// interleaved int16
+	int32 Cursor = 0;
+	int32 NumChannels = 1;
+	bool bLoop = false;
+	bool bFinished = false;
+};
 
 /**
  * A procedural sound wave fed from PCM decoded out of a Source .wav (loose or inside a mounted VPK), so game sounds
@@ -18,16 +44,11 @@ public:
 	/** Fills in the wave from decoded PCM. */
 	void InitFromWav(const FSourceWavData& Wav, bool bInLoop);
 
-	virtual int32 OnGeneratePCMAudio(TArray<uint8>& OutAudio, int32 NumSamples) override;
-
-	/** True once a non-looping sound has played all of its data. */
-	bool IsFinished() const { return bFinished; }
+	virtual ISoundGeneratorPtr CreateSoundGenerator(const FSoundGeneratorInitParams& InParams) override;
 
 private:
 	TArray<uint8> Pcm;
-	int32 Cursor = 0;
 	bool bLoop = false;
-	bool bFinished = false;
 };
 
 /**

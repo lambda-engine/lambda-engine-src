@@ -18,6 +18,8 @@ class LAMBDASOURCE_API USourceBrushMeshComponent : public UProceduralMeshCompone
 	GENERATED_BODY()
 
 public:
+	USourceBrushMeshComponent(const FObjectInitializer& ObjectInitializer);
+
 	/** Source material name per section index, parallel to the procedural mesh's sections. */
 	UPROPERTY(Transient)
 	TArray<FString> SectionMaterialNames;

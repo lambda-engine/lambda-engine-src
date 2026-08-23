@@ -7,12 +7,44 @@
 // ULambdaSoundWave
 // ---------------------------------------------------------------------------------------------------------------------
 
+FLambdaSoundGenerator::FLambdaSoundGenerator(TArray<uint8> InPcm, int32 InNumChannels, bool bInLoop)
+	: Pcm(MoveTemp(InPcm))
+	, NumChannels(FMath::Max(1, InNumChannels))
+	, bLoop(bInLoop)
+{
+}
+
+int32 FLambdaSoundGenerator::OnGenerateAudio(float* OutAudio, int32 NumSamples)
+{
+	// The mixer wants float samples; the decoded Source wav is interleaved int16.
+	int32 Written = 0;
+	while (Written < NumSamples && Pcm.Num() >= 2)
+	{
+		if (Cursor + 1 >= Pcm.Num())
+		{
+			if (!bLoop)
+			{
+				break;
+			}
+			Cursor = 0;
+		}
+		const int16 Sample = (int16)((uint16)Pcm[Cursor] | ((uint16)Pcm[Cursor + 1] << 8));
+		OutAudio[Written++] = (float)Sample / 32768.0f;
+		Cursor += 2;
+	}
+
+	if (Written < NumSamples)
+	{
+		// Out of data on a one-shot. Report it so the mixer releases the voice instead of holding it forever.
+		bFinished = true;
+	}
+	return Written;
+}
+
 void ULambdaSoundWave::InitFromWav(const FSourceWavData& Wav, bool bInLoop)
 {
 	Pcm = Wav.Pcm16;
-	Cursor = 0;
 	bLoop = bInLoop;
-	bFinished = false;
 
 	SetSampleRate(Wav.SampleRate);
 	NumChannels = Wav.NumChannels;
@@ -21,38 +53,10 @@ void ULambdaSoundWave::InitFromWav(const FSourceWavData& Wav, bool bInLoop)
 	bLooping = bInLoop;
 }
 
-int32 ULambdaSoundWave::OnGeneratePCMAudio(TArray<uint8>& OutAudio, int32 NumSamples)
+ISoundGeneratorPtr ULambdaSoundWave::CreateSoundGenerator(const FSoundGeneratorInitParams& InParams)
 {
-	// The caller wants NumSamples int16 samples written into OutAudio.
-	const int32 BytesNeeded = NumSamples * sizeof(int16);
-	OutAudio.Reset();
-	OutAudio.AddUninitialized(BytesNeeded);
-	uint8* Dst = OutAudio.GetData();
-
-	int32 BytesWritten = 0;
-	while (BytesWritten < BytesNeeded && Pcm.Num() > 0)
-	{
-		if (Cursor >= Pcm.Num())
-		{
-			if (!bLoop)
-			{
-				break;
-			}
-			Cursor = 0;
-		}
-		const int32 Chunk = FMath::Min(BytesNeeded - BytesWritten, Pcm.Num() - Cursor);
-		FMemory::Memcpy(Dst + BytesWritten, Pcm.GetData() + Cursor, Chunk);
-		BytesWritten += Chunk;
-		Cursor += Chunk;
-	}
-
-	if (BytesWritten < BytesNeeded)
-	{
-		// Ran out of data on a one-shot: pad with silence and mark ourselves done.
-		FMemory::Memzero(Dst + BytesWritten, BytesNeeded - BytesWritten);
-		bFinished = true;
-	}
-	return NumSamples;
+	// A generator per playback, so two overlapping plays of the same sound do not share a read cursor.
+	return ISoundGeneratorPtr(new FLambdaSoundGenerator(Pcm, NumChannels, bLoop));
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

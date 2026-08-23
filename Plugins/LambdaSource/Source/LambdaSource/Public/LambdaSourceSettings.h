@@ -71,6 +71,10 @@ public:
 	UPROPERTY(config, EditAnywhere, Category = "Materials", meta = (AllowedClasses = "/Script/Engine.MaterialInterface"))
 	FSoftObjectPath SpriteMaterial;
 
+	/** The same, with the depth test off, for sprites whose VMT sets "$ignorez 1" (first-person muzzle flashes). */
+	UPROPERTY(config, EditAnywhere, Category = "Materials", meta = (AllowedClasses = "/Script/Engine.MaterialInterface"))
+	FSoftObjectPath SpriteMaterialNoZ;
+
 	// ---- Effects ----
 
 	/** Seconds a bullet-impact decal stays before it fades out (Source's r_decal_cullsize/decal lifetime analogue). */
@@ -83,7 +87,31 @@ public:
 
 	/** Brightness of that muzzle flash light, in candelas. */
 	UPROPERTY(config, EditAnywhere, Category = "Effects", meta = (ClampMin = "0.0"))
-	float MuzzleFlashLightIntensity = 4000.0f;
+	float MuzzleFlashLightIntensity = 2500.0f;
+
+	/**
+	 * Multiplier on the muzzle flash sprite's emissive. Source blends its flash additively over an LDR
+	 * framebuffer with no exposure; UE renders HDR with auto-exposure, so the same texture values come out far
+	 * dimmer - invisible against a lit wall. This is the compensation, not a Source value.
+	 */
+	UPROPERTY(config, EditAnywhere, Category = "Effects", meta = (ClampMin = "0.0"))
+	float MuzzleFlashBrightness = 6.0f;
+
+	/**
+	 * Reach of the muzzle flash light, in Hammer units. Source's elight is 32-64 units and only lights models,
+	 * never the world - which is why a shot in HL2 lights your hands but not the room. A light that actually
+	 * illuminates the room has to reach much further, so this is deliberately not Source's number.
+	 */
+	UPROPERTY(config, EditAnywhere, Category = "Effects", meta = (ClampMin = "1.0"))
+	float MuzzleFlashLightRadiusUnits = 300.0f;
+
+	/**
+	 * Whether the muzzle flash light also lights the view model. A light bright enough to reach across a room is
+	 * centimetres from the player's hands, and inverse-square falloff blows them out, so this is off by default
+	 * and the view model is excluded with a lighting channel.
+	 */
+	UPROPERTY(config, EditAnywhere, Category = "Effects")
+	bool bMuzzleFlashLightsViewModel = false;
 
 	// ---- Lighting ----
 
@@ -128,6 +156,21 @@ public:
 	/** Extra yaw/pitch/roll applied to the view model. Zero is the faithful value; see ViewModelOffset. */
 	UPROPERTY(config, EditAnywhere, Category = "View Model")
 	FRotator ViewModelRotation = FRotator(0.0f, 0.0f, 0.0f);
+
+	/**
+	 * Field of view the view model is drawn with, separate from the world's - Source's viewmodel_fov, which
+	 * defaults to 54 in HL2 while the world runs at 90.
+	 */
+	UPROPERTY(config, EditAnywhere, Category = "View Model", meta = (ClampMin = "5.0", ClampMax = "170.0"))
+	float ViewModelFOV = 54.0f;
+
+	/**
+	 * How far the view model is scaled towards the camera so it cannot intersect world geometry. This is UE's
+	 * first-person rendering path, and it does the same job as Source's separate view model pass with its own
+	 * compressed depth range: without it the gun pushes into a wall you stand against.
+	 */
+	UPROPERTY(config, EditAnywhere, Category = "View Model", meta = (ClampMin = "0.05", ClampMax = "1.0"))
+	float ViewModelFirstPersonScale = 0.4f;
 
 	/** Uniform scale on the view model. */
 	UPROPERTY(config, EditAnywhere, Category = "View Model", meta = (ClampMin = "0.01"))

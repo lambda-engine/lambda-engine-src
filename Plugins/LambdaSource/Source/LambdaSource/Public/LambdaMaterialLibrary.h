@@ -23,6 +23,7 @@ struct LAMBDASOURCE_API FSourceMaterialInfo
 	bool bSelfIllum = false;
 	bool bIsPatch = false;
 	FString SurfaceProp;	// $surfaceprop: the key into scripts/surfaceproperties*.txt
+	bool bIgnoreZ = false;	// $ignorez: draw without depth testing (first-person effect sprites)
 };
 
 /**
@@ -90,6 +91,9 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInterface> SpriteMasterMaterial;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInterface> SpriteMasterMaterialNoZ;
 
 	UPROPERTY(Transient)
 	TMap<FString, TObjectPtr<UMaterialInterface>> DecalCache;

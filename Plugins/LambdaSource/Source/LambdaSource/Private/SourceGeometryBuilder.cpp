@@ -210,6 +210,15 @@ void SourceGeometry::ApplyToComponent(UProceduralMeshComponent* Mesh, TArray<FSo
 	}
 }
 
+USourceBrushMeshComponent::USourceBrushMeshComponent(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
+{
+	// Map geometry opts into lighting channel 1 as well as the default, which is what lets the muzzle flash
+	// light the room while skipping the view model (which stays on channel 0 only).
+	LightingChannels.bChannel0 = true;
+	LightingChannels.bChannel1 = true;
+}
+
 FString USourceBrushMeshComponent::GetMaterialNameForFaceIndex(int32 FaceIndex) const
 {
 	int32 SectionIndex = INDEX_NONE;
