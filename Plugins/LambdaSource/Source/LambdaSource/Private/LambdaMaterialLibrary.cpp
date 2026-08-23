@@ -202,6 +202,8 @@ bool ULambdaMaterialLibrary::LoadMaterialInfo(const FString& SourceMaterialName,
 	OutInfo.Roughness = Root.GetFloat(TEXT("$roughness"), -1.0f);
 	OutInfo.Metalness = Root.GetFloat(TEXT("$metalness"), -1.0f);
 	OutInfo.bNormalMapFlipY = Root.GetBool(TEXT("$normalmapflipy"));
+	OutInfo.bPhong = Root.GetBool(TEXT("$phong"));
+	OutInfo.PhongExponent = Root.GetFloat(TEXT("$phongexponent"), 5.0f);
 	OutInfo.SelfIllumMask = NormalizeTextureName(Root.GetString(TEXT("$selfillummask")));
 	{
 		// "[r g b]" is 0..1, "{r g b}" is 0..255 (materialsystem's two colour spellings).
@@ -276,7 +278,7 @@ UMaterialInterface* ULambdaMaterialLibrary::CreateMaterial(const FString& Name)
 	// A material that brings a normal map, surface values, a tint or self-illumination goes through the lit PBR
 	// master; "$translucent 1" through its alpha-blended twin; everything else stays on the plain base master.
 	const bool bWantsPBR = !Info.BumpMap.IsEmpty() || Info.Roughness >= 0.0f || Info.Metalness >= 0.0f || Info.bSelfIllum
-		|| !Info.Color2.Equals(FVector3f(1, 1, 1));
+		|| Info.bPhong || !Info.Color2.Equals(FVector3f(1, 1, 1));
 	UMaterialInterface* Master = MasterMaterial.Get();
 	if (Info.bTranslucent && ModelMasterMaterialTranslucent)
 	{
@@ -310,18 +312,29 @@ UMaterialInterface* ULambdaMaterialLibrary::CreateMaterial(const FString& Name)
 			}
 		}
 		MID->SetScalarParameterValue(TEXT("FlipGreen"), Info.bNormalMapFlipY ? 1.0f : 0.0f);
-		if (Info.Roughness >= 0.0f) { MID->SetScalarParameterValue(TEXT("Roughness"), Info.Roughness); }
+		if (Info.Roughness >= 0.0f)
+		{
+			MID->SetScalarParameterValue(TEXT("Roughness"), Info.Roughness);
+		}
+		else if (Info.bPhong)
+		{
+			// Blinn-Phong exponent -> microfacet roughness, the usual sqrt(2 / (n + 2)) fit: $phongexponent 25 is
+			// a 0.27 roughness, 5 (Source's default) 0.53. $phongexponenttexture (per-pixel) is not carried over.
+			MID->SetScalarParameterValue(TEXT("Roughness"), FMath::Clamp(FMath::Sqrt(2.0f / (FMath::Max(Info.PhongExponent, 0.0f) + 2.0f)), 0.05f, 1.0f));
+		}
 		if (Info.Metalness >= 0.0f) { MID->SetScalarParameterValue(TEXT("Metalness"), Info.Metalness); }
 		MID->SetVectorParameterValue(TEXT("ColorTint"), FLinearColor(Info.Color2.X, Info.Color2.Y, Info.Color2.Z, 1.0f));
 		if (Info.bSelfIllum)
 		{
-			// $selfillum without a mask uses the base texture's alpha in Source; a mask texture when given.
+			// $selfillum masks with the base texture's alpha (the pistol's sight dots) unless $selfillummask names a
+			// texture; $selfillumtint defaults to white.
 			UTexture2D* Mask = Info.SelfIllumMask.IsEmpty() ? nullptr : GetTexture(Info.SelfIllumMask, false);
 			if (Mask)
 			{
 				MID->SetTextureParameterValue(TEXT("SelfIllumMask"), Mask);
-				MID->SetVectorParameterValue(TEXT("SelfIllumTint"), FLinearColor(Info.SelfIllumTint.X, Info.SelfIllumTint.Y, Info.SelfIllumTint.Z, 1.0f));
 			}
+			MID->SetScalarParameterValue(TEXT("SelfIllumFromBaseAlpha"), Mask ? 0.0f : 1.0f);
+			MID->SetVectorParameterValue(TEXT("SelfIllumTint"), FLinearColor(Info.SelfIllumTint.X, Info.SelfIllumTint.Y, Info.SelfIllumTint.Z, 1.0f));
 		}
 	}
 	UE_LOG(LogLambdaSource, Verbose, TEXT("Material '%s': shader=%s basetexture=%s%s"), *Name, *Info.Shader, *Info.BaseTexture, Info.bIsPatch ? TEXT(" (patch)") : TEXT(""));

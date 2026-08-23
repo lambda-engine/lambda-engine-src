@@ -837,12 +837,18 @@ def build_model_material(name, translucent=False):
     connect_property(scalar('Metalness', 0.0, -620, 900), '', unreal.MaterialProperty.MP_METALLIC)
     connect_property(scalar('Specular', 0.5, -620, 980), '', unreal.MaterialProperty.MP_SPECULAR)
 
-    # ---- self-illumination: base * mask * tint ----
+    # ---- self-illumination: base * mask * tint. VertexLitGeneric's "$selfillum 1" masks with the base texture's
+    # alpha unless a $selfillummask texture is given, so the mask source is a switch.
     selfmask = texture('SelfIllumMask', '/Engine/EngineResources/Black', -900, 1100)
     selftint = vector('SelfIllumTint', (0.0, 0.0, 0.0, 0.0), -900, 1320)
+    from_alpha = scalar('SelfIllumFromBaseAlpha', 0.0, -900, 1440)
+    mask_pick = expr(unreal.MaterialExpressionLinearInterpolate, -700, 1180)
+    connect(selfmask, 'R', mask_pick, 'A')
+    connect(base, 'A', mask_pick, 'B')
+    connect(from_alpha, '', mask_pick, 'Alpha')
     em_masked = expr(unreal.MaterialExpressionMultiply, -620, 1140)
     connect(base_tinted, '', em_masked, 'A')
-    connect(selfmask, 'R', em_masked, 'B')
+    connect(mask_pick, '', em_masked, 'B')
     emissive = expr(unreal.MaterialExpressionMultiply, -460, 1160)
     connect(em_masked, '', emissive, 'A')
     connect(selftint, 'RGB', emissive, 'B')

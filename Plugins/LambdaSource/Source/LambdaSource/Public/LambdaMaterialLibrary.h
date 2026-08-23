@@ -33,6 +33,8 @@ struct LAMBDASOURCE_API FSourceMaterialInfo
 	FString SelfIllumMask;		// $selfillummask (texture name)
 	FVector3f SelfIllumTint = FVector3f(1, 1, 1);	// $selfillumtint
 	FVector3f Color2 = FVector3f(1, 1, 1);			// $color2 tint
+	bool bPhong = false;		// $phong: Source's specular model; its exponent stands in for roughness
+	float PhongExponent = 5.0f;	// $phongexponent (Source's default when no exponent texture)
 
 	// Authored decal maps. $bumpmap is Source's own normal-map key; the rest are a Lambda extension written by
 	// Tools/ImportSource2Decals.py for decals that come with height and occlusion maps (Source 2's bullet holes).
