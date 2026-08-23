@@ -251,9 +251,15 @@ void ASourceNPCBase::UpdateYaw(float DeltaSeconds)
 void ASourceNPCBase::StopMoving()
 {
 	MoveDirection = FVector::ZeroVector;
+	// CAI_Motor stops a ground move; a hull in the air stays ballistic. StopMovementImmediately zeroes the whole
+	// velocity, and called every think it would reset a falling NPC's descent ten times a second - which is how a
+	// headcrab nudged off the player's head used to float down.
 	if (UCharacterMovementComponent* Move = GetCharacterMovement())
 	{
-		Move->StopMovementImmediately();
+		if (Move->IsMovingOnGround())
+		{
+			Move->StopMovementImmediately();
+		}
 	}
 }
 
