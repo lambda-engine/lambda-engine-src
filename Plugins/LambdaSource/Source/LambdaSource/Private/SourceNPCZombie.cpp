@@ -78,10 +78,11 @@ void ASourceNPCZombie::NPCThink()
 	const float Now = World ? World->GetTimeSeconds() : 0.0f;
 	MaxYawSpeedDeg = ZombieMaxYawSpeed();
 
-	// CZombie::PrescheduleThink: the classic zombie idles (moans) instead of a looping moan sound.
+	// CZombie::PrescheduleThink: the classic zombie moans while it is after you rather than holding a looping
+	// moan (CNPC_BaseZombie::MoanSound's envelope-controlled sound is not ported).
 	if (Now > NextMoanTime && NPCState != ESourceNPCState::Idle)
 	{
-		IdleSound();
+		EmitSound(TEXT("Zombie.Moan"));
 		NextMoanTime = Now + FMath::FRandRange(2.0f, 5.0f);
 	}
 
@@ -174,6 +175,9 @@ void ASourceNPCZombie::HandleAnimEvent(int32 EventId, const FString& EventName, 
 	if (EventName == TEXT("AE_ZOMBIE_ATTACK_SCREAM") || EventName == TEXT("AE_ZOMBIE_STARTSWAT"))
 	{
 		AttackSound();
+		// The imported set has the swing itself (HL:A's Zombie.Attack_Whoosh); the stock scripts do not, and a
+		// soundscript that is not defined simply does not play.
+		EmitSound(TEXT("Zombie.AttackWhoosh"));
 		return;
 	}
 	if (EventName == TEXT("AE_ZOMBIE_STEP_LEFT") || EventName == TEXT("AE_NPC_LEFTFOOT")) { FootstepSound(false); return; }

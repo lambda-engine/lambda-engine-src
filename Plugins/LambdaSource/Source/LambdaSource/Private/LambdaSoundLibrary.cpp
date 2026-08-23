@@ -1,4 +1,6 @@
 #include "LambdaSoundLibrary.h"
+#include "Sound/SoundAttenuation.h"
+#include "LambdaSourceSettings.h"
 #include "LambdaFileSystem.h"
 #include "LambdaSourceModule.h"
 #include "SourceSoundScript.h"
@@ -153,4 +155,35 @@ ULambdaSoundWave* FLambdaSoundCache::CreateWaveResolved(UObject* Outer, const FS
 	}
 
 	return CreateWave(Outer, SoundName, bLoop);
+}
+
+USoundAttenuation* FLambdaSoundCache::GetAttenuationForSoundLevel(float SoundLevelDb)
+{
+	// SNDLVL_TO_ATTN: attenuation = 20 / (dB - 50) above 50 dB, and Source's mixer keeps a sound audible to
+	// roughly 1000 units / attenuation. Below that it is an unattenuated, everywhere sound (SNDLVL_NONE).
+	const int32 Key = FMath::RoundToInt(SoundLevelDb);
+	if (TObjectPtr<USoundAttenuation>* Found = AttenuationByLevel.Find(Key))
+	{
+		return Found->Get();
+	}
+	USoundAttenuation* Attenuation = nullptr;
+	if (SoundLevelDb > 50.0f)
+	{
+		const float Attn = 20.0f / (SoundLevelDb - 50.0f);
+		const float FalloffUnits = 1000.0f / FMath::Max(Attn, 0.01f);
+		const float Scale = ULambdaSourceSettings::Get().UnitScale;
+		Attenuation = NewObject<USoundAttenuation>(GetTransientPackage());
+		Attenuation->AddToRoot();
+		FSoundAttenuationSettings& Settings = Attenuation->Attenuation;
+		Settings.bAttenuate = true;
+		Settings.bSpatialize = true;
+		Settings.AttenuationShape = EAttenuationShape::Sphere;
+		Settings.DistanceAlgorithm = EAttenuationDistanceModel::NaturalSound;
+		Settings.dBAttenuationAtMax = -60.0f;
+		// The radius Source treats as "full volume" is small; everything past it rolls off to the falloff distance.
+		Settings.AttenuationShapeExtents = FVector(100.0f * Scale, 0.0f, 0.0f);
+		Settings.FalloffDistance = FalloffUnits * Scale;
+	}
+	AttenuationByLevel.Add(Key, Attenuation);
+	return Attenuation;
 }

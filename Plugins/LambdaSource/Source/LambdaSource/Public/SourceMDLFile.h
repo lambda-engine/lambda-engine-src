@@ -229,6 +229,12 @@ public:
 	bool AccumulateSequence(FSourceLocalPose& Pose, int32 SequenceIndex, float Cycle, float Weight) const;
 	/** Local rotations/positions -> bone-to-model matrices through the hierarchy. */
 	void BuildBoneToModel(const FSourceLocalPose& Pose, TArray<FSourceMatrix3x4>& OutBoneToModel) const;
+	/**
+	 * Whether the sequence adds to the pose under it rather than replacing it. studiomdl marks the animation
+	 * delta when a $sequence subtracts a reference pose, and does not always mark the sequence with it, so both
+	 * are consulted.
+	 */
+	bool IsSequenceDelta(int32 SequenceIndex) const;
 
 	// ---- Hitboxes (the default hitbox set) ----
 	const TArray<FSourceStudioHitbox>& GetHitboxes() const { return Hitboxes; }
@@ -269,7 +275,7 @@ private:
 	/** AddSequenceLayers: the sequence's autolayers accumulated into Pose. */
 	void AddSequenceLayers(FSourceLocalPose& Pose, int32 SequenceIndex, float Cycle, float Weight) const;
 	/** SlerpBones: blends (or adds, for delta sequences) Layer into Pose by Weight and the sequence's bone weights. */
-	void SlerpBones(FSourceLocalPose& Pose, const FSourceStudioSequence& Seq, const FSourceLocalPose& Layer, float Weight) const;
+	void SlerpBones(FSourceLocalPose& Pose, const FSourceStudioSequence& Seq, const FSourceLocalPose& Layer, float Weight, bool bDelta) const;
 
 	FString ModelName;
 	int32 Version = 0;

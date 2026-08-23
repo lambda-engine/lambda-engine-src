@@ -1,6 +1,8 @@
 #include "SourceNPCBase.h"
 #include "LambdaMaterialLibrary.h"
 #include "LambdaSoundLibrary.h"
+#include "SourceSoundScript.h"
+#include "Sound/SoundAttenuation.h"
 #include "LambdaSourceModule.h"
 #include "LambdaSourceSettings.h"
 #include "SourceBSPWorldActor.h"
@@ -204,7 +206,12 @@ void ASourceNPCBase::EmitSound(const FString& SoundScript)
 	float Volume = 1.0f, Pitch = 1.0f;
 	if (ULambdaSoundWave* Wave = FLambdaSoundCache::Get().CreateWaveResolved(this, SoundScript, false, Volume, Pitch))
 	{
-		UGameplayStatics::SpawnSoundAtLocation(this, Wave, GetActorLocation(), FRotator::ZeroRotator, Volume, Pitch);
+		// The soundscript's soundlevel decides how far the sound carries (CBaseEntity::EmitSound passes it to the
+		// engine as the channel's attenuation).
+		const FSourceSoundScriptEntry* Entry = FSourceSoundScripts::Get().Find(SoundScript);
+		USoundAttenuation* Attenuation = FLambdaSoundCache::Get().GetAttenuationForSoundLevel(Entry ? Entry->SoundLevel : 75.0f);
+		UGameplayStatics::SpawnSoundAtLocation(this, Wave, GetActorLocation(), FRotator::ZeroRotator, Volume, Pitch,
+			0.0f, Attenuation);
 	}
 }
 

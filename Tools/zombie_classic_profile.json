@@ -56,6 +56,11 @@
   ],
   "sequences": [
     {
+      "name": "refpose",
+      "anim": "zombie_classic_neutral_ref_pose",
+      "hidden": true
+    },
+    {
       "name": "idle01",
       "anim": "zombie_idle_01",
       "activity": "ACT_IDLE",
@@ -279,6 +284,110 @@
       "anim": "zombie_act_busy_pounding_shoulderram_03",
       "activity": "ACT_ZOMBIE_TANTRUM",
       "weight": 1
+    },
+    {
+      "name": "gesture_flinch_head",
+      "anim": "zombie_flinch_gesture_head_front",
+      "activity": "ACT_GESTURE_FLINCH_HEAD",
+      "weight": 1,
+      "subtract": "refpose",
+      "weightlist": "wl_upper"
+    },
+    {
+      "name": "gesture_flinch_chest",
+      "anim": "zombie_flinch_gesture_v2_chest_01",
+      "activity": "ACT_GESTURE_FLINCH_CHEST",
+      "weight": 1,
+      "subtract": "refpose",
+      "weightlist": "wl_upper"
+    },
+    {
+      "name": "gesture_flinch_chest2",
+      "anim": "zombie_flinch_gesture_chest",
+      "activity": "ACT_GESTURE_FLINCH_CHEST",
+      "weight": 1,
+      "subtract": "refpose",
+      "weightlist": "wl_upper"
+    },
+    {
+      "name": "gesture_flinch_gut",
+      "anim": "zombie_flinch_gesture_v2_gut_01",
+      "activity": "ACT_GESTURE_FLINCH_STOMACH",
+      "weight": 1,
+      "subtract": "refpose",
+      "weightlist": "wl_upper"
+    },
+    {
+      "name": "gesture_flinch_gut2",
+      "anim": "zombie_flinch_gesture_v2_gut_02",
+      "activity": "ACT_GESTURE_FLINCH_STOMACH",
+      "weight": 1,
+      "subtract": "refpose",
+      "weightlist": "wl_upper"
+    },
+    {
+      "name": "gesture_flinch_arm_l",
+      "anim": "zombie_flinch_gesture_v2_arm_left_01",
+      "activity": "ACT_GESTURE_FLINCH_LEFTARM",
+      "weight": 1,
+      "subtract": "refpose",
+      "weightlist": "wl_upper"
+    },
+    {
+      "name": "gesture_flinch_arm_l2",
+      "anim": "zombie_flinch_gesture_v2_arm_left_02",
+      "activity": "ACT_GESTURE_FLINCH_LEFTARM",
+      "weight": 1,
+      "subtract": "refpose",
+      "weightlist": "wl_upper"
+    },
+    {
+      "name": "gesture_flinch_arm_r",
+      "anim": "zombie_flinch_gesture_v2_arm_right_01",
+      "activity": "ACT_GESTURE_FLINCH_RIGHTARM",
+      "weight": 1,
+      "subtract": "refpose",
+      "weightlist": "wl_upper"
+    },
+    {
+      "name": "gesture_flinch_arm_r2",
+      "anim": "zombie_flinch_gesture_arm_right",
+      "activity": "ACT_GESTURE_FLINCH_RIGHTARM",
+      "weight": 1,
+      "subtract": "refpose",
+      "weightlist": "wl_upper"
+    },
+    {
+      "name": "gesture_flinch_leg_l",
+      "anim": "zombie_flinch_v2_leg_left_01",
+      "activity": "ACT_GESTURE_FLINCH_LEFTLEG",
+      "weight": 1,
+      "subtract": "refpose",
+      "weightlist": "wl_lower"
+    },
+    {
+      "name": "gesture_flinch_leg_r",
+      "anim": "zombie_flinch_v2_leg_right_01",
+      "activity": "ACT_GESTURE_FLINCH_RIGHTLEG",
+      "weight": 1,
+      "subtract": "refpose",
+      "weightlist": "wl_lower"
+    },
+    {
+      "name": "gesture_big",
+      "anim": "zombie_flinch_gesture_arm_left",
+      "activity": "ACT_GESTURE_BIG_FLINCH",
+      "weight": 1,
+      "subtract": "refpose",
+      "weightlist": "wl_upper"
+    },
+    {
+      "name": "gesture_small",
+      "anim": "zombie_flinch_gesture_gut",
+      "activity": "ACT_GESTURE_SMALL_FLINCH",
+      "weight": 1,
+      "subtract": "refpose",
+      "weightlist": "wl_upper"
     }
   ],
   "joint_constraints": {
@@ -443,5 +552,34 @@
     "spine_3",
     "neck_0",
     "head"
-  ]
+  ],
+  "weightlists": {
+    "wl_upper": [
+      "spine_0",
+      "spine_1",
+      "spine_2",
+      "spine_3",
+      "neck_0",
+      "head",
+      "jaw_0",
+      "clavicle_L",
+      "arm_upper_L",
+      "arm_lower_L",
+      "hand_L",
+      "clavicle_R",
+      "arm_upper_R",
+      "arm_lower_R",
+      "hand_R"
+    ],
+    "wl_lower": [
+      "leg_upper_L",
+      "leg_lower_L",
+      "ankle_L",
+      "ball_L",
+      "leg_upper_R",
+      "leg_lower_R",
+      "ankle_R",
+      "ball_R"
+    ]
+  }
 }

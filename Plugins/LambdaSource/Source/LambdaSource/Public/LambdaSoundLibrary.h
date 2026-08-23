@@ -56,6 +56,8 @@ private:
  * system as "sound/<name>". The decoded PCM is cached; a fresh wave object is handed out per play so that two
  * simultaneous plays of the same sound do not share a read cursor.
  */
+class USoundAttenuation;
+
 class LAMBDASOURCE_API FLambdaSoundCache
 {
 public:
@@ -74,10 +76,18 @@ public:
 	/** Decoded PCM for a sound name, cached. Returns null if it could not be loaded. */
 	const FSourceWavData* GetWavData(const FString& SoundName);
 
+	/**
+	 * The falloff a soundscript's "soundlevel" asks for. Source states it as the sound's level in dB at a foot
+	 * (SNDLVL_NORM is 75) and turns it into an attenuation, ATTN = 20 / (dB - 50); the louder the sound, the
+	 * further it carries. Without it every sound in the level is equally loud wherever it was made.
+	 */
+	USoundAttenuation* GetAttenuationForSoundLevel(float SoundLevelDb);
+
 	void Clear() { Cache.Reset(); }
 
 private:
 	FLambdaSoundCache() = default;
 
 	TMap<FString, TSharedPtr<FSourceWavData>> Cache;
+	TMap<int32, TObjectPtr<USoundAttenuation>> AttenuationByLevel;
 };

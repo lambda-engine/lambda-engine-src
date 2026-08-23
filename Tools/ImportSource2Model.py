@@ -671,6 +671,12 @@ def main():
         mx = hb['hitbox_maxs']
         qc.append(f'$hbox {hb.get("group_id", 0)} "{hb["parent_bone"]}" {mn[0]:.2f} {mn[1]:.2f} {mn[2]:.2f} {mx[0]:.2f} {mx[1]:.2f} {mx[2]:.2f}')
 
+    # $weightlist: which bones a layered sequence is allowed to move. A flinch gesture uses one so it plays on
+    # the upper body while the legs keep walking (Source builds every gesture this way).
+    for wl_name, wl_bones in profile.get('weightlists', {}).items():
+        bones_inline = ' '.join(f'"{bone}" 1' for bone in wl_bones)
+        qc.append(f'$weightlist "{wl_name}" {bones_inline}')
+
     for seq in profile['sequences']:
         fn = f'anims/{seq["name"]}.smd'
         os.makedirs(os.path.join(work, 'anims'), exist_ok=True)
@@ -678,7 +684,19 @@ def main():
         # studiomdl rotates animation SMDs by +90 degrees of yaw (SMD animations are authored facing +Y, models
         # face +X); the reference SMD is left alone. Measured on this model: every animated bone came out yawed
         # +90 against the file. "rotate -90" takes it back.
-        opts = [f'"{fn}"', f'activity {seq["activity"]} {seq.get("weight", 1)}', f'fps {int(FPS)}', 'rotate -90']
+        opts = [f'"{fn}"']
+        if seq.get('activity'):
+            opts.append(f'activity {seq["activity"]} {seq.get("weight", 1)}')
+        opts.append(f'fps {int(FPS)}')
+        opts.append('rotate -90')
+        if seq.get('subtract'):
+            # studiomdl turns the sequence into the difference from that pose, which is what makes it additive:
+            # the engine adds it on top of whatever is playing instead of replacing it.
+            opts.append(f'subtract "{seq["subtract"]}" {seq.get("subtract_frame", 0)}')
+        if seq.get('weightlist'):
+            opts.append(f'weightlist "{seq["weightlist"]}"')
+        if seq.get('hidden'):
+            opts.append('hidden')
         if seq.get('loop'):
             opts.append('loop')
         if seq.get('motion'):

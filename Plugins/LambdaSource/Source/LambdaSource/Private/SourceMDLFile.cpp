@@ -1369,9 +1369,22 @@ bool FSourceMDLFile::CalcPoseSingle(int32 SequenceIndex, float Cycle, FSourceLoc
 	return true;
 }
 
-void FSourceMDLFile::SlerpBones(FSourceLocalPose& Pose, const FSourceStudioSequence& Seq, const FSourceLocalPose& Layer, float Weight) const
+bool FSourceMDLFile::IsSequenceDelta(int32 SequenceIndex) const
 {
-	const bool bDelta = (Seq.Flags & STUDIO::SEQ_DELTA) != 0;
+	if (!Sequences.IsValidIndex(SequenceIndex))
+	{
+		return false;
+	}
+	const FSourceStudioSequence& Seq = Sequences[SequenceIndex];
+	if (Seq.Flags & STUDIO::SEQ_DELTA)
+	{
+		return true;
+	}
+	return AnimDescs.IsValidIndex(Seq.AnimDescIndex) && (AnimDescs[Seq.AnimDescIndex].Flags & STUDIO::SEQ_DELTA) != 0;
+}
+
+void FSourceMDLFile::SlerpBones(FSourceLocalPose& Pose, const FSourceStudioSequence& Seq, const FSourceLocalPose& Layer, float Weight, bool bDelta) const
+{
 	const bool bPost = (Seq.Flags & STUDIO::SEQ_POST) != 0;
 	for (int32 i = 0; i < Bones.Num(); ++i)
 	{
@@ -1466,7 +1479,7 @@ bool FSourceMDLFile::AccumulateSequence(FSourceLocalPose& Pose, int32 SequenceIn
 		return false;
 	}
 	AddSequenceLayers(Single, SequenceIndex, Cycle, Weight);
-	SlerpBones(Pose, Sequences[SequenceIndex], Single, Weight);
+	SlerpBones(Pose, Sequences[SequenceIndex], Single, Weight, IsSequenceDelta(SequenceIndex));
 	return true;
 }
 
