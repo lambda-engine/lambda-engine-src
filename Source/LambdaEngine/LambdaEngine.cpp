@@ -10,6 +10,7 @@
 #include "GameFramework/PlayerController.h"
 #include "SourceBSPWorldActor.h"
 #include "EngineUtils.h"
+#include "LambdaCharacter.h"
 
 DEFINE_LOG_CATEGORY(LogLambda);
 
@@ -138,3 +139,51 @@ static FAutoConsoleCommandWithWorldAndArgs GLambdaEntFireCommand(
 	TEXT("lambda.ent_fire"),
 	TEXT("Fire an input on an entity by targetname: lambda.ent_fire <targetname> <input> [parameter]"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaEntFireCommand));
+
+// Source's give: lambda.give weapon_pistol
+static void LambdaGiveCommand(const TArray<FString>& Args, UWorld* World)
+{
+	if (!World || Args.Num() < 1)
+	{
+		UE_LOG(LogLambda, Display, TEXT("Usage: lambda.give <weapon_classname>"));
+		return;
+	}
+	APlayerController* PC = World->GetFirstPlayerController();
+	ALambdaCharacter* Player = PC ? Cast<ALambdaCharacter>(PC->GetPawn()) : nullptr;
+	if (!Player)
+	{
+		return;
+	}
+	if (Player->GiveWeapon(Args[0]))
+	{
+		UE_LOG(LogLambda, Display, TEXT("gave %s"), *Args[0]);
+	}
+}
+
+static FAutoConsoleCommandWithWorldAndArgs GLambdaGiveCommand(
+	TEXT("lambda.give"),
+	TEXT("Give the player a weapon by classname: lambda.give weapon_pistol"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaGiveCommand));
+
+// lambda.giveammo <type> <count>
+static void LambdaGiveAmmoCommand(const TArray<FString>& Args, UWorld* World)
+{
+	if (!World || Args.Num() < 2)
+	{
+		UE_LOG(LogLambda, Display, TEXT("Usage: lambda.giveammo <ammotype> <count>   e.g. lambda.giveammo Pistol 50"));
+		return;
+	}
+	APlayerController* PC = World->GetFirstPlayerController();
+	ALambdaCharacter* Player = PC ? Cast<ALambdaCharacter>(PC->GetPawn()) : nullptr;
+	if (!Player)
+	{
+		return;
+	}
+	const int32 Given = Player->GiveAmmo(Args[0], FCString::Atoi(*Args[1]));
+	UE_LOG(LogLambda, Display, TEXT("gave %d %s ammo (now %d)"), Given, *Args[0], Player->GetAmmoCount(Args[0]));
+}
+
+static FAutoConsoleCommandWithWorldAndArgs GLambdaGiveAmmoCommand(
+	TEXT("lambda.giveammo"),
+	TEXT("Give the player ammo: lambda.giveammo <ammotype> <count>"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaGiveAmmoCommand));

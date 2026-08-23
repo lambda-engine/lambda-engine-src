@@ -1,5 +1,6 @@
 #include "LambdaGameMode.h"
 #include "LambdaCharacter.h"
+#include "LambdaHUD.h"
 #include "LambdaEngine.h"
 #include "LambdaSourceSettings.h"
 #include "SourceBSPWorldActor.h"
@@ -11,6 +12,7 @@
 ALambdaGameMode::ALambdaGameMode()
 {
 	DefaultPawnClass = ALambdaCharacter::StaticClass();
+	HUDClass = ALambdaHUD::StaticClass();
 }
 
 FString ALambdaGameMode::ResolveRequestedMapName(const FString& Options)

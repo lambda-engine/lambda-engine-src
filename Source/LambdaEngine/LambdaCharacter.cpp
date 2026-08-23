@@ -18,10 +18,13 @@
 #include "SourceBrushEntity.h"
 #include "LambdaSourceSettings.h"
 #include "Engine/HitResult.h"
+#include "LambdaWeapon.h"
+#include "SourceAmmoDef.h"
+#include "Engine/World.h"
 
 ALambdaCharacter::ALambdaCharacter()
 {
-	PrimaryActorTick.bCanEverTick = false;
+	PrimaryActorTick.bCanEverTick = true;
 
 	const ULambdaSourceSettings* Settings = GetDefault<ULambdaSourceSettings>();
 	const float Scale = Settings ? Settings->UnitScale : 1.905f;
@@ -97,6 +100,11 @@ void ALambdaCharacter::BeginPlay()
 		}
 	}
 
+	// The POC map has no weapon or ammo entities, so arm the player directly. Once item_ammo_* / weapon_* entities
+	// are implemented these come from the map instead.
+	GiveWeapon(TEXT("weapon_pistol"));
+	GiveAmmo(TEXT("Pistol"), 68);
+
 	FirstPersonCamera->PostProcessBlendWeight = 1.0f;
 	FirstPersonCamera->PostProcessSettings.bOverride_AutoExposureBias = true;
 	FirstPersonCamera->PostProcessSettings.AutoExposureBias = Settings.ExposureBias;
@@ -126,6 +134,8 @@ void ALambdaCharacter::BuildInputAssets()
 	JumpAction = MakeAction(TEXT("IA_Jump"), EInputActionValueType::Boolean);
 	SprintAction = MakeAction(TEXT("IA_Sprint"), EInputActionValueType::Boolean);
 	UseAction = MakeAction(TEXT("IA_Use"), EInputActionValueType::Boolean);
+	AttackAction = MakeAction(TEXT("IA_Attack"), EInputActionValueType::Boolean);
+	ReloadAction = MakeAction(TEXT("IA_Reload"), EInputActionValueType::Boolean);
 	QuitAction = MakeAction(TEXT("IA_Quit"), EInputActionValueType::Boolean);
 
 	// Move: X = right (+) / left (-), Y = forward (+) / back (-)
@@ -165,6 +175,8 @@ void ALambdaCharacter::BuildInputAssets()
 	MappingContext->MapKey(JumpAction, EKeys::SpaceBar);
 	MappingContext->MapKey(SprintAction, EKeys::LeftShift);
 	MappingContext->MapKey(UseAction, EKeys::E);
+	MappingContext->MapKey(AttackAction, EKeys::LeftMouseButton);
+	MappingContext->MapKey(ReloadAction, EKeys::R);
 	MappingContext->MapKey(QuitAction, EKeys::Escape);
 }
 
@@ -206,6 +218,10 @@ void ALambdaCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 	EIC->BindAction(SprintAction, ETriggerEvent::Started, this, &ALambdaCharacter::Input_SprintStart);
 	EIC->BindAction(SprintAction, ETriggerEvent::Completed, this, &ALambdaCharacter::Input_SprintEnd);
 	EIC->BindAction(UseAction, ETriggerEvent::Started, this, &ALambdaCharacter::Input_Use);
+	EIC->BindAction(AttackAction, ETriggerEvent::Started, this, &ALambdaCharacter::Input_AttackStart);
+	EIC->BindAction(AttackAction, ETriggerEvent::Completed, this, &ALambdaCharacter::Input_AttackStop);
+	EIC->BindAction(ReloadAction, ETriggerEvent::Started, this, &ALambdaCharacter::Input_ReloadStart);
+	EIC->BindAction(ReloadAction, ETriggerEvent::Completed, this, &ALambdaCharacter::Input_ReloadStop);
 	EIC->BindAction(QuitAction, ETriggerEvent::Started, this, &ALambdaCharacter::Input_Quit);
 }
 
@@ -302,6 +318,136 @@ void ALambdaCharacter::Input_Use()
 		{
 			BrushEntity->OnUsed(this);
 		}
+	}
+}
+
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Weapons and ammo
+// ---------------------------------------------------------------------------------------------------------------------
+
+void ALambdaCharacter::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	// CBasePlayer::ItemPostFrame drives the active weapon every frame.
+	if (ActiveWeapon)
+	{
+		ActiveWeapon->ItemPostFrame();
+	}
+}
+
+ALambdaWeapon* ALambdaCharacter::GiveWeapon(const FString& WeaponClassName)
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return nullptr;
+	}
+
+	// Pick the class that implements this weapon; anything without a dedicated port still gets the shared behaviour.
+	TSubclassOf<ALambdaWeapon> WeaponClass = ALambdaWeapon::StaticClass();
+	if (WeaponClassName.Equals(TEXT("weapon_pistol"), ESearchCase::IgnoreCase))
+	{
+		WeaponClass = ALambdaWeaponPistol::StaticClass();
+	}
+
+	FActorSpawnParameters Params;
+	Params.Owner = this;
+	Params.ObjectFlags |= RF_Transient;
+	ALambdaWeapon* Weapon = World->SpawnActor<ALambdaWeapon>(WeaponClass, GetActorTransform(), Params);
+	if (!Weapon)
+	{
+		return nullptr;
+	}
+
+	Weapon->SetOwningCharacter(this);
+	Weapon->InitializeFromScript(WeaponClassName);
+	Weapon->AttachToActor(this, FAttachmentTransformRules::SnapToTargetIncludingScale);
+
+	if (ActiveWeapon)
+	{
+		ActiveWeapon->Destroy();
+	}
+	ActiveWeapon = Weapon;
+	return Weapon;
+}
+
+int32 ALambdaCharacter::GetAmmoCount(const FString& AmmoType) const
+{
+	if (AmmoType.IsEmpty() || AmmoType.Equals(TEXT("None"), ESearchCase::IgnoreCase))
+	{
+		return 0;
+	}
+	const int32* Found = AmmoCounts.Find(AmmoType.ToLower());
+	return Found ? *Found : 0;
+}
+
+int32 ALambdaCharacter::GiveAmmo(const FString& AmmoType, int32 Count)
+{
+	if (AmmoType.IsEmpty() || AmmoType.Equals(TEXT("None"), ESearchCase::IgnoreCase) || Count <= 0)
+	{
+		return 0;
+	}
+
+	// Clamp to the ammo type's carry limit (sk_max_<ammo> from skill.cfg).
+	int32 MaxCarry = MAX_int32;
+	if (const FSourceAmmoType* Type = FSourceAmmoDef::Get().Find(AmmoType))
+	{
+		if (Type->MaxCarry > 0.0f)
+		{
+			MaxCarry = FMath::RoundToInt(Type->MaxCarry);
+		}
+	}
+
+	int32& Current = AmmoCounts.FindOrAdd(AmmoType.ToLower());
+	const int32 Before = Current;
+	Current = FMath::Min(Current + Count, MaxCarry);
+	return Current - Before;
+}
+
+void ALambdaCharacter::RemoveAmmo(const FString& AmmoType, int32 Count)
+{
+	if (Count <= 0)
+	{
+		return;
+	}
+	if (int32* Current = AmmoCounts.Find(AmmoType.ToLower()))
+	{
+		*Current = FMath::Max(0, *Current - Count);
+	}
+}
+
+void ALambdaCharacter::Input_AttackStart()
+{
+	if (ActiveWeapon)
+	{
+		ActiveWeapon->bAttackHeld = true;
+		ActiveWeapon->bAttackPressedThisFrame = true;
+	}
+}
+
+void ALambdaCharacter::Input_AttackStop()
+{
+	if (ActiveWeapon)
+	{
+		ActiveWeapon->bAttackHeld = false;
+	}
+}
+
+void ALambdaCharacter::Input_ReloadStart()
+{
+	if (ActiveWeapon)
+	{
+		ActiveWeapon->bReloadHeld = true;
+	}
+}
+
+void ALambdaCharacter::Input_ReloadStop()
+{
+	if (ActiveWeapon)
+	{
+		ActiveWeapon->bReloadHeld = false;
 	}
 }
 

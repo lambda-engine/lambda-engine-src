@@ -5,6 +5,7 @@
 #include "LambdaCharacter.generated.h"
 
 class UCameraComponent;
+class ALambdaWeapon;
 class UInputAction;
 class UInputMappingContext;
 struct FInputActionValue;
@@ -28,6 +29,26 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Lambda")
 	UCameraComponent* GetFirstPersonCamera() const { return FirstPersonCamera; }
 
+	virtual void Tick(float DeltaSeconds) override;
+
+	// ---- Weapons and ammo (CBasePlayer / CBaseCombatCharacter) ----
+
+	/** Spawns a weapon from its script name ("weapon_pistol") and makes it active. */
+	UFUNCTION(BlueprintCallable, Category = "Lambda")
+	ALambdaWeapon* GiveWeapon(const FString& WeaponClassName);
+
+	UFUNCTION(BlueprintPure, Category = "Lambda")
+	ALambdaWeapon* GetActiveWeapon() const { return ActiveWeapon; }
+
+	/** CBasePlayer::GetAmmoCount / GiveAmmo / RemoveAmmo, keyed by the ammo type name from the weapon script. */
+	UFUNCTION(BlueprintPure, Category = "Lambda")
+	int32 GetAmmoCount(const FString& AmmoType) const;
+	int32 GiveAmmo(const FString& AmmoType, int32 Count);
+	void RemoveAmmo(const FString& AmmoType, int32 Count);
+
+	UFUNCTION(BlueprintPure, Category = "Lambda") float GetHealth() const { return Health; }
+	UFUNCTION(BlueprintPure, Category = "Lambda") float GetArmor() const { return Armor; }
+
 protected:
 	void ApplySourceMovementSettings();
 	void BuildInputAssets();
@@ -40,6 +61,10 @@ protected:
 	void Input_SprintStart();
 	void Input_SprintEnd();
 	void Input_Use();
+	void Input_AttackStart();
+	void Input_AttackStop();
+	void Input_ReloadStart();
+	void Input_ReloadStop();
 
 	/** CBasePlayer::FindUseEntity - trace from the eye for a usable entity within PLAYER_USE_RADIUS. */
 	AActor* FindUseEntity() const;
@@ -67,8 +92,26 @@ protected:
 	TObjectPtr<UInputAction> UseAction;
 
 	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> AttackAction;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> ReloadAction;
+
+	UPROPERTY(Transient)
 	TObjectPtr<UInputAction> QuitAction;
 
 	float WalkSpeedCm = 0.0f;
 	float SprintSpeedCm = 0.0f;
+
+	UPROPERTY(Transient)
+	TObjectPtr<ALambdaWeapon> ActiveWeapon;
+
+	/** Ammo carried, by ammo type name. */
+	TMap<FString, int32> AmmoCounts;
+
+	UPROPERTY(EditAnywhere, Category = "Lambda")
+	float Health = 100.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Lambda")
+	float Armor = 0.0f;
 };
