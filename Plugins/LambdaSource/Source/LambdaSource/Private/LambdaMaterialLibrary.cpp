@@ -82,6 +82,14 @@ void ULambdaMaterialLibrary::Initialize()
 	{
 		SpriteMasterMaterialTranslucent = Cast<UMaterialInterface>(Settings.SpriteMaterialTranslucent.TryLoad());
 	}
+	if (Settings.ModelMaterial.IsValid())
+	{
+		ModelMasterMaterial = Cast<UMaterialInterface>(Settings.ModelMaterial.TryLoad());
+	}
+	if (Settings.ModelMaterialTranslucent.IsValid())
+	{
+		ModelMasterMaterialTranslucent = Cast<UMaterialInterface>(Settings.ModelMaterialTranslucent.TryLoad());
+	}
 	if (!FallbackMaterial)
 	{
 		FallbackMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/EngineMaterials/WorldGridMaterial.WorldGridMaterial"));
@@ -191,6 +199,33 @@ bool ULambdaMaterialLibrary::LoadMaterialInfo(const FString& SourceMaterialName,
 	OutInfo.bIgnoreZ = Root.GetBool(TEXT("$ignorez"));
 	OutInfo.DecalScale = Root.GetFloat(TEXT("$decalscale"), 1.0f);
 	OutInfo.bAdditive = Root.GetBool(TEXT("$additive"));
+	OutInfo.Roughness = Root.GetFloat(TEXT("$roughness"), -1.0f);
+	OutInfo.Metalness = Root.GetFloat(TEXT("$metalness"), -1.0f);
+	OutInfo.bNormalMapFlipY = Root.GetBool(TEXT("$normalmapflipy"));
+	OutInfo.SelfIllumMask = NormalizeTextureName(Root.GetString(TEXT("$selfillummask")));
+	{
+		// "[r g b]" is 0..1, "{r g b}" is 0..255 (materialsystem's two colour spellings).
+		auto ParseColor = [](const FString& Text, FVector3f& Out)
+		{
+			if (Text.IsEmpty()) { return; }
+			const bool bBytes = Text.Contains(TEXT("{"));
+			FString Clean = Text.Replace(TEXT("["), TEXT(" ")).Replace(TEXT("]"), TEXT(" ")).Replace(TEXT("{"), TEXT(" ")).Replace(TEXT("}"), TEXT(" "));
+			TArray<FString> Parts;
+			Clean.ParseIntoArrayWS(Parts);
+			if (Parts.Num() >= 3)
+			{
+				Out = FVector3f(FCString::Atof(*Parts[0]), FCString::Atof(*Parts[1]), FCString::Atof(*Parts[2]));
+				if (bBytes) { Out /= 255.0f; }
+			}
+			else if (Parts.Num() == 1)
+			{
+				const float V = FCString::Atof(*Parts[0]);
+				Out = FVector3f(V, V, V);
+			}
+		};
+		ParseColor(Root.GetString(TEXT("$selfillumtint")), OutInfo.SelfIllumTint);
+		ParseColor(Root.GetString(TEXT("$color2")), OutInfo.Color2);
+	}
 	OutInfo.BumpMap = NormalizeTextureName(Root.GetString(TEXT("$bumpmap")));
 	OutInfo.HeightMap = NormalizeTextureName(Root.GetString(TEXT("$heightmap")));
 	OutInfo.AOTexture = NormalizeTextureName(Root.GetString(TEXT("$aotexture")));
@@ -238,7 +273,21 @@ UMaterialInterface* ULambdaMaterialLibrary::CreateMaterial(const FString& Name)
 		return nullptr;
 	}
 
-	UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(MasterMaterial, this, *FString::Printf(TEXT("MID_%s"), *Name.Replace(TEXT("/"), TEXT("_"))));
+	// A material that brings a normal map, surface values, a tint or self-illumination goes through the lit PBR
+	// master; "$translucent 1" through its alpha-blended twin; everything else stays on the plain base master.
+	const bool bWantsPBR = !Info.BumpMap.IsEmpty() || Info.Roughness >= 0.0f || Info.Metalness >= 0.0f || Info.bSelfIllum
+		|| !Info.Color2.Equals(FVector3f(1, 1, 1));
+	UMaterialInterface* Master = MasterMaterial.Get();
+	if (Info.bTranslucent && ModelMasterMaterialTranslucent)
+	{
+		Master = ModelMasterMaterialTranslucent.Get();
+	}
+	else if (bWantsPBR && ModelMasterMaterial)
+	{
+		Master = ModelMasterMaterial.Get();
+	}
+
+	UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(Master, this, *FString::Printf(TEXT("MID_%s"), *Name.Replace(TEXT("/"), TEXT("_"))));
 	if (!MID)
 	{
 		return nullptr;
@@ -250,6 +299,30 @@ UMaterialInterface* ULambdaMaterialLibrary::CreateMaterial(const FString& Name)
 	else
 	{
 		UE_LOG(LogLambdaSource, Warning, TEXT("Material '%s' (shader %s) has no usable $basetexture ('%s')"), *Name, *Info.Shader, *Info.BaseTexture);
+	}
+	if (Master != MasterMaterial.Get())
+	{
+		if (!Info.BumpMap.IsEmpty())
+		{
+			if (UTexture2D* Normal = GetTexture(Info.BumpMap, /*bSRGB=*/ false))
+			{
+				MID->SetTextureParameterValue(TEXT("NormalMap"), Normal);
+			}
+		}
+		MID->SetScalarParameterValue(TEXT("FlipGreen"), Info.bNormalMapFlipY ? 1.0f : 0.0f);
+		if (Info.Roughness >= 0.0f) { MID->SetScalarParameterValue(TEXT("Roughness"), Info.Roughness); }
+		if (Info.Metalness >= 0.0f) { MID->SetScalarParameterValue(TEXT("Metalness"), Info.Metalness); }
+		MID->SetVectorParameterValue(TEXT("ColorTint"), FLinearColor(Info.Color2.X, Info.Color2.Y, Info.Color2.Z, 1.0f));
+		if (Info.bSelfIllum)
+		{
+			// $selfillum without a mask uses the base texture's alpha in Source; a mask texture when given.
+			UTexture2D* Mask = Info.SelfIllumMask.IsEmpty() ? nullptr : GetTexture(Info.SelfIllumMask, false);
+			if (Mask)
+			{
+				MID->SetTextureParameterValue(TEXT("SelfIllumMask"), Mask);
+				MID->SetVectorParameterValue(TEXT("SelfIllumTint"), FLinearColor(Info.SelfIllumTint.X, Info.SelfIllumTint.Y, Info.SelfIllumTint.Z, 1.0f));
+			}
+		}
 	}
 	UE_LOG(LogLambdaSource, Verbose, TEXT("Material '%s': shader=%s basetexture=%s%s"), *Name, *Info.Shader, *Info.BaseTexture, Info.bIsPatch ? TEXT(" (patch)") : TEXT(""));
 	return MID;

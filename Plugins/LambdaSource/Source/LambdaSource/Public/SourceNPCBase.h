@@ -8,6 +8,7 @@
 class USourceStudioModelComponent;
 class ULambdaMaterialLibrary;
 class ASourceBSPWorldActor;
+class ASourceRagdoll;
 
 /** BLOOD_COLOR_* from shareddefs.h. */
 UENUM()
@@ -116,6 +117,13 @@ protected:
 	virtual void OnTakeDamage_Alive(float Damage, AActor* Attacker) {}
 	/** CBaseCombatCharacter::Event_Killed. */
 	virtual void Event_Killed(AActor* Attacker);
+	/**
+	 * CBaseCombatCharacter::BecomeRagdoll: hands the body to physics using the model's .phy, kicked by the force
+	 * of the killing blow. False when the model has no collision model.
+	 */
+	virtual bool BecomeRagdoll(const FVector& ForceImpulse, const FVector& ForcePosition);
+	/** CBaseCombatCharacter::CalcDamageForceVector: the blow's own force, or one made up from the attacker. */
+	FVector CalcDamageForceVector(float Damage, const FVector& GivenForce, AActor* Attacker) const;
 
 	virtual void IdleSound() {}
 	virtual void AlertSound() {}
@@ -145,6 +153,11 @@ protected:
 	float MaxHealth = 0.0f;
 	/** SetBloodColor in Spawn. */
 	ESourceBloodColor BloodColor = ESourceBloodColor::Red;
+
+	/** The last CTakeDamageInfo's physics side, for the ragdoll. */
+	FVector LastDamageForce = FVector::ZeroVector;		// kg*cm/s
+	FVector LastDamagePosition = FVector::ZeroVector;
+	TWeakObjectPtr<ASourceRagdoll> Ragdoll;
 
 	/** m_flFieldOfView: cosine of the half-angle; 0.5 is 120 degrees. */
 	float FieldOfView = 0.5f;

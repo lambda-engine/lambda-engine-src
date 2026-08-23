@@ -5,6 +5,9 @@
 #include "LambdaSourceSettings.h"
 #include "SourceBSPWorldActor.h"
 #include "SourceCoordinates.h"
+#include "SourceDamage.h"
+#include "SourcePHYFile.h"
+#include "SourceRagdoll.h"
 #include "SourceStudioModelComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Engine/HitResult.h"
@@ -328,6 +331,20 @@ float ASourceNPCBase::TakeDamage(float DamageAmount, const FDamageEvent& DamageE
 	}
 	Health -= DamageAmount;
 	AActor* Attacker = EventInstigator ? EventInstigator->GetPawn() : DamageCauser;
+
+	LastDamageForce = FVector::ZeroVector;
+	LastDamagePosition = GetActorLocation();
+	if (DamageEvent.IsOfType(FSourceDamageEvent::ClassID))
+	{
+		const FSourceDamageEvent& Source = static_cast<const FSourceDamageEvent&>(DamageEvent);
+		LastDamageForce = Source.DamageForce;
+		LastDamagePosition = Source.DamagePosition;
+	}
+	else if (DamageEvent.IsOfType(FPointDamageEvent::ClassID))
+	{
+		LastDamagePosition = static_cast<const FPointDamageEvent&>(DamageEvent).HitInfo.ImpactPoint;
+	}
+	LastDamageForce = CalcDamageForceVector(DamageAmount, LastDamageForce, Attacker);
 	if (Health <= 0.0f)
 	{
 		Event_Killed(Attacker);
@@ -344,19 +361,69 @@ void ASourceNPCBase::Event_Killed(AActor* Attacker)
 	NPCState = ESourceNPCState::Dead;
 	DeathSound();
 
-	// Source turns the NPC into a ragdoll. Without physics to hand the body to, the corpse holds its death pose:
-	// ACT_DIERAGDOLL where the model has one (a pose studiomdl writes for exactly this), else the last frame of
-	// whatever was playing. It stops blocking the player but still takes hits, as a ragdoll would.
-	if (!SetActivity(TEXT("ACT_DIERAGDOLL")))
-	{
-		SetActivity(TEXT("ACT_DIESIMPLE"));
-	}
 	if (UCharacterMovementComponent* Move = GetCharacterMovement())
 	{
 		Move->StopMovementImmediately();
 		Move->DisableMovement();
 	}
+	SetLifeSpan(CorpseLifetime);
+
+	// CBaseCombatCharacter::Event_Killed: ragdoll unless gibbed. The body is handed to physics in the pose it died
+	// in, kicked by the killing blow (CalcDamageForceVector), and the hull stops being solid.
+	if (BecomeRagdoll(LastDamageForce, LastDamagePosition))
+	{
+		GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		return;
+	}
+
+	// No collision model: the corpse holds its death pose - ACT_DIERAGDOLL where the model has one (a pose
+	// studiomdl writes for exactly this), else the last frame playing. It stops blocking the player but still
+	// takes hits, as a ragdoll would.
+	if (!SetActivity(TEXT("ACT_DIERAGDOLL")))
+	{
+		SetActivity(TEXT("ACT_DIESIMPLE"));
+	}
 	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
-	SetLifeSpan(CorpseLifetime);
+}
+
+bool ASourceNPCBase::BecomeRagdoll(const FVector& ForceImpulse, const FVector& ForcePosition)
+{
+	if (!Model || !Model->HasModel() || Ragdoll.IsValid())
+	{
+		return false;
+	}
+	FSourcePHYFile Phy;
+	FString Error;
+	if (!Phy.Load(Model->GetModelPath(), ULambdaSourceSettings::Get().UnitScale, &Error))
+	{
+		UE_LOG(LogLambdaSource, Log, TEXT("%s: no ragdoll (%s)"), *Entity.ClassName, *Error);
+		return false;
+	}
+	ASourceRagdoll* NewRagdoll = ASourceRagdoll::Create(GetWorld(), Model, Phy, ForceImpulse, ForcePosition,
+		GetVelocity(), BloodColor, CorpseLifetime);
+	if (!NewRagdoll)
+	{
+		return false;
+	}
+	Ragdoll = NewRagdoll;
+	return true;
+}
+
+FVector ASourceNPCBase::CalcDamageForceVector(float Damage, const FVector& GivenForce, AActor* Attacker) const
+{
+	// Already have a damage force in the data, use that.
+	if (!GivenForce.IsNearlyZero())
+	{
+		return GivenForce;
+	}
+	if (!Attacker)
+	{
+		return FVector::ZeroVector;
+	}
+	// Calculate an impulse large enough to push a 75kg man 4 in/sec per point of damage
+	const float ForceScale = Damage * 75.0f * 4.0f;
+	FVector Force = GetActorLocation() - Attacker->GetActorLocation();
+	Force.Normalize();
+	return Force * ForceScale * 2.54f;	// kg*cm/s
 }

@@ -12,5 +12,7 @@ ULambdaSourceSettings::ULambdaSourceSettings()
 	SpriteMaterial = FSoftObjectPath(TEXT("/LambdaSource/Materials/M_LambdaSprite.M_LambdaSprite"));
 	SpriteMaterialNoZ = FSoftObjectPath(TEXT("/LambdaSource/Materials/M_LambdaSpriteNoZ.M_LambdaSpriteNoZ"));
 	SpriteMaterialTranslucent = FSoftObjectPath(TEXT("/LambdaSource/Materials/M_LambdaSpriteTranslucent.M_LambdaSpriteTranslucent"));
+	ModelMaterial = FSoftObjectPath(TEXT("/LambdaSource/Materials/M_LambdaModel.M_LambdaModel"));
+	ModelMaterialTranslucent = FSoftObjectPath(TEXT("/LambdaSource/Materials/M_LambdaModelTranslucent.M_LambdaModelTranslucent"));
 	FallbackMaterial = FSoftObjectPath(TEXT("/Engine/EngineMaterials/WorldGridMaterial.WorldGridMaterial"));
 }

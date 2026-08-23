@@ -18,6 +18,8 @@ DECAL_PBR_NAME = 'M_LambdaDecalPBR'
 SPRITE_NAME = 'M_LambdaSprite'
 SPRITE_NOZ_NAME = 'M_LambdaSpriteNoZ'
 SPRITE_TRANSLUCENT_NAME = 'M_LambdaSpriteTranslucent'
+MODEL_NAME = 'M_LambdaModel'
+MODEL_TRANSLUCENT_NAME = 'M_LambdaModelTranslucent'
 LEVEL_PATH = '/Game/LambdaEngine/Maps/LambdaEntry'
 
 
@@ -740,6 +742,126 @@ def build_sprite_material(name, ignore_z, translucent=False):
     return material
 
 
+def build_model_material(name, translucent=False):
+    # Lit PBR master for VertexLitGeneric/LightmappedGeneric materials that bring more than a base texture:
+    # $bumpmap (normal), $roughness/$metalness (Lambda constants; Source 1 has $phong instead, Source 2 imports
+    # carry real values), $color2 tint, $selfillum + $selfillummask + $selfillumtint (emissive = base * mask * tint).
+    # The translucent variant is for "$translucent 1" overlays such as a blood layer, lit as a surface.
+    full_path = f'{MATERIAL_PATH}/{name}'
+    if unreal.EditorAssetLibrary.does_asset_exist(full_path):
+        log(f'{full_path} already exists')
+        return unreal.load_asset(full_path)
+
+    tools = unreal.AssetToolsHelpers.get_asset_tools()
+    material = tools.create_asset(name, MATERIAL_PATH, unreal.Material, unreal.MaterialFactoryNew())
+    if material is None:
+        raise RuntimeError(f'Could not create {full_path}')
+
+    material.set_editor_property('material_domain', unreal.MaterialDomain.MD_SURFACE)
+    material.set_editor_property('shading_model', unreal.MaterialShadingModel.MSM_DEFAULT_LIT)
+    material.set_editor_property('blend_mode', unreal.BlendMode.BLEND_TRANSLUCENT if translucent else unreal.BlendMode.BLEND_OPAQUE)
+    material.set_editor_property('two_sided', True)	# $nocull is common on creature models; Source culls per material
+    if translucent:
+        try:
+            material.set_editor_property('translucency_lighting_mode', unreal.TranslucencyLightingMode.TLM_SURFACE)
+        except Exception as e:  # noqa: BLE001
+            log(f'could not set translucency lighting on {name}: {e}')
+
+    mel = unreal.MaterialEditingLibrary
+
+    def expr(cls, x, y):
+        return mel.create_material_expression(material, cls, x, y)
+
+    def scalar(pname, value, x, y):
+        e = expr(unreal.MaterialExpressionScalarParameter, x, y)
+        e.set_editor_property('parameter_name', pname)
+        e.set_editor_property('default_value', value)
+        return e
+
+    def vector(pname, value, x, y):
+        e = expr(unreal.MaterialExpressionVectorParameter, x, y)
+        e.set_editor_property('parameter_name', pname)
+        e.set_editor_property('default_value', unreal.LinearColor(*value))
+        return e
+
+    def texture(pname, default_path, x, y, sampler=None):
+        e = expr(unreal.MaterialExpressionTextureSampleParameter2D, x, y)
+        e.set_editor_property('parameter_name', pname)
+        tex = unreal.load_asset(default_path)
+        if tex:
+            e.set_editor_property('texture', tex)
+        if sampler is not None:
+            e.set_editor_property('sampler_type', sampler)
+        return e
+
+    # ---- base colour * tint ----
+    base = texture('BaseTexture', '/Engine/EngineResources/DefaultTexture', -900, 0)
+    tint = vector('ColorTint', (1.0, 1.0, 1.0, 1.0), -900, 220)
+    base_tinted = expr(unreal.MaterialExpressionMultiply, -620, 40)
+    connect(base, 'RGB', base_tinted, 'A')
+    connect(tint, 'RGB', base_tinted, 'B')
+    connect_property(base_tinted, '', unreal.MaterialProperty.MP_BASE_COLOR)
+
+    # ---- normal, with an optional green flip (FlipGreen 1 negates Y for the other handedness) ----
+    normal = texture('NormalMap', '/Engine/EngineMaterials/DefaultNormal', -900, 420, unreal.MaterialSamplerType.SAMPLERTYPE_NORMAL)
+    flip = scalar('FlipGreen', 0.0, -900, 640)
+    n_r = expr(unreal.MaterialExpressionComponentMask, -700, 400)
+    n_r.set_editor_property('r', True); n_r.set_editor_property('g', False); n_r.set_editor_property('b', False); n_r.set_editor_property('a', False)
+    connect(normal, 'RGB', n_r, '')
+    n_g = expr(unreal.MaterialExpressionComponentMask, -700, 480)
+    n_g.set_editor_property('r', False); n_g.set_editor_property('g', True); n_g.set_editor_property('b', False); n_g.set_editor_property('a', False)
+    connect(normal, 'RGB', n_g, '')
+    n_b = expr(unreal.MaterialExpressionComponentMask, -700, 560)
+    n_b.set_editor_property('r', False); n_b.set_editor_property('g', False); n_b.set_editor_property('b', True); n_b.set_editor_property('a', False)
+    connect(normal, 'RGB', n_b, '')
+    two = expr(unreal.MaterialExpressionConstant, -760, 700)
+    two.set_editor_property('r', 2.0)
+    flip2 = expr(unreal.MaterialExpressionMultiply, -660, 660)
+    connect(flip, '', flip2, 'A')
+    connect(two, '', flip2, 'B')
+    sign = expr(unreal.MaterialExpressionOneMinus, -560, 660)		# 1 - 2*flip: +1 or -1
+    connect(flip2, '', sign, '')
+    g_signed = expr(unreal.MaterialExpressionMultiply, -460, 480)
+    connect(n_g, '', g_signed, 'A')
+    connect(sign, '', g_signed, 'B')
+    n_rg = expr(unreal.MaterialExpressionAppendVector, -340, 440)
+    connect(n_r, '', n_rg, 'A')
+    connect(g_signed, '', n_rg, 'B')
+    n_rgb = expr(unreal.MaterialExpressionAppendVector, -220, 440)
+    connect(n_rg, '', n_rgb, 'A')
+    connect(n_b, '', n_rgb, 'B')
+    connect_property(n_rgb, '', unreal.MaterialProperty.MP_NORMAL)
+
+    # ---- surface ----
+    connect_property(scalar('Roughness', 0.9, -620, 820), '', unreal.MaterialProperty.MP_ROUGHNESS)
+    connect_property(scalar('Metalness', 0.0, -620, 900), '', unreal.MaterialProperty.MP_METALLIC)
+    connect_property(scalar('Specular', 0.5, -620, 980), '', unreal.MaterialProperty.MP_SPECULAR)
+
+    # ---- self-illumination: base * mask * tint ----
+    selfmask = texture('SelfIllumMask', '/Engine/EngineResources/Black', -900, 1100)
+    selftint = vector('SelfIllumTint', (0.0, 0.0, 0.0, 0.0), -900, 1320)
+    em_masked = expr(unreal.MaterialExpressionMultiply, -620, 1140)
+    connect(base_tinted, '', em_masked, 'A')
+    connect(selfmask, 'R', em_masked, 'B')
+    emissive = expr(unreal.MaterialExpressionMultiply, -460, 1160)
+    connect(em_masked, '', emissive, 'A')
+    connect(selftint, 'RGB', emissive, 'B')
+    connect_property(emissive, '', unreal.MaterialProperty.MP_EMISSIVE_COLOR)
+
+    if translucent:
+        connect_property(base, 'A', unreal.MaterialProperty.MP_OPACITY)
+
+    mel.recompile_material(material)
+    unreal.EditorAssetLibrary.save_asset(full_path, only_if_is_dirty=False)
+    log(f'created {full_path}')
+    return material
+
+
+def ensure_model_materials():
+    build_model_material(MODEL_NAME, translucent=False)
+    build_model_material(MODEL_TRANSLUCENT_NAME, translucent=True)
+
+
 def ensure_sprite_materials():
     build_sprite_material(SPRITE_NAME, ignore_z=False)
     build_sprite_material(SPRITE_NOZ_NAME, ignore_z=True)
@@ -751,5 +873,6 @@ ensure_master_material()
 ensure_decal_material()
 ensure_decal_pbr_material()
 ensure_sprite_materials()
+ensure_model_materials()
 ensure_entry_level()
 log('done')

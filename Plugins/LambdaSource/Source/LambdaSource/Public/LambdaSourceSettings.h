@@ -87,6 +87,14 @@ public:
 	UPROPERTY(config, EditAnywhere, Category = "Materials", meta = (AllowedClasses = "/Script/Engine.MaterialInterface"))
 	FSoftObjectPath SpriteMaterialNoZ;
 
+	/** Lit PBR master for materials with $bumpmap/$roughness/$selfillum/$color2 (Source 2 imports, HL2 $bumpmap models). */
+	UPROPERTY(config, EditAnywhere, Category = "Materials", meta = (AllowedClasses = "/Script/Engine.MaterialInterface"))
+	FSoftObjectPath ModelMaterial;
+
+	/** The same, alpha-blended, for "$translucent 1" model overlays (blood layers, glass). */
+	UPROPERTY(config, EditAnywhere, Category = "Materials", meta = (AllowedClasses = "/Script/Engine.MaterialInterface"))
+	FSoftObjectPath ModelMaterialTranslucent;
+
 	/** Alpha-blended unlit sprite master, vertex-coloured, for UnlitGeneric $translucent effects (blood, dust, smoke). */
 	UPROPERTY(config, EditAnywhere, Category = "Materials", meta = (AllowedClasses = "/Script/Engine.MaterialInterface"))
 	FSoftObjectPath SpriteMaterialTranslucent;

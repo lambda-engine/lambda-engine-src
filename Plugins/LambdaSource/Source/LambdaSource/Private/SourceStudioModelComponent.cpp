@@ -99,7 +99,7 @@ void USourceStudioModelComponent::TickComponent(float DeltaTime, ELevelTick Tick
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	if (!HasModel() || CurrentSequence == INDEX_NONE || !IsVisible())
+	if (!HasModel() || CurrentSequence == INDEX_NONE || !IsVisible() || bExternalPose)
 	{
 		return;
 	}
@@ -141,6 +141,17 @@ void USourceStudioModelComponent::TickComponent(float DeltaTime, ELevelTick Tick
 		Model->EvaluateSequence(CurrentSequence, Cycle, BoneToModel);
 		RefreshPose();
 	}
+}
+
+void USourceStudioModelComponent::SetExternalPose(const TArray<FSourceMatrix3x4>& InBoneToModel)
+{
+	if (!HasModel() || InBoneToModel.Num() != Model->GetNumBones())
+	{
+		return;
+	}
+	bExternalPose = true;
+	BoneToModel = InBoneToModel;
+	RefreshPose();
 }
 
 void USourceStudioModelComponent::RefreshPose()

@@ -14,6 +14,7 @@ struct LAMBDASOURCE_API FSourceAmmoType
 	FString MaxCarryCvar;		// "sk_max_pistol"
 
 	float PlayerDamage = 0.0f;
+	float DamageForce = 0.0f;	// physicsForceImpulse, kg*in/s (BULLET_IMPULSE)
 	float MaxCarry = 0.0f;
 };
 
@@ -37,7 +38,8 @@ public:
 private:
 	FSourceAmmoDef() = default;
 	void LoadSkillConfig();
-	void AddAmmoType(const FString& Name, const FString& PlayerDamageCvar, const FString& NpcDamageCvar, const FString& MaxCarryCvar);
+	void AddAmmoType(const FString& Name, const FString& PlayerDamageCvar, const FString& NpcDamageCvar, const FString& MaxCarryCvar,
+		float DamageForce = 0.0f);
 
 	TMap<FString, FSourceAmmoType> AmmoTypes;
 	TMap<FString, float> SkillValues;

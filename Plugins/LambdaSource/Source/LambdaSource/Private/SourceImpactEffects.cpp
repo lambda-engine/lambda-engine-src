@@ -9,6 +9,7 @@
 #include "Materials/MaterialInterface.h"
 #include "SourceParticleEffect.h"
 #include "SourceNPCBase.h"
+#include "SourceRagdoll.h"
 #include "Components/DecalComponent.h"
 #include "Engine/HitResult.h"
 #include "Kismet/GameplayStatics.h"
@@ -263,18 +264,22 @@ void PlayImpact(const FHitResult& Hit, ULambdaMaterialLibrary* Materials, UObjec
 	ResolveSurface(Hit, Materials, Info);
 
 	// A living thing bleeds rather than taking a bullet hole: CBaseCombatCharacter::TraceAttack spawns blood at
-	// the wound and TraceBleed puts decals on whatever is behind it (baseentity_shared.cpp).
-	if (const ASourceNPCBase* NPC = Cast<ASourceNPCBase>(Hit.GetActor()))
+	// the wound and TraceBleed puts decals on whatever is behind it (baseentity_shared.cpp). A ragdoll does the
+	// same (CRagdollProp::TraceAttack), so corpses keep bleeding when shot.
+	const ASourceNPCBase* NPC = Cast<ASourceNPCBase>(Hit.GetActor());
+	const ASourceRagdoll* Ragdoll = Cast<ASourceRagdoll>(Hit.GetActor());
+	if (NPC || Ragdoll)
 	{
-		SpawnBlood(World, Materials, Hit.ImpactPoint, -ShotDirection, NPC->GetBloodColor());
+		const ESourceBloodColor Color = NPC ? NPC->GetBloodColor() : Ragdoll->GetBloodColor();
+		SpawnBlood(World, Materials, Hit.ImpactPoint, -ShotDirection, Color);
 		TArray<const AActor*> Ignore;
-		Ignore.Add(NPC);
+		Ignore.Add(Hit.GetActor());
 		if (const AActor* Shooter = Cast<AActor>(SoundOuter))
 		{
 			Ignore.Add(Shooter);
 			Ignore.Add(Shooter->GetOwner());
 		}
-		TraceBleed(World, Materials, Hit, ShotDirection, Damage, NPC->GetBloodColor(), Ignore);
+		TraceBleed(World, Materials, Hit, ShotDirection, Damage, Color, Ignore);
 	}
 	else
 	{

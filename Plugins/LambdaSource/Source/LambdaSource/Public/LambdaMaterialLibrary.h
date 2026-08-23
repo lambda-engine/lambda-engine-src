@@ -26,6 +26,13 @@ struct LAMBDASOURCE_API FSourceMaterialInfo
 	float DecalScale = 1.0f;	// $decalscale: decal world size = texture width * this (Source's decal sizing)
 	bool bIgnoreZ = false;	// $ignorez: draw without depth testing (first-person effect sprites)
 	bool bAdditive = false;	// $additive: additive blend (flashes, glows) rather than alpha
+	// PBR inputs: Source 2 imports write real values (Lambda keys $roughness/$metalness); HL2 materials only have $bumpmap.
+	float Roughness = -1.0f;	// $roughness, -1 = not given
+	float Metalness = -1.0f;	// $metalness, -1 = not given
+	bool bNormalMapFlipY = false;	// $normalmapflipy: the other tangent-space handedness
+	FString SelfIllumMask;		// $selfillummask (texture name)
+	FVector3f SelfIllumTint = FVector3f(1, 1, 1);	// $selfillumtint
+	FVector3f Color2 = FVector3f(1, 1, 1);			// $color2 tint
 
 	// Authored decal maps. $bumpmap is Source's own normal-map key; the rest are a Lambda extension written by
 	// Tools/ImportSource2Decals.py for decals that come with height and occlusion maps (Source 2's bullet holes).
@@ -130,6 +137,12 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInterface> SpriteMasterMaterialTranslucent;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInterface> ModelMasterMaterial;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInterface> ModelMasterMaterialTranslucent;
 
 	UPROPERTY(Transient)
 	TMap<FString, TObjectPtr<UMaterialInterface>> DecalCache;

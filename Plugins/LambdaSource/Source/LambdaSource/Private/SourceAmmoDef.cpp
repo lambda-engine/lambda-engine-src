@@ -1,4 +1,5 @@
 #include "SourceAmmoDef.h"
+#include "SourceDamage.h"
 #include "LambdaFileSystem.h"
 #include "LambdaSourceModule.h"
 
@@ -8,10 +9,12 @@ FSourceAmmoDef& FSourceAmmoDef::Get()
 	return Instance;
 }
 
-void FSourceAmmoDef::AddAmmoType(const FString& Name, const FString& PlayerDamageCvar, const FString& NpcDamageCvar, const FString& MaxCarryCvar)
+void FSourceAmmoDef::AddAmmoType(const FString& Name, const FString& PlayerDamageCvar, const FString& NpcDamageCvar, const FString& MaxCarryCvar,
+	float DamageForce)
 {
 	FSourceAmmoType Type;
 	Type.Name = Name;
+	Type.DamageForce = DamageForce;
 	Type.PlayerDamageCvar = PlayerDamageCvar;
 	Type.NpcDamageCvar = NpcDamageCvar;
 	Type.MaxCarryCvar = MaxCarryCvar;
@@ -31,12 +34,13 @@ void FSourceAmmoDef::Initialize()
 	LoadSkillConfig();
 
 	// The subset of CHalfLife2::Init()'s AddAmmoType() table that the shipped weapon scripts reference.
-	AddAmmoType(TEXT("Pistol"),			TEXT("sk_plr_dmg_pistol"),		TEXT("sk_npc_dmg_pistol"),		TEXT("sk_max_pistol"));
-	AddAmmoType(TEXT("SMG1"),			TEXT("sk_plr_dmg_smg1"),		TEXT("sk_npc_dmg_smg1"),		TEXT("sk_max_smg1"));
-	AddAmmoType(TEXT("357"),			TEXT("sk_plr_dmg_357"),			TEXT("sk_npc_dmg_357"),			TEXT("sk_max_357"));
-	AddAmmoType(TEXT("AR2"),			TEXT("sk_plr_dmg_ar2"),			TEXT("sk_npc_dmg_ar2"),			TEXT("sk_max_ar2"));
-	AddAmmoType(TEXT("Buckshot"),		TEXT("sk_plr_dmg_buckshot"),	TEXT("sk_npc_dmg_buckshot"),	TEXT("sk_max_buckshot"));
-	AddAmmoType(TEXT("XBowBolt"),		TEXT("sk_plr_dmg_crossbow"),	TEXT("sk_npc_dmg_crossbow"),	TEXT("sk_max_crossbow"));
+	// Forces are BULLET_IMPULSE(grains, ft/s) from the same table; the 357 and crossbow hit like trucks on purpose.
+	AddAmmoType(TEXT("Pistol"),			TEXT("sk_plr_dmg_pistol"),		TEXT("sk_npc_dmg_pistol"),		TEXT("sk_max_pistol"),		SourceDamage::BulletImpulse(200, 1225));
+	AddAmmoType(TEXT("SMG1"),			TEXT("sk_plr_dmg_smg1"),		TEXT("sk_npc_dmg_smg1"),		TEXT("sk_max_smg1"),		SourceDamage::BulletImpulse(200, 1225));
+	AddAmmoType(TEXT("357"),			TEXT("sk_plr_dmg_357"),			TEXT("sk_npc_dmg_357"),			TEXT("sk_max_357"),			SourceDamage::BulletImpulse(800, 5000));
+	AddAmmoType(TEXT("AR2"),			TEXT("sk_plr_dmg_ar2"),			TEXT("sk_npc_dmg_ar2"),			TEXT("sk_max_ar2"),			SourceDamage::BulletImpulse(200, 1225));
+	AddAmmoType(TEXT("Buckshot"),		TEXT("sk_plr_dmg_buckshot"),	TEXT("sk_npc_dmg_buckshot"),	TEXT("sk_max_buckshot"),	SourceDamage::BulletImpulse(400, 1200));
+	AddAmmoType(TEXT("XBowBolt"),		TEXT("sk_plr_dmg_crossbow"),	TEXT("sk_npc_dmg_crossbow"),	TEXT("sk_max_crossbow"),	SourceDamage::BulletImpulse(800, 8000));
 	AddAmmoType(TEXT("Grenade"),		TEXT("sk_plr_dmg_grenade"),		TEXT("sk_npc_dmg_grenade"),		TEXT("sk_max_grenade"));
 	AddAmmoType(TEXT("RPG_Round"),		TEXT("sk_plr_dmg_rpg_round"),	TEXT("sk_npc_dmg_rpg_round"),	TEXT("sk_max_rpg_round"));
 

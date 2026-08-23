@@ -5,6 +5,8 @@
 #include "LambdaSoundLibrary.h"
 #include "LambdaSourceSettings.h"
 #include "SourceAmmoDef.h"
+#include "SourceDamage.h"
+#include "GameFramework/DamageType.h"
 #include "SourceCoordinates.h"
 #include "SourceImpactEffects.h"
 #include "Camera/CameraComponent.h"
@@ -292,10 +294,18 @@ void ALambdaWeapon::FireBullet(float Damage, const FVector& Spread)
 		// UTIL_ImpactTrace: the decal and impact sound come from the surface that was struck.
 		SourceImpact::PlayImpact(Hit, WeaponOwner->GetWorldMaterialLibrary(), this, Dir, Damage);
 
-		// Nothing in the map takes damage yet (no NPCs or breakables), so this is where TakeDamage would go.
+		// DispatchTraceAttack with CalculateBulletDamageForce: the bullet's impulse (kg*in/s from the ammo table,
+		// phys_pushscale 1) along its travel direction, which is what a ragdoll is kicked with.
 		if (AActor* HitActor = Hit.GetActor())
 		{
-			HitActor->TakeDamage(Damage, FDamageEvent(), WeaponOwner->GetController(), WeaponOwner);
+			float ImpulseInPerSec = 0.0f;
+			if (const FSourceAmmoType* Ammo = FSourceAmmoDef::Get().Find(WeaponInfo.PrimaryAmmo))
+			{
+				ImpulseInPerSec = Ammo->DamageForce;
+			}
+			const FVector Force = Dir * ImpulseInPerSec * 2.54f;	// kg*cm/s
+			FSourceDamageEvent DamageEvent(Damage, Hit, Dir, UDamageType::StaticClass(), Force);
+			HitActor->TakeDamage(Damage, DamageEvent, WeaponOwner->GetController(), WeaponOwner);
 		}
 	}
 }

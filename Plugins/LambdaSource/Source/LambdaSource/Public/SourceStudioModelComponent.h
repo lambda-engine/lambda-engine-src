@@ -61,6 +61,17 @@ public:
 	/** World-space transform of a named attachment ("muzzle", "shell_eject"), from the current pose. */
 	bool GetAttachmentWorld(const FString& Name, FVector& OutLocation, FVector& OutForward) const;
 
+	/** Bone-to-model transforms of the pose on screen, Source space. */
+	const TArray<FSourceMatrix3x4>& GetBoneToModel() const { return BoneToModel; }
+
+	/**
+	 * Hands the pose to something else (a ragdoll): the given bone matrices are skinned and the sequence stops
+	 * advancing until ClearExternalPose().
+	 */
+	void SetExternalPose(const TArray<FSourceMatrix3x4>& InBoneToModel);
+	void ClearExternalPose() { bExternalPose = false; }
+	bool HasExternalPose() const { return bExternalPose; }
+
 	FSourceAnimationEvent OnAnimationEvent;
 
 private:
@@ -78,6 +89,7 @@ private:
 	float PlaybackRate = 1.0f;
 	bool bSequenceLooping = false;
 	bool bSequenceFinished = false;
+	bool bExternalPose = false;
 
 	UPROPERTY(Transient)
 	TObjectPtr<ULambdaMaterialLibrary> MaterialLibrary;
