@@ -26,6 +26,7 @@
 #include "LambdaSourceSettings.h"
 #include "SourceBSPWorldActor.h"
 #include "Kismet/GameplayStatics.h"
+#include "Engine/Engine.h"
 #include "SourceStudioModelComponent.h"
 #include "CollisionQueryParams.h"
 #include "TimerManager.h"
@@ -34,6 +35,13 @@
 #include "ProceduralMeshComponent.h"
 #include "Components/PointLightComponent.h"
 #include "Engine/World.h"
+
+// lambda.npc_create.auto <classname> spawns that NPC ahead of the player 2s after spawn, for scripted launches.
+static FString GNPCCreateAuto;
+static FAutoConsoleVariableRef CVarNPCCreateAuto(
+	TEXT("lambda.npc_create.auto"),
+	GNPCCreateAuto,
+	TEXT("<classname>: npc_create it where the player looks, 2s after spawn"));
 
 // lambda.decaltest.auto "<distance_cm> <angle_deg>" runs RunDecalTest shortly after spawn, so a scripted launch can
 // frame decals identically every time (-ExecCmds runs before the pawn exists, hence the cvar + timer).
@@ -158,16 +166,6 @@ void ALambdaCharacter::BeginPlay()
 	// are implemented these come from the map instead.
 	GiveWeapon(TEXT("weapon_pistol"));
 	GiveAmmo(TEXT("Pistol"), 68);
-
-	if (!GDecalTestAuto.IsEmpty())
-	{
-		TArray<FString> Parts;
-		GDecalTestAuto.ParseIntoArrayWS(Parts);
-		const float Dist = Parts.Num() > 0 ? FCString::Atof(*Parts[0]) : 90.0f;
-		const float Angle = Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : 45.0f;
-		FTimerHandle Handle;
-		GetWorldTimerManager().SetTimer(Handle, [this, Dist, Angle]() { RunDecalTest(Dist, Angle); }, 2.0f, false);
-	}
 
 	FirstPersonCamera->FirstPersonFieldOfView = Settings.ViewModelFOV;
 	FirstPersonCamera->FirstPersonScale = Settings.ViewModelFirstPersonScale;
@@ -404,6 +402,30 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 	}
 
 	UpdateMuzzleFlash();
+
+	// Scripted-launch aids (lambda.npc_create.auto / lambda.decaltest.auto): -ExecCmds applies its cvars *after*
+	// BeginPlay, so they are read here, once, two seconds into play.
+	if (!bAutoCommandsRun)
+	{
+		AutoCommandTimer += DeltaSeconds;
+		if (AutoCommandTimer >= 2.0f)
+		{
+			bAutoCommandsRun = true;
+			if (!GNPCCreateAuto.IsEmpty())
+			{
+				// "<classname> [distance_cm]"
+				TArray<FString> Parts;
+				GNPCCreateAuto.ParseIntoArrayWS(Parts);
+				NPCCreate(Parts[0], Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : 5000.0f);
+			}
+			if (!GDecalTestAuto.IsEmpty())
+			{
+				TArray<FString> Parts;
+				GDecalTestAuto.ParseIntoArrayWS(Parts);
+				RunDecalTest(Parts.Num() > 0 ? FCString::Atof(*Parts[0]) : 90.0f, Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : 45.0f);
+			}
+		}
+	}
 }
 
 void ALambdaCharacter::RunDecalTest(float DistanceCm, float AngleDeg, int32 Count)
@@ -827,6 +849,19 @@ void ALambdaCharacter::UpdateMuzzleFlash()
 	}
 }
 
+float ALambdaCharacter::TakeDamage(float DamageAmount, const FDamageEvent& DamageEvent, AController* EventInstigator, AActor* DamageCauser)
+{
+	if (DamageAmount <= 0.0f || Health <= 0.0f)
+	{
+		return 0.0f;
+	}
+	// CBasePlayer::OnTakeDamage without the suit: the whole amount comes off health. Death is not handled yet -
+	// health simply stops at zero.
+	Health = FMath::Max(0.0f, Health - DamageAmount);
+	UE_LOG(LogLambda, Log, TEXT("player took %.0f damage from %s, health %.0f"), DamageAmount, *GetNameSafe(DamageCauser), Health);
+	return DamageAmount;
+}
+
 ULambdaMaterialLibrary* ALambdaCharacter::GetWorldMaterialLibrary() const
 {
 	if (WorldMaterialLibrary)
@@ -841,4 +876,37 @@ ULambdaMaterialLibrary* ALambdaCharacter::GetWorldMaterialLibrary() const
 		}
 	}
 	return WorldMaterialLibrary;
+}
+
+AActor* ALambdaCharacter::NPCCreate(const FString& ClassName, float MaxDistanceCm)
+{
+	UWorld* World = GetWorld();
+	ASourceBSPWorldActor* BSPWorld = World ? Cast<ASourceBSPWorldActor>(UGameplayStatics::GetActorOfClass(World, ASourceBSPWorldActor::StaticClass())) : nullptr;
+	if (!BSPWorld)
+	{
+		UE_LOG(LogLambda, Warning, TEXT("npc_create: no BSP world actor"));
+		return nullptr;
+	}
+	// CC_NPC_Create: trace from the eyes, spawn at the hit point, facing back at the player.
+	FVector Eye;
+	FRotator EyeRot;
+	GetActorEyesViewPoint(Eye, EyeRot);
+	FHitResult Hit;
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(NPCCreate), true, this);
+	FVector Spot = Eye + EyeRot.Vector() * MaxDistanceCm;
+	if (World->LineTraceSingleByChannel(Hit, Eye, Eye + EyeRot.Vector() * MaxDistanceCm, ECC_Visibility, Params))
+	{
+		// Back off the surface by a hull's width so the NPC is not spawned into a wall...
+		Spot = Hit.ImpactPoint + Hit.ImpactNormal * 40.0f;
+	}
+	// ...then UTIL_DropToFloor: the NPC stands on whatever is below that point.
+	FHitResult Floor;
+	if (World->LineTraceSingleByChannel(Floor, Spot + FVector(0, 0, 20.0f), Spot - FVector(0, 0, 5000.0f), ECC_Visibility, Params))
+	{
+		Spot = Floor.ImpactPoint + FVector(0, 0, 1.0f);
+	}
+	const float Yaw = (GetActorLocation() - Spot).Rotation().Yaw;
+	AActor* NPC = BSPWorld->CreateNPC(ClassName, Spot, Yaw);
+	UE_LOG(LogLambda, Display, TEXT("npc_create %s: %s"), *ClassName, NPC ? *NPC->GetActorLocation().ToString() : TEXT("failed"));
+	return NPC;
 }

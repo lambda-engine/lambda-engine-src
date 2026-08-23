@@ -50,6 +50,9 @@ public:
 	int32 GiveAmmo(const FString& AmmoType, int32 Count);
 	void RemoveAmmo(const FString& AmmoType, int32 Count);
 
+	/** CBasePlayer::OnTakeDamage: takes the damage off health (armour is not modelled yet). */
+	virtual float TakeDamage(float DamageAmount, const FDamageEvent& DamageEvent, AController* EventInstigator, AActor* DamageCauser) override;
+
 	/** Builds the first-person view model from a Source .mdl and shows it on the camera. */
 	UFUNCTION(BlueprintCallable, Category = "Lambda")
 	bool SetViewModel(const FString& ModelPath);
@@ -59,6 +62,9 @@ public:
 
 	/** CBasePlayer::DoMuzzleFlash - flashes the view model's "muzzle" attachment. */
 	void DoMuzzleFlash();
+
+	/** CC_NPC_Create: spawns the named NPC at the crosshair trace point (or MaxDistanceCm ahead if nearer), facing the player. */
+	AActor* NPCCreate(const FString& ClassName, float MaxDistanceCm = 5000.0f);
 
 	/** The material library the loaded map built, used to resolve $surfaceprop at a bullet impact. */
 	ULambdaMaterialLibrary* GetWorldMaterialLibrary() const;
@@ -118,6 +124,9 @@ protected:
 	float MuzzleFlashSpriteDieTime = 0.0f;
 	float MuzzleFlashLightDieTime = 0.0f;
 	float MuzzleFlashLightRadius = 0.0f;
+	float AutoCommandTimer = 0.0f;
+	bool bAutoCommandsRun = false;
+
 	/** Frames the flash is held visible regardless of its die time, so a sub-frame lifetime still renders once. */
 	int32 MuzzleFlashHoldFrames = 0;
 

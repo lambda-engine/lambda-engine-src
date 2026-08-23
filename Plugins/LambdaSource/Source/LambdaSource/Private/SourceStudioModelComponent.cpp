@@ -90,6 +90,11 @@ float USourceStudioModelComponent::GetSequenceDuration() const
 	return HasModel() ? Model->GetSequenceDuration(CurrentSequence) : 0.0f;
 }
 
+float USourceStudioModelComponent::GetSequenceGroundSpeed() const
+{
+	return HasModel() ? Model->GetSequenceGroundSpeed(CurrentSequence) : 0.0f;
+}
+
 void USourceStudioModelComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
@@ -127,7 +132,7 @@ void USourceStudioModelComponent::TickComponent(float DeltaTime, ELevelTick Tick
 		Model->CollectEvents(CurrentSequence, PrevCycle, Cycle, bSequenceLooping, Events);
 		for (const FSourceStudioEvent* Event : Events)
 		{
-			OnAnimationEvent.Broadcast(Event->Event, Event->Options);
+			OnAnimationEvent.Broadcast(Event->Event, Event->Name, Event->Options);
 		}
 	}
 

@@ -6,6 +6,7 @@
 #include "SourceDecalScript.h"
 #include "SourceGeometryBuilder.h"
 #include "SourceSurfaceProps.h"
+#include "SourceNPCBase.h"
 #include "Components/DecalComponent.h"
 #include "Engine/HitResult.h"
 #include "Kismet/GameplayStatics.h"
@@ -26,6 +27,13 @@ bool ResolveSurface(const FHitResult& Hit, ULambdaMaterialLibrary* Materials, FS
 	if (Materials && !OutInfo.MaterialName.IsEmpty())
 	{
 		OutInfo.SurfaceProp = Materials->GetSurfaceProp(OutInfo.MaterialName);
+	}
+	else if (const ASourceNPCBase* NPC = Cast<ASourceNPCBase>(Hit.GetActor()))
+	{
+		// A studio model carries its $surfaceprop in its header (a headcrab is "alienflesh"), which is what
+		// Source's bullet code reads off the hit entity's model.
+		OutInfo.SurfaceProp = NPC->GetSurfaceProp();
+		OutInfo.MaterialName = NPC->GetClassName();
 	}
 
 	FSourceSurfaceProps& Props = FSourceSurfaceProps::Get();

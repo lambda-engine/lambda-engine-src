@@ -1,5 +1,6 @@
 #include "SourceBSPWorldActor.h"
 #include "SourceImpactEffects.h"
+#include "SourceNPCHeadcrab.h"
 #include "LambdaFileSystem.h"
 #include "LambdaMaterialLibrary.h"
 #include "LambdaSourceModule.h"
@@ -225,6 +226,10 @@ void ASourceBSPWorldActor::SpawnEntities()
 		{
 			// handled implicitly (model 0)
 		}
+		else if (TSubclassOf<ASourceNPCBase> NPCClass = NPCClassForName(Class))
+		{
+			SpawnNPC(Entity, NPCClass);
+		}
 		else
 		{
 			UnhandledEntityCounts.FindOrAdd(Class)++;
@@ -236,6 +241,57 @@ void ASourceBSPWorldActor::SpawnEntities()
 	{
 		SpawnAmbientFill(Settings.AmbientFillColor, Settings.AmbientFillIntensity);
 	}
+}
+
+TSubclassOf<ASourceNPCBase> ASourceBSPWorldActor::NPCClassForName(const FString& ClassName)
+{
+	if (ClassName.Equals(TEXT("npc_headcrab"), ESearchCase::IgnoreCase))
+	{
+		return ASourceNPCHeadcrab::StaticClass();
+	}
+	return nullptr;
+}
+
+AActor* ASourceBSPWorldActor::CreateNPC(const FString& ClassName, const FVector& FeetLocation, float YawDegrees)
+{
+	TSubclassOf<ASourceNPCBase> NPCClass = NPCClassForName(ClassName);
+	if (!NPCClass)
+	{
+		UE_LOG(LogLambdaSource, Warning, TEXT("npc_create: no NPC named '%s'"), *ClassName);
+		return nullptr;
+	}
+	// Hand it the same keyvalues the entity lump would: origin and angles in Source's units and frame.
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+	const FVector3f Origin = FSourceCoords::ToSource(FeetLocation, Scale);
+	FSourceEntity Entity;
+	Entity.ClassName = ClassName;
+	Entity.Pairs.Emplace(TEXT("classname"), ClassName);
+	Entity.Pairs.Emplace(TEXT("origin"), FString::Printf(TEXT("%g %g %g"), Origin.X, Origin.Y, Origin.Z));
+	Entity.Pairs.Emplace(TEXT("angles"), FString::Printf(TEXT("0 %g 0"), -YawDegrees));	// UE yaw -> Source yaw
+	return SpawnNPC(Entity, NPCClass);
+}
+
+ASourceNPCBase* ASourceBSPWorldActor::SpawnNPC(const FSourceEntity& Entity, TSubclassOf<ASourceNPCBase> NPCClass)
+{
+	UWorld* World = GetWorld();
+	if (!World || !NPCClass)
+	{
+		return nullptr;
+	}
+	FActorSpawnParameters Params;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	Params.ObjectFlags |= RF_Transient;
+	ASourceNPCBase* NPC = World->SpawnActor<ASourceNPCBase>(NPCClass, FTransform::Identity, Params);
+	if (!NPC)
+	{
+		UE_LOG(LogLambdaSource, Warning, TEXT("Could not spawn %s"), *Entity.ClassName);
+		return nullptr;
+	}
+	NPC->InitializeFromEntity(Entity, this, MaterialLibrary);
+	SpawnedActors.Add(NPC);
+	++Stats.NumNPCs;
+	UE_LOG(LogLambdaSource, Log, TEXT("%s at %s"), *Entity.ClassName, *NPC->GetActorLocation().ToString());
+	return NPC;
 }
 
 void ASourceBSPWorldActor::SpawnBrushEntity(const FSourceEntity& Entity, int32 ModelIndex)

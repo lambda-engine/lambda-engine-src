@@ -7,8 +7,11 @@
 
 class ULambdaMaterialLibrary;
 
-/** Fired when a sequence's cycle crosses an mstudioevent_t. Event ids follow Source's AE_* / classic numbering. */
-DECLARE_MULTICAST_DELEGATE_TwoParams(FSourceAnimationEvent, int32 /*EventId*/, const FString& /*Options*/);
+/**
+ * Fired when a sequence's cycle crosses an mstudioevent_t. Newer models name their events ("AE_HEADCRAB_JUMPATTACK",
+ * "AE_CL_PLAYSOUND"); older ones only carry the numeric id.
+ */
+DECLARE_MULTICAST_DELEGATE_ThreeParams(FSourceAnimationEvent, int32 /*EventId*/, const FString& /*Name*/, const FString& /*Options*/);
 
 /**
  * Renders and animates a Source studio model (.mdl) at runtime.
@@ -51,6 +54,9 @@ public:
 
 	/** Multiplies the rate the cycle advances at (CBaseAnimating::m_flPlaybackRate). */
 	void SetPlaybackRate(float Rate) { PlaybackRate = Rate; }
+
+	/** Ground speed authored into the current sequence's root motion, in Source units/sec (0 if none). */
+	float GetSequenceGroundSpeed() const;
 
 	/** World-space transform of a named attachment ("muzzle", "shell_eject"), from the current pose. */
 	bool GetAttachmentWorld(const FString& Name, FVector& OutLocation, FVector& OutForward) const;

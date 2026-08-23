@@ -40,6 +40,14 @@ struct LAMBDASOURCE_API FSourceStudioBone
 	int32 Flags = 0;
 };
 
+/** mstudiomovement_t: piecewise root motion of an animation, which is where an NPC's ground speed comes from. */
+struct LAMBDASOURCE_API FSourceStudioMovement
+{
+	int32 EndFrame = 0;
+	int32 MotionFlags = 0;
+	FVector3f Position = FVector3f::ZeroVector;	// displacement over this block, in Source units
+};
+
 /** mstudioanimdesc_t. */
 struct LAMBDASOURCE_API FSourceStudioAnimDesc
 {
@@ -52,6 +60,10 @@ struct LAMBDASOURCE_API FSourceStudioAnimDesc
 	int32 SectionIndex = 0;
 	int32 SectionFrames = 0;
 	int64 FileOffset = 0;		// every index above is relative to the animdesc itself
+
+	/** mstudioanimsections_t: (animblock, animindex) per section when SectionFrames != 0. */
+	TArray<TPair<int32, int32>> Sections;
+	TArray<FSourceStudioMovement> Movements;
 };
 
 /** mstudioevent_t: a cue fired at a point in a sequence's cycle (muzzle flash, shell eject, sound). */
@@ -140,6 +152,12 @@ public:
 	float GetSequenceDuration(int32 SequenceIndex) const;
 	bool IsSequenceLooping(int32 SequenceIndex) const;
 
+	/** GetSequenceGroundSpeed: the animation's root-motion distance over its duration, in Source units/sec. */
+	float GetSequenceGroundSpeed(int32 SequenceIndex) const;
+
+	/** $surfaceprop of the model ("alienflesh", "metal"...), from studiohdr_t::surfacepropindex. */
+	const FString& GetSurfaceProp() const { return SurfaceProp; }
+
 	/**
 	 * Decodes one sequence at a normalised cycle (0..1) into bone-to-model transforms, in Source space.
 	 * Bones the animation does not touch keep their bind pose, exactly as InitPose/CalcAnimation leave them.
@@ -183,4 +201,14 @@ private:
 
 	/** The .mdl is kept so animation data can be decoded on demand rather than unpacked for every frame up front. */
 	TArray<uint8> MdlData;
+
+	/**
+	 * The external animation file (studiohdr_t::szanimblocknameindex, "models/x.ani"). studiomdl moves most of
+	 * a character's animation out of the .mdl into numbered blocks here; mstudioanimblock_t gives each block's
+	 * byte range in this file, and an animdesc addresses its data as block + offset.
+	 */
+	TArray<uint8> AniData;
+	FString AnimBlockName;
+	TArray<TPair<int32, int32>> AnimBlocks;	// (datastart, dataend) per block; block 0 is "in the .mdl"
+	FString SurfaceProp;
 };

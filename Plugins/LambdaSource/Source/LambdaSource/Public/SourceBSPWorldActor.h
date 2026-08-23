@@ -10,6 +10,7 @@
 
 class ULambdaMaterialLibrary;
 class ASourceEntity;
+class ASourceNPCBase;
 class ULightComponent;
 class ULocalLightComponent;
 
@@ -32,7 +33,8 @@ struct FSourceBSPLoadStats
 	UPROPERTY(BlueprintReadOnly, Category = "Lambda") int32 NumEntities = 0;
 	UPROPERTY(BlueprintReadOnly, Category = "Lambda") int32 NumLights = 0;
 	UPROPERTY(BlueprintReadOnly, Category = "Lambda") int32 NumPlayerStarts = 0;
-	UPROPERTY(BlueprintReadOnly, Category = "Lambda") int32 NumBrushEntities = 0;
+	UPROPERTY(BlueprintReadOnly, Category = "Lambda") int32 NumNPCs = 0;
+	int32 NumBrushEntities = 0;
 	UPROPERTY(BlueprintReadOnly, Category = "Lambda") float LoadTimeSeconds = 0.0f;
 };
 
@@ -78,6 +80,12 @@ public:
 	void ResolveTargets(const FString& Target, AActor* Activator, AActor* Caller, TArray<ASourceEntity*>& Out) const;
 	/** Registers an entity so it can be found by targetname. */
 	void RegisterEntity(ASourceEntity* InEntity);
+
+	/**
+	 * npc_create: spawns an NPC by classname at a world location (its feet) facing Yaw, as if the map had placed
+	 * it there. Returns null for classnames without an NPC implementation.
+	 */
+	AActor* CreateNPC(const FString& ClassName, const FVector& FeetLocation, float YawDegrees);
 	TArray<const FSourceEntity*> FindEntities(const FString& ClassName) const;
 
 	virtual void Tick(float DeltaSeconds) override;
@@ -94,6 +102,10 @@ public:
 
 private:
 	void BuildWorldGeometry();
+	/** Spawns a point NPC entity (npc_*) of the given class from its keyvalues. */
+	ASourceNPCBase* SpawnNPC(const FSourceEntity& Entity, TSubclassOf<ASourceNPCBase> NPCClass);
+	/** The NPC class registered for a classname, or null. */
+	static TSubclassOf<ASourceNPCBase> NPCClassForName(const FString& ClassName);
 	/** Spawns the actor for a brush entity ("model" "*N"), choosing the class from its classname. */
 	void SpawnBrushEntity(const FSourceEntity& Entity, int32 ModelIndex);
 	void SpawnEntities();

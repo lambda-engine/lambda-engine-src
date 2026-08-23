@@ -242,6 +242,26 @@ static void LambdaSurfaceInfoCommand(const TArray<FString>& Args, UWorld* World)
 	}
 }
 
+// lambda.npc_create <classname> - Source's npc_create: spawn an NPC where the player is looking
+static void LambdaNPCCreateCommand(const TArray<FString>& Args, UWorld* World)
+{
+	if (!World || Args.Num() < 1)
+	{
+		UE_LOG(LogLambda, Display, TEXT("Usage: lambda.npc_create <npc_headcrab>"));
+		return;
+	}
+	APlayerController* PC = World->GetFirstPlayerController();
+	if (ALambdaCharacter* Player = PC ? Cast<ALambdaCharacter>(PC->GetPawn()) : nullptr)
+	{
+		Player->NPCCreate(Args[0], Args.Num() > 1 ? FCString::Atof(*Args[1]) : 5000.0f);
+	}
+}
+
+static FAutoConsoleCommandWithWorldAndArgs GLambdaNPCCreateCommand(
+	TEXT("lambda.npc_create"),
+	TEXT("Spawn an NPC by classname where the player is looking (Source's npc_create)"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaNPCCreateCommand));
+
 // lambda.decaltest [distance_cm] [angle_deg] - stamp test impact decals ahead and jump to a fixed viewpoint
 static void LambdaDecalTestCommand(const TArray<FString>& Args, UWorld* World)
 {

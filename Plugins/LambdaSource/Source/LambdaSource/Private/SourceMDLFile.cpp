@@ -42,8 +42,17 @@ namespace
 		constexpr int32 SEQ_OFF_ACTWEIGHT = 20, SEQ_OFF_NUMEVENTS = 24, SEQ_OFF_EVENTINDEX = 28;
 		constexpr int32 SEQ_OFF_NUMBLENDS = 56, SEQ_OFF_ANIMINDEXINDEX = 60;
 
-		constexpr int32 SIZE_EVENT = 76;		// mstudioevent_t: cycle, event, type, options[64], szeventindex
-		constexpr int32 EVENT_OFF_EVENT = 4, EVENT_OFF_OPTIONS = 8, EVENT_OFF_NAMEINDEX = 72;
+		// mstudioevent_t: cycle, event, type, options[64], szeventindex - 4+4+4+64+4 = 80 bytes.
+		constexpr int32 SIZE_EVENT = 80;
+		constexpr int32 EVENT_OFF_EVENT = 4, EVENT_OFF_OPTIONS = 12, EVENT_OFF_NAMEINDEX = 76;
+
+		constexpr int32 OFF_SURFACEPROPINDEX = 308;
+		constexpr int32 OFF_SZANIMBLOCKNAMEINDEX = 348, OFF_NUMANIMBLOCKS = 352, OFF_ANIMBLOCKINDEX = 356;
+		constexpr int32 SIZE_ANIMBLOCK = 8;		// mstudioanimblock_t: datastart, dataend
+		constexpr int32 SIZE_ANIMSECTION = 8;	// mstudioanimsections_t: animblock, animindex
+		constexpr int32 ANIM_OFF_NUMMOVEMENTS = 20, ANIM_OFF_MOVEMENTINDEX = 24;
+		constexpr int32 SIZE_MOVEMENT = 44;		// mstudiomovement_t: endframe, motionflags, v0, v1, angle, vector, position
+		constexpr int32 MOVEMENT_OFF_POSITION = 32;
 
 		constexpr int32 SIZE_ATTACHMENT = 92;	// mstudioattachment_t: sznameindex, flags, localbone, local(48), unused[8]
 		constexpr int32 ATTACH_OFF_BONE = 8, ATTACH_OFF_LOCAL = 12;
@@ -390,6 +399,10 @@ bool FSourceMDLFile::Load(const FString& RelativeModelPath, float Scale, FString
 	Sequences.Reset();
 	Attachments.Reset();
 	MdlData.Reset();
+	AniData.Reset();
+	AnimBlocks.Reset();
+	AnimBlockName.Reset();
+	SurfaceProp.Reset();
 	UnitScale = Scale;
 
 	auto Fail = [&](const FString& Msg)
@@ -442,6 +455,29 @@ bool FSourceMDLFile::Load(const FString& RelativeModelPath, float Scale, FString
 	ReadBones(Mdl);
 	ReadSequences(Mdl);
 	ReadAttachments(Mdl);
+
+	SurfaceProp = ReadCString(Mdl, ReadInt(Mdl, MDL::OFF_SURFACEPROPINDEX));
+
+	// External animation blocks. studiomdl writes character animation to "<model>.ani" and leaves only the block
+	// table (and any block-0 animations) in the .mdl; without the file every sequence would fall back to the bind
+	// pose, which is what we showed for view models before this existed.
+	const int32 NumAnimBlocks = ReadInt(Mdl, MDL::OFF_NUMANIMBLOCKS);
+	const int32 AnimBlockIndex = ReadInt(Mdl, MDL::OFF_ANIMBLOCKINDEX);
+	for (int32 i = 0; i < NumAnimBlocks; ++i)
+	{
+		const int64 Off = AnimBlockIndex + (int64)i * MDL::SIZE_ANIMBLOCK;
+		AnimBlocks.Emplace(ReadInt(Mdl, Off), ReadInt(Mdl, Off + 4));
+	}
+	if (NumAnimBlocks > 1)
+	{
+		AnimBlockName = ReadCString(Mdl, ReadInt(Mdl, MDL::OFF_SZANIMBLOCKNAMEINDEX));
+		AnimBlockName.ReplaceInline(TEXT("\\"), TEXT("/"));
+		if (!AnimBlockName.IsEmpty() && !FLambdaFileSystem::Get().ReadFile(AnimBlockName, AniData))
+		{
+			UE_LOG(LogLambdaSource, Warning, TEXT("Model '%s': animation file '%s' not found; sequences in external blocks will show the bind pose"),
+				*BasePath, *AnimBlockName);
+		}
+	}
 
 	// ---- Materials: cdmaterials path + texture name ----
 	const int32 NumTextures = ReadInt(Mdl, MDL::OFF_NUMTEXTURES);
@@ -763,6 +799,29 @@ void FSourceMDLFile::ReadSequences(const TArray<uint8>& Mdl)
 		Anim.AnimIndex = ReadInt(Mdl, Off + MDL::ANIM_OFF_ANIMINDEX);
 		Anim.SectionIndex = ReadInt(Mdl, Off + MDL::ANIM_OFF_SECTIONINDEX);
 		Anim.SectionFrames = ReadInt(Mdl, Off + MDL::ANIM_OFF_SECTIONFRAMES);
+
+		// Long animations are cut into sections of SectionFrames frames, each addressed by its own (block, index);
+		// mstudioanimdesc_t::pAnim allocates numframes / sectionframes + 2 of them (the last frame is stored alone).
+		if (Anim.SectionFrames > 0 && Anim.SectionIndex != 0)
+		{
+			const int32 NumSections = Anim.NumFrames / Anim.SectionFrames + 2;
+			for (int32 sct = 0; sct < NumSections; ++sct)
+			{
+				const int64 SOff = Off + Anim.SectionIndex + (int64)sct * MDL::SIZE_ANIMSECTION;
+				Anim.Sections.Emplace(ReadInt(Mdl, SOff), ReadInt(Mdl, SOff + 4));
+			}
+		}
+
+		const int32 NumMovements = ReadInt(Mdl, Off + MDL::ANIM_OFF_NUMMOVEMENTS);
+		const int32 MovementIndex = ReadInt(Mdl, Off + MDL::ANIM_OFF_MOVEMENTINDEX);
+		for (int32 mv = 0; mv < NumMovements && MovementIndex != 0; ++mv)
+		{
+			const int64 MOff = Off + MovementIndex + (int64)mv * MDL::SIZE_MOVEMENT;
+			FSourceStudioMovement& Movement = Anim.Movements.AddDefaulted_GetRef();
+			Movement.EndFrame = ReadInt(Mdl, MOff);
+			Movement.MotionFlags = ReadInt(Mdl, MOff + 4);
+			Movement.Position = ReadVec3(Mdl, MOff + MDL::MOVEMENT_OFF_POSITION);
+		}
 	}
 
 	const int32 NumSeqs = ReadInt(Mdl, MDL::OFF_NUMLOCALSEQ);
@@ -878,6 +937,24 @@ bool FSourceMDLFile::IsSequenceLooping(int32 SequenceIndex) const
 	return Sequences.IsValidIndex(SequenceIndex) && (Sequences[SequenceIndex].Flags & STUDIO_LOOPING) != 0;
 }
 
+float FSourceMDLFile::GetSequenceGroundSpeed(int32 SequenceIndex) const
+{
+	// Studio_SeqMovement sums the animation's movement blocks; the motor divides that distance by the sequence's
+	// duration. This is how a Source NPC's run speed is authored - in the animation, not in code.
+	if (!Sequences.IsValidIndex(SequenceIndex) || !AnimDescs.IsValidIndex(Sequences[SequenceIndex].AnimDescIndex))
+	{
+		return 0.0f;
+	}
+	const FSourceStudioAnimDesc& Anim = AnimDescs[Sequences[SequenceIndex].AnimDescIndex];
+	FVector3f Total = FVector3f::ZeroVector;
+	for (const FSourceStudioMovement& Movement : Anim.Movements)
+	{
+		Total += Movement.Position;
+	}
+	const float Duration = GetSequenceDuration(SequenceIndex);
+	return Duration > 0.0f ? Total.Size() / Duration : 0.0f;
+}
+
 // ---- Pose evaluation ----
 
 void FSourceMDLFile::EvaluateBindPose(TArray<FSourceMatrix3x4>& OutBoneToModel) const
@@ -906,12 +983,6 @@ bool FSourceMDLFile::EvaluateSequence(int32 SequenceIndex, float Cycle, TArray<F
 		return false;
 	}
 	const FSourceStudioAnimDesc& Anim = AnimDescs[Seq.AnimDescIndex];
-	if (Anim.AnimBlock != 0 || Anim.AnimIndex == 0)
-	{
-		// The track lives in an external .ani block, which we do not mount.
-		EvaluateBindPose(OutBoneToModel);
-		return false;
-	}
 
 	// InitPose: every bone starts at its bind pose. studiomdl omits bones the animation never moves, and those
 	// must keep the bind pose rather than collapse to the origin.
@@ -928,37 +999,81 @@ bool FSourceMDLFile::EvaluateSequence(int32 SequenceIndex, float Cycle, TArray<F
 	// Studio_CalcFrame: the cycle spans [0, numframes - 1]. We sample the nearest frame rather than blending
 	// between two, which is what Source does when its interpolation fraction is below 0.001.
 	const int32 MaxFrame = FMath::Max(0, Anim.NumFrames - 1);
-	const int32 Frame = FMath::Clamp(FMath::RoundToInt(FMath::Clamp(Cycle, 0.0f, 1.0f) * MaxFrame), 0, MaxFrame);
+	int32 Frame = FMath::Clamp(FMath::RoundToInt(FMath::Clamp(Cycle, 0.0f, 1.0f) * MaxFrame), 0, MaxFrame);
 
-	int64 P = Anim.FileOffset + Anim.AnimIndex;
+	// mstudioanimdesc_t::pAnim: resolve which block holds this frame's data, and the frame within it.
+	int32 Block = Anim.AnimBlock;
+	int32 Index = Anim.AnimIndex;
+	if (Anim.SectionFrames > 0 && Anim.Sections.Num() > 0)
+	{
+		int32 Section;
+		if (Anim.NumFrames > Anim.SectionFrames && Frame == Anim.NumFrames - 1)
+		{
+			// the last frame of a long animation is stored separately
+			Frame = 0;
+			Section = Anim.NumFrames / Anim.SectionFrames + 1;
+		}
+		else
+		{
+			Section = Frame / Anim.SectionFrames;
+			Frame -= Section * Anim.SectionFrames;
+		}
+		if (!Anim.Sections.IsValidIndex(Section))
+		{
+			EvaluateBindPose(OutBoneToModel);
+			return false;
+		}
+		Block = Anim.Sections[Section].Key;
+		Index = Anim.Sections[Section].Value;
+	}
+
+	// Block 0 is inside the .mdl, relative to the animdesc; any other block is a byte range of the .ani file.
+	const TArray<uint8>* Src = nullptr;
+	int64 P = 0;
+	if (Block == 0)
+	{
+		Src = &MdlData;
+		P = Anim.FileOffset + Index;
+	}
+	else if (AnimBlocks.IsValidIndex(Block) && AniData.Num() > 0)
+	{
+		Src = &AniData;
+		P = (int64)AnimBlocks[Block].Key + Index;
+	}
+	if (!Src || Block < 0 || P <= 0 || P >= Src->Num())
+	{
+		EvaluateBindPose(OutBoneToModel);
+		return false;
+	}
+
 	for (int32 Guard = 0; Guard <= Bones.Num(); ++Guard)
 	{
 		uint8 BoneIdx = 0, Flags = 0;
-		if (!Peek(MdlData, P, BoneIdx) || !Peek(MdlData, P + 1, Flags) || BoneIdx >= Bones.Num())
+		if (!Peek((*Src), P, BoneIdx) || !Peek((*Src), P + 1, Flags) || BoneIdx >= Bones.Num())
 		{
 			break;
 		}
 		const FSourceStudioBone& Bone = Bones[BoneIdx];
-		const int16 NextOffset = ReadI16(MdlData, P + 2);
+		const int16 NextOffset = ReadI16((*Src), P + 2);
 		const int64 Data = P + STUDIOANIM::SIZE_RLE_HEADER;
 
 		// CalcBoneQuaternion
 		FQuat4f Q;
 		if (Flags & STUDIOANIM::FLAG_RAWROT)
 		{
-			Q = ReadQuat48(MdlData, Data);
+			Q = ReadQuat48((*Src), Data);
 		}
 		else if (Flags & STUDIOANIM::FLAG_RAWROT2)
 		{
-			Q = ReadQuat64(MdlData, Data);
+			Q = ReadQuat64((*Src), Data);
 		}
 		else if (Flags & STUDIOANIM::FLAG_ANIMROT)
 		{
 			FVector3f Angle(0.0f);
 			for (int32 j = 0; j < 3; ++j)
 			{
-				const int16 RunOffset = ReadI16(MdlData, Data + 2 * j);
-				Angle[j] = ExtractAnimValue(MdlData, RunOffset > 0 ? Data + RunOffset : 0, Frame, Bone.RotScale[j]);
+				const int16 RunOffset = ReadI16((*Src), Data + 2 * j);
+				Angle[j] = ExtractAnimValue((*Src), RunOffset > 0 ? Data + RunOffset : 0, Frame, Bone.RotScale[j]);
 			}
 			if (!(Flags & STUDIOANIM::FLAG_DELTA))
 			{
@@ -978,7 +1093,7 @@ bool FSourceMDLFile::EvaluateSequence(int32 SequenceIndex, float Cycle, TArray<F
 			const int64 PosOff = Data
 				+ ((Flags & STUDIOANIM::FLAG_RAWROT) ? STUDIOANIM::SIZE_QUAT48 : 0)
 				+ ((Flags & STUDIOANIM::FLAG_RAWROT2) ? STUDIOANIM::SIZE_QUAT64 : 0);
-			Pos = ReadVector48(MdlData, PosOff);
+			Pos = ReadVector48((*Src), PosOff);
 		}
 		else if (Flags & STUDIOANIM::FLAG_ANIMPOS)
 		{
@@ -986,8 +1101,8 @@ bool FSourceMDLFile::EvaluateSequence(int32 SequenceIndex, float Cycle, TArray<F
 			const int64 PosV = Data + ((Flags & STUDIOANIM::FLAG_ANIMROT) ? STUDIOANIM::SIZE_VALUEPTR : 0);
 			for (int32 j = 0; j < 3; ++j)
 			{
-				const int16 RunOffset = ReadI16(MdlData, PosV + 2 * j);
-				Pos[j] = ExtractAnimValue(MdlData, RunOffset > 0 ? PosV + RunOffset : 0, Frame, Bone.PosScale[j]);
+				const int16 RunOffset = ReadI16((*Src), PosV + 2 * j);
+				Pos[j] = ExtractAnimValue((*Src), RunOffset > 0 ? PosV + RunOffset : 0, Frame, Bone.PosScale[j]);
 			}
 			if (!(Flags & STUDIOANIM::FLAG_DELTA))
 			{
