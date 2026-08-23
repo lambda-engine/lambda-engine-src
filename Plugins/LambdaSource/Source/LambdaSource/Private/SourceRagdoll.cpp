@@ -1,10 +1,12 @@
 #include "SourceRagdoll.h"
 #include "LambdaSourceModule.h"
 #include "SourceCoordinates.h"
+#include "SourceDamage.h"
 #include "SourceNPCBase.h"
 #include "SourcePHYFile.h"
 #include "SourceStudioModelComponent.h"
 #include "Engine/World.h"
+#include "PhysicsEngine/BodySetup.h"
 #include "PhysicsEngine/PhysicsConstraintComponent.h"
 #include "ProceduralMeshComponent.h"
 
@@ -156,12 +158,23 @@ bool ASourceRagdoll::Build(USourceStudioModelComponent* ModelComponent, const FS
 		{
 			Body->AddCollisionConvexMesh(Hull);
 		}
+		// Bullets trace with bTraceComplex, and a procedural mesh with no sections has no complex geometry to hit;
+		// answer complex queries with the convex hull (what Source's ray-vs-vcollide does anyway).
+		if (UBodySetup* Setup = Body->GetBodySetup())
+		{
+			Setup->CollisionTraceFlag = CTF_UseSimpleAsComplex;
+		}
+		Body->RecreatePhysicsState();
 		Body->SetWorldTransform(DeathPose[BoneIndex] * ModelToWorld);
 		Body->SetSimulatePhysics(true);
 		Body->SetMassOverrideInKg(NAME_None, FMath::Max(0.1f, Solid.Mass), true);
 		Body->SetLinearDamping(Solid.Damping);
 		Body->SetAngularDamping(Solid.RotDamping);
 
+		if (SurfaceProp.IsEmpty())
+		{
+			SurfaceProp = Solid.SurfaceProp;
+		}
 		SolidBody[Solid.Index] = Bodies.Num();
 		Bodies.Add(Body);
 		BodyBone.Add(BoneIndex);
@@ -254,6 +267,69 @@ void ASourceRagdoll::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 	UpdatePose();
+}
+
+FVector ASourceRagdoll::GetCentreOfMass() const
+{
+	FVector Sum = FVector::ZeroVector;
+	float Mass = 0.0f;
+	for (const UProceduralMeshComponent* Body : Bodies)
+	{
+		const float M = FMath::Max(Body->GetMass(), 0.01f);
+		Sum += Body->GetComponentLocation() * M;
+		Mass += M;
+	}
+	return Mass > 0.0f ? Sum / Mass : GetActorLocation();
+}
+
+FVector ASourceRagdoll::GetAimPoint() const
+{
+	const UProceduralMeshComponent* Heaviest = nullptr;
+	for (const UProceduralMeshComponent* Body : Bodies)
+	{
+		if (!Heaviest || Body->GetMass() > Heaviest->GetMass())
+		{
+			Heaviest = Body;
+		}
+	}
+	return Heaviest ? Heaviest->GetComponentLocation() : GetActorLocation();
+}
+
+float ASourceRagdoll::TakeDamage(float DamageAmount, const FDamageEvent& DamageEvent, AController* EventInstigator, AActor* DamageCauser)
+{
+	// CRagdollProp::TraceAttack swaps in the physics object of the bone that was hit, and CBaseEntity::
+	// VPhysicsTakeDamage then applies the damage force at the damage position to it (ApplyForceOffset) - so a
+	// shot corpse jerks under the bullet like the piece of meat it is. The blood is PlayImpact's business.
+	if (!DamageEvent.IsOfType(FSourceDamageEvent::ClassID))
+	{
+		return 0.0f;
+	}
+	const FSourceDamageEvent& Info = static_cast<const FSourceDamageEvent&>(DamageEvent);
+	if (Info.DamageForce.IsNearlyZero())
+	{
+		return 0.0f;
+	}
+
+	UPrimitiveComponent* Body = Cast<UPrimitiveComponent>(Info.HitInfo.GetComponent());
+	if (!Body || Body->GetOwner() != this || !Body->IsSimulatingPhysics())
+	{
+		Body = nullptr;
+		float Best = TNumericLimits<float>::Max();
+		for (UProceduralMeshComponent* Candidate : Bodies)
+		{
+			const float D = FVector::DistSquared(Candidate->GetComponentLocation(), Info.DamagePosition);
+			if (D < Best)
+			{
+				Best = D;
+				Body = Candidate;
+			}
+		}
+	}
+	if (Body)
+	{
+		Body->AddImpulseAtLocation(Info.DamageForce, Info.DamagePosition);
+	}
+	return DamageAmount;
 }
 
 void ASourceRagdoll::UpdatePose()

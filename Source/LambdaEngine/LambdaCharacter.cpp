@@ -28,6 +28,8 @@
 #include "Kismet/GameplayStatics.h"
 #include "Engine/Engine.h"
 #include "SourceStudioModelComponent.h"
+#include "SourceRagdoll.h"
+#include "SourceNPCBase.h"
 #include "UnrealClient.h"
 #include "CollisionQueryParams.h"
 #include "TimerManager.h"
@@ -465,13 +467,21 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 		}
 		if (AutoFireShotsLeft > 0 && AutoFireTimer >= 0.0f)
 		{
-			// aim at whatever lambda.npc_create.auto spawned, so the scripted shots land on it
+			// aim at whatever lambda.npc_create.auto spawned, so the scripted shots land on it - or on its corpse
 			if (AutoFireTarget.IsValid() && Controller)
 			{
 				FVector Eye;
 				FRotator EyeRot;
 				GetActorEyesViewPoint(Eye, EyeRot);
-				Controller->SetControlRotation((AutoFireTarget->GetActorLocation() - Eye).Rotation());
+				FVector Aim = AutoFireTarget->GetActorLocation();
+				if (const ASourceNPCBase* NPC = Cast<ASourceNPCBase>(AutoFireTarget.Get()))
+				{
+					if (const ASourceRagdoll* Ragdoll = NPC->GetRagdoll())
+					{
+						Aim = Ragdoll->GetAimPoint();
+					}
+				}
+				Controller->SetControlRotation((Aim - Eye).Rotation());
 			}
 			if (ActiveWeapon)
 			{

@@ -236,6 +236,12 @@ bool ResolveSurface(const FHitResult& Hit, ULambdaMaterialLibrary* Materials, FS
 		OutInfo.SurfaceProp = NPC->GetSurfaceProp();
 		OutInfo.MaterialName = NPC->GetClassName();
 	}
+	else if (const ASourceRagdoll* Ragdoll = Cast<ASourceRagdoll>(Hit.GetActor()))
+	{
+		// A ragdoll's physics objects carry the .phy solid's surfaceprop (vphysics material of the hit object).
+		OutInfo.SurfaceProp = Ragdoll->GetSurfaceProp();
+		OutInfo.MaterialName = TEXT("ragdoll");
+	}
 
 	FSourceSurfaceProps& Props = FSourceSurfaceProps::Get();
 	Props.Initialize();

@@ -38,9 +38,17 @@ public:
 		ESourceBloodColor BloodColor, float Lifetime);
 
 	virtual void Tick(float DeltaSeconds) override;
+	/** CRagdollProp::TraceAttack + CBaseEntity::VPhysicsTakeDamage: the damage force kicks the body that was hit. */
+	virtual float TakeDamage(float DamageAmount, const FDamageEvent& DamageEvent, AController* EventInstigator, AActor* DamageCauser) override;
 
 	ESourceBloodColor GetBloodColor() const { return BloodColor; }
 	int32 GetNumBodies() const { return Bodies.Num(); }
+	/** Mass-weighted centre of the bodies, world space (where the corpse actually is). */
+	FVector GetCentreOfMass() const;
+	/** The heaviest body's location - something a scripted shot can actually hit. */
+	FVector GetAimPoint() const;
+	/** The .phy solids' surfaceprop ("alienflesh"), for impact sounds on the corpse. */
+	const FString& GetSurfaceProp() const { return SurfaceProp; }
 
 private:
 	bool Build(USourceStudioModelComponent* ModelComponent, const FSourcePHYFile& Phy);
@@ -67,4 +75,5 @@ private:
 
 	ESourceBloodColor BloodColor;
 	float TotalMass = 0.0f;
+	FString SurfaceProp;
 };

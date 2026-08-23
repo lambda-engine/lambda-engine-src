@@ -65,6 +65,8 @@ public:
 	float GetHealth() const { return Health; }
 	/** CBaseCombatCharacter::BloodColor. */
 	ESourceBloodColor GetBloodColor() const { return BloodColor; }
+	/** The ragdoll this NPC became on death, if any. */
+	ASourceRagdoll* GetRagdoll() const { return Ragdoll.Get(); }
 	bool IsAlive() const { return NPCState != ESourceNPCState::Dead; }
 
 	// ---- CAI_BaseNPC-style helpers, all in UE space unless named "Units" ----
