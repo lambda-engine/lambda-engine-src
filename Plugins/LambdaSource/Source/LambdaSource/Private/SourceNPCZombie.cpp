@@ -32,8 +32,12 @@ ASourceNPCZombie::ASourceNPCZombie(const FObjectInitializer& ObjectInitializer)
 
 void ASourceNPCZombie::Spawn()
 {
-	// CNPC_BaseZombie::Spawn / CZombie::Spawn / SetZombieModel
-	SetModel(TEXT("models/zombie/classic.mdl"));
+	// CNPC_BaseZombie::Spawn / CZombie::Spawn / SetZombieModel. The HL:A classic zombie converted by
+	// Tools/ImportSource2Model.py is preferred when it has been generated; HL2's model is the fallback.
+	if (!SetModel(TEXT("models/hla/zombie_classic.mdl")))
+	{
+		SetModel(TEXT("models/zombie/classic.mdl"));
+	}
 	if (Model && Model->HasModel())
 	{
 		const FSourceMDLFile* Mdl = Model->GetModel();

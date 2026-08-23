@@ -1,0 +1,413 @@
+{
+  "comment": "Conversion profile for HL:A models/creatures/zombie_classic -> Source 1 MDL (Tools/ImportSource2Model.py). Sequences map HL:A animations onto the HL2 activities npc_zombie drives; events come from the vmdl's own AnimEvents. Joint limits are authored here because HL:A's compiled physics joints are not exported.",
+  "meshes": [
+    "zombie_classic_v2_a"
+  ],
+  "bodygroups": [
+    {
+      "name": "headcrab",
+      "choices": [
+        [],
+        [
+          "zombie_classic_headcrab"
+        ]
+      ]
+    }
+  ],
+  "surfaceprop": "zombieflesh",
+  "eyeposition": [
+    0,
+    0,
+    64
+  ],
+  "mass": 100,
+  "attachments": [
+    "headcrab",
+    "eyes",
+    "head",
+    "chest",
+    "maw",
+    "Blood_Left",
+    "Blood_Right"
+  ],
+  "prune_patterns": [
+    "_end",
+    "_TWIST",
+    "IK_target",
+    "IK_driver",
+    "ClothNode",
+    "jiggle",
+    "Tooth",
+    "tooth",
+    "teeth_",
+    "_NUL",
+    "vDvr",
+    "blendShape",
+    "finger_",
+    "scap_",
+    "lowerShirt",
+    "lowerChest",
+    "jaw_L",
+    "jaw_R",
+    "mini_root",
+    "frontLeg",
+    "backLeg",
+    "zombie_root_motion"
+  ],
+  "sequences": [
+    {
+      "name": "idle01",
+      "anim": "zombie_idle_01",
+      "activity": "ACT_IDLE",
+      "weight": 1,
+      "loop": true
+    },
+    {
+      "name": "idle03",
+      "anim": "zombie_idle_03",
+      "activity": "ACT_IDLE",
+      "weight": 1,
+      "loop": true
+    },
+    {
+      "name": "idle04",
+      "anim": "zombie_idle_04",
+      "activity": "ACT_IDLE",
+      "weight": 1,
+      "loop": true
+    },
+    {
+      "name": "walk1",
+      "anim": "zombie_walk_n_01",
+      "activity": "ACT_WALK",
+      "weight": 1,
+      "loop": true,
+      "motion": true,
+      "footsteps": true
+    },
+    {
+      "name": "walk2",
+      "anim": "zombie_walk_n_02",
+      "activity": "ACT_WALK",
+      "weight": 1,
+      "loop": true,
+      "motion": true,
+      "footsteps": true
+    },
+    {
+      "name": "walk3",
+      "anim": "zombie_walk_n_03",
+      "activity": "ACT_WALK",
+      "weight": 1,
+      "loop": true,
+      "motion": true,
+      "footsteps": true
+    },
+    {
+      "name": "run",
+      "anim": "zombie_run_n_02",
+      "activity": "ACT_RUN",
+      "weight": 1,
+      "loop": true,
+      "motion": true,
+      "footsteps": true
+    },
+    {
+      "name": "attackA",
+      "anim": "zombie_classic_attack_a_01",
+      "activity": "ACT_MELEE_ATTACK1",
+      "weight": 2
+    },
+    {
+      "name": "attackB",
+      "anim": "zombie_classic_attack_b_01",
+      "activity": "ACT_MELEE_ATTACK1",
+      "weight": 2
+    },
+    {
+      "name": "attackC",
+      "anim": "zombie_classic_attack_c_01",
+      "activity": "ACT_MELEE_ATTACK1",
+      "weight": 2
+    },
+    {
+      "name": "flinch_chest_01",
+      "anim": "zombie_flinch_v2_chest_01",
+      "activity": "ACT_FLINCH_CHEST",
+      "weight": 1
+    },
+    {
+      "name": "flinch_chest_02",
+      "anim": "zombie_flinch_v2_chest_02",
+      "activity": "ACT_FLINCH_CHEST",
+      "weight": 1
+    },
+    {
+      "name": "flinch_gut_01",
+      "anim": "zombie_flinch_v2_gut_01",
+      "activity": "ACT_FLINCH_STOMACH",
+      "weight": 1
+    },
+    {
+      "name": "flinch_gut_02",
+      "anim": "zombie_flinch_v2_gut_02",
+      "activity": "ACT_FLINCH_STOMACH",
+      "weight": 1
+    },
+    {
+      "name": "flinch_arm_l_01",
+      "anim": "zombie_flinch_v2_arm_left_01",
+      "activity": "ACT_FLINCH_LEFTARM",
+      "weight": 1
+    },
+    {
+      "name": "flinch_arm_l_02",
+      "anim": "zombie_flinch_v2_arm_left_02",
+      "activity": "ACT_FLINCH_LEFTARM",
+      "weight": 1
+    },
+    {
+      "name": "flinch_arm_r_01",
+      "anim": "zombie_flinch_v2_arm_right_01",
+      "activity": "ACT_FLINCH_RIGHTARM",
+      "weight": 1
+    },
+    {
+      "name": "flinch_arm_r_02",
+      "anim": "zombie_flinch_v2_arm_right_02",
+      "activity": "ACT_FLINCH_RIGHTARM",
+      "weight": 1
+    },
+    {
+      "name": "flinch_leg_l",
+      "anim": "zombie_flinch_v2_leg_left_01",
+      "activity": "ACT_FLINCH_LEFTLEG",
+      "weight": 1
+    },
+    {
+      "name": "flinch_leg_r",
+      "anim": "zombie_flinch_v2_leg_right_01",
+      "activity": "ACT_FLINCH_RIGHTLEG",
+      "weight": 1
+    },
+    {
+      "name": "flinch_head",
+      "anim": "zombie_flinch_stumble_head_01",
+      "activity": "ACT_FLINCH_HEAD",
+      "weight": 1
+    },
+    {
+      "name": "flinch_big",
+      "anim": "zombie_flinch_kickback_chest_01",
+      "activity": "ACT_BIG_FLINCH",
+      "weight": 1
+    },
+    {
+      "name": "die_head",
+      "anim": "zombie_death_head_01",
+      "activity": "ACT_DIE_HEADSHOT",
+      "weight": 1
+    },
+    {
+      "name": "die_chest_01",
+      "anim": "zombie_death_chest_fall_02",
+      "activity": "ACT_DIE_CHESTSHOT",
+      "weight": 1
+    },
+    {
+      "name": "die_chest_02",
+      "anim": "zombie_death_chest_spin_01",
+      "activity": "ACT_DIE_CHESTSHOT",
+      "weight": 1
+    },
+    {
+      "name": "die_gut",
+      "anim": "zombie_death_stomach_01",
+      "activity": "ACT_DIE_GUTSHOT",
+      "weight": 1
+    },
+    {
+      "name": "die_arm_l",
+      "anim": "zombie_death_arm_left_01",
+      "activity": "ACT_DIE_LEFTARM",
+      "weight": 1
+    },
+    {
+      "name": "die_arm_r",
+      "anim": "zombie_death_arm_right_01",
+      "activity": "ACT_DIE_RIGHTARM",
+      "weight": 1
+    },
+    {
+      "name": "die_leg_l",
+      "anim": "zombie_death_leg_left_01",
+      "activity": "ACT_DIE_LEFTLEG",
+      "weight": 1
+    },
+    {
+      "name": "die_leg_r",
+      "anim": "zombie_death_leg_right_01",
+      "activity": "ACT_DIE_RIGHTLEG",
+      "weight": 1
+    },
+    {
+      "name": "die_simple",
+      "anim": "zombie_death_anim_02",
+      "activity": "ACT_DIESIMPLE",
+      "weight": 1
+    },
+    {
+      "name": "ragdoll",
+      "anim": "zombie_classic_ragdoll",
+      "activity": "ACT_DIERAGDOLL",
+      "weight": 1
+    }
+  ],
+  "joint_constraints": {
+    "comment": "degrees about the parent-relative x/y/z, HL2-zombie-like; HL:A's own limits are not in the export",
+    "spine_0": [
+      -25,
+      25,
+      -25,
+      25,
+      -25,
+      25
+    ],
+    "spine_2": [
+      -25,
+      25,
+      -25,
+      25,
+      -25,
+      25
+    ],
+    "neck_0": [
+      -30,
+      30,
+      -30,
+      30,
+      -30,
+      30
+    ],
+    "head": [
+      -40,
+      40,
+      -40,
+      40,
+      -40,
+      40
+    ],
+    "clavicle_L": [
+      -20,
+      20,
+      -20,
+      20,
+      -20,
+      20
+    ],
+    "clavicle_R": [
+      -20,
+      20,
+      -20,
+      20,
+      -20,
+      20
+    ],
+    "arm_upper_L": [
+      -40,
+      40,
+      -60,
+      60,
+      -60,
+      60
+    ],
+    "arm_upper_R": [
+      -40,
+      40,
+      -60,
+      60,
+      -60,
+      60
+    ],
+    "arm_lower_L": [
+      0,
+      0,
+      0,
+      0,
+      -100,
+      10
+    ],
+    "arm_lower_R": [
+      0,
+      0,
+      0,
+      0,
+      -10,
+      100
+    ],
+    "hand_L": [
+      -30,
+      30,
+      -30,
+      30,
+      -30,
+      30
+    ],
+    "hand_R": [
+      -30,
+      30,
+      -30,
+      30,
+      -30,
+      30
+    ],
+    "leg_upper_L": [
+      -50,
+      50,
+      -50,
+      50,
+      -60,
+      60
+    ],
+    "leg_upper_R": [
+      -50,
+      50,
+      -50,
+      50,
+      -60,
+      60
+    ],
+    "leg_lower_L": [
+      0,
+      0,
+      0,
+      0,
+      -10,
+      110
+    ],
+    "leg_lower_R": [
+      0,
+      0,
+      0,
+      0,
+      -110,
+      10
+    ],
+    "ankle_L": [
+      -25,
+      25,
+      -25,
+      25,
+      -25,
+      25
+    ],
+    "ankle_R": [
+      -25,
+      25,
+      -25,
+      25,
+      -25,
+      25
+    ]
+  }
+}

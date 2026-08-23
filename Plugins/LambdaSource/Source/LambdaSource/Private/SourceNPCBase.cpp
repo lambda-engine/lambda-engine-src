@@ -301,6 +301,19 @@ bool ASourceNPCBase::ShouldPlayIdleSound() const
 void ASourceNPCBase::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	if (bDyingWithAnim && NPCState == ESourceNPCState::Dead)
+	{
+		// the death animation has finished; now the physics gets the body (no fresh kick - it already fell)
+		if (IsActivityFinished())
+		{
+			bDyingWithAnim = false;
+			if (BecomeRagdoll(FVector::ZeroVector, GetActorLocation()))
+			{
+				GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			}
+		}
+		return;
+	}
 	if (NPCState == ESourceNPCState::None || NPCState == ESourceNPCState::Dead)
 	{
 		return;
@@ -512,6 +525,22 @@ void ASourceNPCBase::PlayFlinchGesture()
 	}
 }
 
+FString ASourceNPCBase::GetDeathActivity() const
+{
+	// CAI_BaseNPC::GetDeathActivity picks by wound; the arm/leg ones are private activities of the HL:A imports.
+	switch (LastHitGroup)
+	{
+	case SourceHitGroup::HITGROUP_HEAD: return TEXT("ACT_DIE_HEADSHOT");
+	case SourceHitGroup::HITGROUP_CHEST: return TEXT("ACT_DIE_CHESTSHOT");
+	case SourceHitGroup::HITGROUP_STOMACH: return TEXT("ACT_DIE_GUTSHOT");
+	case SourceHitGroup::HITGROUP_LEFTARM: return TEXT("ACT_DIE_LEFTARM");
+	case SourceHitGroup::HITGROUP_RIGHTARM: return TEXT("ACT_DIE_RIGHTARM");
+	case SourceHitGroup::HITGROUP_LEFTLEG: return TEXT("ACT_DIE_LEFTLEG");
+	case SourceHitGroup::HITGROUP_RIGHTLEG: return TEXT("ACT_DIE_RIGHTLEG");
+	default: return TEXT("ACT_DIESIMPLE");
+	}
+}
+
 bool ASourceNPCBase::HasHitboxes() const
 {
 	return Model && Model->HasHitboxes();
@@ -554,6 +583,18 @@ void ASourceNPCBase::Event_Killed(AActor* Attacker)
 		Move->DisableMovement();
 	}
 	SetLifeSpan(CorpseLifetime);
+
+	// Models with per-wound death animations (the HL:A imports) play the one for the hit group and hand the body
+	// to physics when it ends; HL2's NPCs ragdoll on the spot.
+	const FString DeathActivity = GetDeathActivity();
+	if (!DeathActivity.IsEmpty() && HaveSequenceForActivity(DeathActivity))
+	{
+		SetActivity(DeathActivity);
+		bDyingWithAnim = true;
+		GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+		GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+		return;
+	}
 
 	// CBaseCombatCharacter::Event_Killed: ragdoll unless gibbed. The body is handed to physics in the pose it died
 	// in, kicked by the killing blow (CalcDamageForceVector), and the hull stops being solid.

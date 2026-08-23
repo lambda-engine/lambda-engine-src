@@ -143,6 +143,8 @@ protected:
 	virtual void OnTakeDamage_Alive(float Damage, AActor* Attacker, const FSourceDamageEvent& Info);
 	/** CAI_BaseNPC::IsHeavyDamage: more than 20 points. */
 	virtual bool IsHeavyDamage(float Damage, const FSourceDamageEvent& Info) const { return Damage > 20.0f; }
+	/** CAI_BaseNPC::GetDeathActivity, reduced to the hit group: the death animation the model has for the wound. */
+	FString GetDeathActivity() const;
 	/** CAI_BaseNPC::PlayFlinchGesture / GetFlinchActivity / CanFlinch. */
 	void PlayFlinchGesture();
 	FString GetFlinchActivity(bool bHeavyDamage, bool bGesture) const;
@@ -191,6 +193,7 @@ protected:
 	FVector LastDamagePosition = FVector::ZeroVector;
 	TWeakObjectPtr<ASourceRagdoll> Ragdoll;
 	int32 LastHitGroup = 0;				// m_LastHitGroup
+	bool bDyingWithAnim = false;		// playing a death animation; the ragdoll comes when it ends
 	float NextFlinchTime = 0.0f;		// m_flNextFlinchTime
 	bool bFlinchedMemory = false;		// bits_MEMORY_FLINCHED
 
