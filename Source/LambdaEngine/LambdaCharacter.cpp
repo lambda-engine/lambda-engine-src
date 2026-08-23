@@ -20,6 +20,8 @@
 #include "Engine/HitResult.h"
 #include "LambdaWeapon.h"
 #include "SourceAmmoDef.h"
+#include "SourceCoordinates.h"
+#include "SourceWeaponScript.h"
 #include "SourceMDLFile.h"
 #include "SourceGeometryBuilder.h"
 #include "LambdaMaterialLibrary.h"
@@ -56,6 +58,14 @@ static FAutoConsoleVariableRef CVarDecalTestAuto(
 
 // lambda.fire.auto "<shots> [interval_s] [start_delay_s]" pulls the trigger from Tick, so a scripted launch can shoot
 // without injecting input (which needs the game window in the foreground). A screenshot is taken after each shot.
+// lambda.setpos.auto "<x> <y> <z>" teleports the player to a Source-space position shortly after spawn, the way
+// Source's setpos does, so a scripted run can start somewhere other than info_player_start.
+static FString GSetPosAuto;
+static FAutoConsoleVariableRef CVarSetPosAuto(
+	TEXT("lambda.setpos.auto"),
+	GSetPosAuto,
+	TEXT("\"<x> <y> <z>\": move the player to that Source-space position 2s after spawn"));
+
 static FString GFireAuto;
 static FAutoConsoleVariableRef CVarFireAuto(
 	TEXT("lambda.fire.auto"),
@@ -443,6 +453,19 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 				RunDecalTest(Parts.Num() > 0 ? FCString::Atof(*Parts[0]) : 90.0f, Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : 45.0f,
 					3, Parts.Num() > 2 ? Parts[2] : FString());
 			}
+			if (!GSetPosAuto.IsEmpty())
+			{
+				TArray<FString> Parts;
+				GSetPosAuto.ParseIntoArrayWS(Parts);
+				if (Parts.Num() >= 3)
+				{
+					const FVector3f Source(FCString::Atof(*Parts[0]), FCString::Atof(*Parts[1]), FCString::Atof(*Parts[2]));
+					const FVector Feet = FSourceCoords::ToUE(Source, ULambdaSourceSettings::Get().UnitScale);
+					const float HalfHeight = GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+					SetActorLocation(Feet + FVector(0, 0, HalfHeight + 2.0f), false, nullptr, ETeleportType::TeleportPhysics);
+					UE_LOG(LogLambda, Display, TEXT("setpos %s"), *GetActorLocation().ToString());
+				}
+			}
 			if (!GFireAuto.IsEmpty())
 			{
 				TArray<FString> Parts;
@@ -704,6 +727,31 @@ int32 ALambdaCharacter::GetAmmoCount(const FString& AmmoType) const
 	}
 	const int32* Found = AmmoCounts.Find(AmmoType.ToLower());
 	return Found ? *Found : 0;
+}
+
+bool ALambdaCharacter::BumpWeapon(const FString& WeaponClassName)
+{
+	// CBasePlayer::BumpWeapon: a weapon that is already carried hands over its ammo and stays on the floor for
+	// nobody; a new one is taken and becomes the active weapon (Weapon_Switch), carrying the clip a map-placed
+	// weapon comes with.
+	const FSourceWeaponInfo* Info = FSourceWeaponScripts::Get().Find(WeaponClassName);
+	if (!Info)
+	{
+		return false;
+	}
+
+	// Only one weapon is carried at a time so far, so bumping the one in hand just tops up its ammo.
+	if (ActiveWeapon && ActiveWeapon->GetWeaponClassName().Equals(WeaponClassName, ESearchCase::IgnoreCase))
+	{
+		return GiveAmmo(Info->PrimaryAmmo, FMath::Max(Info->ClipSize, 1)) > 0;
+	}
+
+	if (GiveWeapon(WeaponClassName))
+	{
+		GiveAmmo(Info->PrimaryAmmo, FMath::Max(Info->ClipSize, 1));
+		return true;
+	}
+	return false;
 }
 
 int32 ALambdaCharacter::GiveAmmo(const FString& AmmoType, int32 Count)

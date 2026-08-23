@@ -34,6 +34,7 @@ struct FSourceBSPLoadStats
 	UPROPERTY(BlueprintReadOnly, Category = "Lambda") int32 NumLights = 0;
 	UPROPERTY(BlueprintReadOnly, Category = "Lambda") int32 NumPlayerStarts = 0;
 	UPROPERTY(BlueprintReadOnly, Category = "Lambda") int32 NumNPCs = 0;
+	UPROPERTY(BlueprintReadOnly, Category = "Lambda") int32 NumItems = 0;
 	int32 NumBrushEntities = 0;
 	UPROPERTY(BlueprintReadOnly, Category = "Lambda") float LoadTimeSeconds = 0.0f;
 };
@@ -104,6 +105,8 @@ private:
 	void BuildWorldGeometry();
 	/** Spawns a point NPC entity (npc_*) of the given class from its keyvalues. */
 	ASourceNPCBase* SpawnNPC(const FSourceEntity& Entity, TSubclassOf<ASourceNPCBase> NPCClass);
+	/** CItem: an ammo box or a weapon lying in the map (game/server/item_world.cpp). */
+	class ASourceItem* SpawnItem(const FSourceEntity& Entity);
 	/** The NPC class registered for a classname, or null. */
 	static TSubclassOf<ASourceNPCBase> NPCClassForName(const FString& ClassName);
 	/** Spawns the actor for a brush entity ("model" "*N"), choosing the class from its classname. */

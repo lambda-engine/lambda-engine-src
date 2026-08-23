@@ -2,6 +2,7 @@
 #include "SourceImpactEffects.h"
 #include "SourceNPCHeadcrab.h"
 #include "SourceNPCZombie.h"
+#include "SourceItem.h"
 #include "LambdaFileSystem.h"
 #include "LambdaMaterialLibrary.h"
 #include "LambdaSourceModule.h"
@@ -231,6 +232,10 @@ void ASourceBSPWorldActor::SpawnEntities()
 		{
 			SpawnNPC(Entity, NPCClass);
 		}
+		else if (ASourceItem::IsItemClass(Class))
+		{
+			SpawnItem(Entity);
+		}
 		else
 		{
 			UnhandledEntityCounts.FindOrAdd(Class)++;
@@ -274,6 +279,30 @@ AActor* ASourceBSPWorldActor::CreateNPC(const FString& ClassName, const FVector&
 	Entity.Pairs.Emplace(TEXT("origin"), FString::Printf(TEXT("%g %g %g"), Origin.X, Origin.Y, Origin.Z));
 	Entity.Pairs.Emplace(TEXT("angles"), FString::Printf(TEXT("0 %g 0"), -YawDegrees));	// UE yaw -> Source yaw
 	return SpawnNPC(Entity, NPCClass);
+}
+
+ASourceItem* ASourceBSPWorldActor::SpawnItem(const FSourceEntity& Entity)
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return nullptr;
+	}
+	FActorSpawnParameters Params;
+	Params.ObjectFlags |= RF_Transient;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	ASourceItem* Item = World->SpawnActor<ASourceItem>(ASourceItem::StaticClass(), FTransform::Identity, Params);
+	if (!Item)
+	{
+		return nullptr;
+	}
+	// The item drops itself to the floor and sizes its own touch box from the model it loads.
+	Item->InitializeFromEntity(Entity, MaterialLibrary);
+	if (IsValid(Item))
+	{
+		++Stats.NumItems;
+	}
+	return Item;
 }
 
 ASourceNPCBase* ASourceBSPWorldActor::SpawnNPC(const FSourceEntity& Entity, TSubclassOf<ASourceNPCBase> NPCClass)

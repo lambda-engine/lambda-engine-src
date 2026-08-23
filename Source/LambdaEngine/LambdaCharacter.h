@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
 #include "SourcePlayerPunch.h"
+#include "SourceItemPickup.h"
 #include "LambdaCharacter.generated.h"
 
 class UCameraComponent;
@@ -21,7 +22,7 @@ struct FInputActionValue;
  * Input is built in code (Enhanced Input) so the project needs no input assets.
  */
 UCLASS()
-class LAMBDAENGINE_API ALambdaCharacter : public ACharacter, public ISourcePlayerPunch
+class LAMBDAENGINE_API ALambdaCharacter : public ACharacter, public ISourcePlayerPunch, public ISourceItemPickup
 {
 	GENERATED_BODY()
 
@@ -52,7 +53,9 @@ public:
 	/** CBasePlayer::GetAmmoCount / GiveAmmo / RemoveAmmo, keyed by the ammo type name from the weapon script. */
 	UFUNCTION(BlueprintPure, Category = "Lambda")
 	int32 GetAmmoCount(const FString& AmmoType) const;
-	int32 GiveAmmo(const FString& AmmoType, int32 Count);
+	virtual int32 GiveAmmo(const FString& AmmoType, int32 Count) override;
+	/** CBasePlayer::BumpWeapon: takes a weapon off the floor, or just its ammo when it is already carried. */
+	virtual bool BumpWeapon(const FString& WeaponClassName) override;
 	void RemoveAmmo(const FString& AmmoType, int32 Count);
 
 	/** CBasePlayer::OnTakeDamage: takes the damage off health (armour is not modelled yet). */
