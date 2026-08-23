@@ -1,6 +1,7 @@
 #include "LambdaSoundLibrary.h"
 #include "LambdaFileSystem.h"
 #include "LambdaSourceModule.h"
+#include "SourceSoundScript.h"
 
 // ---------------------------------------------------------------------------------------------------------------------
 // ULambdaSoundWave
@@ -115,4 +116,37 @@ ULambdaSoundWave* FLambdaSoundCache::CreateWave(UObject* Outer, const FString& S
 	ULambdaSoundWave* Wave = NewObject<ULambdaSoundWave>(Outer ? Outer : (UObject*)GetTransientPackage());
 	Wave->InitFromWav(*Wav, bLoop);
 	return Wave;
+}
+
+ULambdaSoundWave* FLambdaSoundCache::CreateWaveResolved(UObject* Outer, const FString& SoundName, bool bLoop,
+	float& OutVolume, float& OutPitch)
+{
+	OutVolume = 1.0f;
+	OutPitch = 1.0f;
+
+	if (SoundName.IsEmpty() || SoundName == TEXT("0"))
+	{
+		return nullptr;
+	}
+
+	// A name that is not a wav path is a soundscript entry (Source resolves these through the sound emitter system).
+	if (!SoundName.EndsWith(TEXT(".wav"), ESearchCase::IgnoreCase))
+	{
+		const FSourceSoundScriptEntry* Entry = FSourceSoundScripts::Get().Find(SoundName);
+		if (!Entry)
+		{
+			UE_LOG(LogLambdaSource, Warning, TEXT("Unknown soundscript '%s'"), *SoundName);
+			return nullptr;
+		}
+		const FString* Wave = Entry->PickWave();
+		if (!Wave)
+		{
+			return nullptr;
+		}
+		OutVolume = Entry->PickVolume();
+		OutPitch = Entry->PickPitch() / 100.0f;
+		return CreateWave(Outer, *Wave, bLoop);
+	}
+
+	return CreateWave(Outer, SoundName, bLoop);
 }

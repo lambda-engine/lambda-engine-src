@@ -311,13 +311,10 @@ void ASourceFuncDoorRotating::SetToggleState(ESourceToggleState State)
 void ASourceFuncDoorRotating::PlayLockSounds(bool bLockedSound)
 {
 	const FString& SoundName = bLockedSound ? LockedSound : UnlockedSound;
-	if (SoundName.IsEmpty() || SoundName == TEXT("0"))
+	float Volume = 1.0f, Pitch = 1.0f;
+	if (ULambdaSoundWave* Wave = FLambdaSoundCache::Get().CreateWaveResolved(this, SoundName, false, Volume, Pitch))
 	{
-		return;
-	}
-	if (ULambdaSoundWave* Wave = FLambdaSoundCache::Get().CreateWave(this, SoundName, false))
-	{
-		UGameplayStatics::SpawnSoundAtLocation(this, Wave, GetActorLocation());
+		UGameplayStatics::SpawnSoundAtLocation(this, Wave, GetActorLocation(), FRotator::ZeroRotator, Volume, Pitch);
 	}
 }
 
@@ -421,9 +418,10 @@ void ASourceFuncDoorRotating::StartMovingSound()
 	}
 
 	StopMovingSound();
-	if (ULambdaSoundWave* Wave = FLambdaSoundCache::Get().CreateWave(this, SoundName, /*bLoop=*/ true))
+	float Volume = 1.0f, Pitch = 1.0f;
+	if (ULambdaSoundWave* Wave = FLambdaSoundCache::Get().CreateWaveResolved(this, SoundName, /*bLoop=*/ true, Volume, Pitch))
 	{
-		MovingAudio = UGameplayStatics::SpawnSoundAtLocation(this, Wave, GetActorLocation());
+		MovingAudio = UGameplayStatics::SpawnSoundAtLocation(this, Wave, GetActorLocation(), FRotator::ZeroRotator, Volume, Pitch);
 	}
 }
 
@@ -449,9 +447,10 @@ void ASourceFuncDoorRotating::PlayArrivedSound()
 	{
 		return;
 	}
-	if (ULambdaSoundWave* Wave = FLambdaSoundCache::Get().CreateWave(this, SoundName, /*bLoop=*/ false))
+	float Volume = 1.0f, Pitch = 1.0f;
+	if (ULambdaSoundWave* Wave = FLambdaSoundCache::Get().CreateWaveResolved(this, SoundName, /*bLoop=*/ false, Volume, Pitch))
 	{
-		UGameplayStatics::SpawnSoundAtLocation(this, Wave, GetActorLocation());
+		UGameplayStatics::SpawnSoundAtLocation(this, Wave, GetActorLocation(), FRotator::ZeroRotator, Volume, Pitch);
 	}
 }
 

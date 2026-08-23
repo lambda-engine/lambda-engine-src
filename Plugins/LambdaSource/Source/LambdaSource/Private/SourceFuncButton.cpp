@@ -1,5 +1,6 @@
 #include "SourceFuncButton.h"
 #include "LambdaSoundLibrary.h"
+#include "SourceSoundScript.h"
 #include "LambdaSourceModule.h"
 #include "LambdaSourceSettings.h"
 #include "SourceCoordinates.h"
@@ -30,13 +31,8 @@ void ASourceFuncButton::InitializeFromEntity(const FSourceBSPFile& Map, int32 Mo
 	LockedSound = Entity.Get(TEXT("locked_sound"));
 	UnlockedSound = Entity.Get(TEXT("unlocked_sound"));
 
-	// "a sound of 0 should not make a sound"
-	if (Sounds != 0)
-	{
-		// MakeButtonSound() maps the ordinal to the "Buttons.snd<N>" soundscript. We have no soundscript system yet,
-		// so this stays empty and the button is silent - the wav is not addressable without one.
-		NoiseButton.Reset();
-	}
+	// MakeButtonSound( int sound ) -> "Buttons.snd<N>"; a sound of 0 should not make a sound.
+	NoiseButton = (Sounds != 0) ? FString::Printf(TEXT("Buttons.snd%d"), Sounds) : FString();
 
 	// Convert movedir from angles to a vector (CBaseButton::Spawn: AngleVectors( angMoveDir, &m_vecMoveDir )).
 	FVector3f MoveAngles = FVector3f::ZeroVector;
@@ -58,11 +54,10 @@ void ASourceFuncButton::InitializeFromEntity(const FSourceBSPFile& Map, int32 Mo
 	{
 		Wait = 1.0f;
 	}
+	// NOTE: cstrike15's CBaseButton::Spawn (buttons.cpp:422) forces lip to 4 when it is 0, which would give a
+	// 4-unit-deep button zero travel. We use the authored value so lip 0 means "move the full depth", which is the
+	// documented func_button behaviour and what Hammer implies.
 	Lip = Entity.GetFloat(TEXT("lip"), 0.0f);
-	if (Lip == 0.0f)
-	{
-		Lip = 4.0f;
-	}
 
 	ToggleState = ESourceToggleState::AtBottom;
 	Position1 = SourceOrigin;
@@ -469,13 +464,10 @@ bool ASourceFuncButton::AcceptInput(const FString& InputName, AActor* InActivato
 
 void ASourceFuncButton::PlayButtonSound()
 {
-	if (NoiseButton.IsEmpty())
+	float Volume = 1.0f, Pitch = 1.0f;
+	if (ULambdaSoundWave* Wave = FLambdaSoundCache::Get().CreateWaveResolved(this, NoiseButton, false, Volume, Pitch))
 	{
-		return;
-	}
-	if (ULambdaSoundWave* Wave = FLambdaSoundCache::Get().CreateWave(this, NoiseButton, false))
-	{
-		UGameplayStatics::SpawnSoundAtLocation(this, Wave, GetActorLocation());
+		UGameplayStatics::SpawnSoundAtLocation(this, Wave, GetActorLocation(), FRotator::ZeroRotator, Volume, Pitch);
 	}
 }
 
@@ -483,12 +475,9 @@ void ASourceFuncButton::PlayLockSounds(bool bLockedSound)
 {
 	// PlayLockSounds( this, &m_ls, flocked, fbutton ) - the map may give a direct wav name.
 	const FString& SoundName = bLockedSound ? LockedSound : UnlockedSound;
-	if (SoundName.IsEmpty() || SoundName == TEXT("0"))
+	float Volume = 1.0f, Pitch = 1.0f;
+	if (ULambdaSoundWave* Wave = FLambdaSoundCache::Get().CreateWaveResolved(this, SoundName, false, Volume, Pitch))
 	{
-		return;
-	}
-	if (ULambdaSoundWave* Wave = FLambdaSoundCache::Get().CreateWave(this, SoundName, false))
-	{
-		UGameplayStatics::SpawnSoundAtLocation(this, Wave, GetActorLocation());
+		UGameplayStatics::SpawnSoundAtLocation(this, Wave, GetActorLocation(), FRotator::ZeroRotator, Volume, Pitch);
 	}
 }

@@ -43,6 +43,13 @@ public:
 	/** Returns a wave ready to play, or null if the sound is missing/unsupported. Outer owns the wave's lifetime. */
 	ULambdaSoundWave* CreateWave(UObject* Outer, const FString& SoundName, bool bLoop);
 
+	/**
+	 * Resolves an entity's sound field, which may be either a direct wav path ("doors/door1_move.wav") or a
+	 * soundscript name ("Buttons.snd1"), and returns a wave plus the script's volume/pitch.
+	 */
+	ULambdaSoundWave* CreateWaveResolved(UObject* Outer, const FString& SoundName, bool bLoop,
+		float& OutVolume, float& OutPitch);
+
 	/** Decoded PCM for a sound name, cached. Returns null if it could not be loaded. */
 	const FSourceWavData* GetWavData(const FString& SoundName);
 
