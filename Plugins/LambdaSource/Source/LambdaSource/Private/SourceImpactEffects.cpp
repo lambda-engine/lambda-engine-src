@@ -9,6 +9,7 @@
 #include "Materials/MaterialInterface.h"
 #include "SourceParticleEffect.h"
 #include "SourceNPCBase.h"
+#include "SourcePropPhysics.h"
 #include "SourceRagdoll.h"
 #include "SourceStudioModelComponent.h"
 #include "Components/DecalComponent.h"
@@ -271,6 +272,13 @@ bool ResolveSurface(const FHitResult& Hit, ULambdaMaterialLibrary* Materials, FS
 		// Source's bullet code reads off the hit entity's model.
 		OutInfo.SurfaceProp = NPC->GetSurfaceProp();
 		OutInfo.MaterialName = NPC->GetClassName();
+	}
+	else if (const ASourcePropPhysics* Prop = Cast<ASourcePropPhysics>(Hit.GetActor()))
+	{
+		// A physics prop's material comes from its collision model, the way Source reads it off the vphysics
+		// object the bullet struck.
+		OutInfo.SurfaceProp = Prop->GetSurfaceProp();
+		OutInfo.MaterialName = Prop->GetClassName_Lambda();
 	}
 	else if (const ASourceRagdoll* Ragdoll = Cast<ASourceRagdoll>(Hit.GetActor()))
 	{

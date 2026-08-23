@@ -1,4 +1,4 @@
-#include "SourcePHYFile.h"
+﻿#include "SourcePHYFile.h"
 #include "LambdaFileSystem.h"
 #include "LambdaSourceModule.h"
 #include "SourceCoordinates.h"
@@ -18,6 +18,9 @@ namespace
 	constexpr int32 IVP_LEDGE_SIZE = 16;
 	constexpr int32 IVP_TRIANGLE_SIZE = 16;
 	constexpr int32 IVP_POINT_SIZE = 16;	// IVP_U_Float_Hesse: x, y, z, hesse_val
+	// IVP_Compact_Ledgetree_node: int offset_right_node; int offset_compact_ledge; Vector center; float radius;
+	//                             uchar box_sizes[3]; uchar free_0;
+	constexpr int32 IVP_LEDGETREE_NODE_SIZE = 28;
 	constexpr float IVP_METERS_TO_UNITS = 1.0f / 0.0254f;
 
 	template <typename T>
@@ -29,6 +32,37 @@ namespace
 		}
 		FMemory::Memcpy(&Out, Bytes.GetData() + Offset, sizeof(T));
 		return true;
+	}
+
+	/**
+	 * Walks the ledge tree and collects the address of every ledge hanging off it. A node with no right child is a
+	 * terminal one and names a ledge; otherwise its left child follows it immediately and its right child is that
+	 * many bytes further on. The ledges cannot simply be read one after another: a concave collision model shares
+	 * one pool of points between all of its ledges, so a ledge's own size covers points that sit past the next
+	 * ledge - stepping by it walks straight into the middle of the triangles.
+	 */
+	void CollectLedges(const TArray<uint8>& Bytes, int64 Node, int64 SolidEnd, TArray<int64>& OutLedges, int32 Depth = 0)
+	{
+		if (Depth > 64 || Node < 0 || Node + IVP_LEDGETREE_NODE_SIZE > SolidEnd)
+		{
+			return;
+		}
+		int32 RightOffset = 0, LedgeOffset = 0;
+		if (!ReadAt(Bytes, Node, RightOffset) || !ReadAt(Bytes, Node + 4, LedgeOffset))
+		{
+			return;
+		}
+		if (RightOffset == 0)
+		{
+			const int64 Ledge = Node + LedgeOffset;
+			if (Ledge >= 0 && Ledge + IVP_LEDGE_SIZE <= SolidEnd)
+			{
+				OutLedges.AddUnique(Ledge);
+			}
+			return;
+		}
+		CollectLedges(Bytes, Node + IVP_LEDGETREE_NODE_SIZE, SolidEnd, OutLedges, Depth + 1);
+		CollectLedges(Bytes, Node + RightOffset, SolidEnd, OutLedges, Depth + 1);
 	}
 
 	/** IVP (metres, y up) -> Source units -> UE cm/axes. */
@@ -68,6 +102,23 @@ bool FSourcePHYFile::Load(const FString& RelativeModelPath, float Scale, FString
 	bLoaded = true;
 	UE_LOG(LogLambdaSource, Log, TEXT("Collision model '%s': %d solids, %d ragdoll constraints, total mass %.2f kg"),
 		*PhyPath, Solids.Num(), Constraints.Num(), GetTotalMass());
+	for (int32 SolidIndex = 0; SolidIndex < Solids.Num(); ++SolidIndex)
+	{
+		const FSourcePHYSolid& Solid = Solids[SolidIndex];
+		FBox Bounds(ForceInit);
+		int32 NumVerts = 0;
+		for (const TArray<FVector>& Hull : Solid.Hulls)
+		{
+			for (const FVector& Vertex : Hull)
+			{
+				Bounds += Vertex;
+				++NumVerts;
+			}
+		}
+		UE_LOG(LogLambdaSource, Verbose, TEXT("  solid %d '%s': %d hulls, %d verts, %s .. %s units, %.2f kg"),
+			SolidIndex, *Solid.BoneName, Solid.Hulls.Num(), NumVerts,
+			*(Bounds.Min / Scale).ToCompactString(), *(Bounds.Max / Scale).ToCompactString(), Solid.Mass);
+	}
 	return true;
 }
 
@@ -102,22 +153,20 @@ bool FSourcePHYFile::ParseBinary(const TArray<uint8>& Bytes, float Scale, int32&
 			{
 				Solid.MassCenter = IVPToUE(MassCenter[0], MassCenter[1], MassCenter[2], Scale);
 
-				// The ledges sit between the surface header and the ledge tree, back to back; each knows its own
-				// size. Only the points a ledge's triangles reference belong to it.
-				int64 Ledge = Surface + IVP_COMPACT_SURFACE_SIZE;
-				const int64 LedgeEnd = Surface + LedgeTreeRoot;
-				while (Ledge + IVP_LEDGE_SIZE <= LedgeEnd && Ledge + IVP_LEDGE_SIZE <= Bytes.Num())
+				// Every convex piece of this solid, found through the ledge tree: a crate that is hollow is built
+				// from one ledge per wall, and all of them have to be there or things fall through it.
+				const int64 SolidEnd = FMath::Min<int64>(Offset + 4 + Size, Bytes.Num());
+				TArray<int64> LedgeAddresses;
+				CollectLedges(Bytes, Surface + LedgeTreeRoot, SolidEnd, LedgeAddresses);
+				for (const int64 Ledge : LedgeAddresses)
 				{
 					int32 PointOffset = 0;
-					uint32 Flags = 0;
 					int16 NumTriangles = 0;
 					ReadAt(Bytes, Ledge, PointOffset);
-					ReadAt(Bytes, Ledge + 8, Flags);
 					ReadAt(Bytes, Ledge + 12, NumTriangles);
-					const int32 LedgeSize = (int32)((Flags >> 8) & 0xFFFFFF) * 16;
-					if (LedgeSize < IVP_LEDGE_SIZE || NumTriangles <= 0)
+					if (NumTriangles <= 0)
 					{
-						break;
+						continue;
 					}
 
 					int32 MaxPoint = -1;
@@ -147,7 +196,6 @@ bool FSourcePHYFile::ParseBinary(const TArray<uint8>& Bytes, float Scale, int32&
 					{
 						Solid.Hulls.Add(MoveTemp(Points));
 					}
-					Ledge += LedgeSize;
 				}
 			}
 		}
@@ -230,3 +278,4 @@ int32 FSourcePHYFile::FindSolidByBone(const FString& BoneName) const
 	}
 	return INDEX_NONE;
 }
+

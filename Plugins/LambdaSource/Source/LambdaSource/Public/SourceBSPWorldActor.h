@@ -35,6 +35,7 @@ struct FSourceBSPLoadStats
 	UPROPERTY(BlueprintReadOnly, Category = "Lambda") int32 NumPlayerStarts = 0;
 	UPROPERTY(BlueprintReadOnly, Category = "Lambda") int32 NumNPCs = 0;
 	UPROPERTY(BlueprintReadOnly, Category = "Lambda") int32 NumItems = 0;
+	UPROPERTY(BlueprintReadOnly, Category = "Lambda") int32 NumProps = 0;
 	int32 NumBrushEntities = 0;
 	UPROPERTY(BlueprintReadOnly, Category = "Lambda") float LoadTimeSeconds = 0.0f;
 };
@@ -87,6 +88,8 @@ public:
 	 * it there. Returns null for classnames without an NPC implementation.
 	 */
 	AActor* CreateNPC(const FString& ClassName, const FVector& FeetLocation, float YawDegrees);
+	/** prop_physics_create: drops a physics prop of that model at a spot. */
+	AActor* CreateProp(const FString& ModelPath, const FVector& Location, float YawDegrees);
 	TArray<const FSourceEntity*> FindEntities(const FString& ClassName) const;
 
 	virtual void Tick(float DeltaSeconds) override;
@@ -107,6 +110,8 @@ private:
 	ASourceNPCBase* SpawnNPC(const FSourceEntity& Entity, TSubclassOf<ASourceNPCBase> NPCClass);
 	/** CItem: an ammo box or a weapon lying in the map (game/server/item_world.cpp). */
 	class ASourceItem* SpawnItem(const FSourceEntity& Entity);
+	/** prop_physics: a model the physics owns (game/server/props.cpp). */
+	class ASourcePropPhysics* SpawnPropPhysics(const FSourceEntity& Entity);
 	/** The NPC class registered for a classname, or null. */
 	static TSubclassOf<ASourceNPCBase> NPCClassForName(const FString& ClassName);
 	/** Spawns the actor for a brush entity ("model" "*N"), choosing the class from its classname. */

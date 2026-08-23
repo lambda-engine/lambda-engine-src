@@ -12,6 +12,9 @@ struct LAMBDASOURCE_API FSourceSurfaceProp
 	FString BulletImpactSound;		// "bulletimpact"
 	FString ScrapeRoughSound;		// "scraperough"
 	FString ImpactHardSound;		// "impacthard"
+	FString ImpactSoftSound;		// "impactsoft"
+	/** "audiohardnessfactor": how hard this surface sounds when something else lands on it. */
+	float AudioHardnessFactor = 1.0f;
 	FString StepLeftSound;			// "stepleft"
 	FString StepRightSound;			// "stepright"
 

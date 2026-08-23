@@ -131,11 +131,45 @@ void ALambdaWeapon::WeaponIdle()
 	}
 }
 
+void ALambdaWeapon::Holster()
+{
+	bHolstered = true;
+	// The held weapon is the view model; hiding it is what "putting it away" looks like from the player's side.
+	if (ALambdaCharacter* WeaponOwner = OwningCharacter.Get())
+	{
+		if (USourceStudioModelComponent* ViewModel = WeaponOwner->GetViewModelMesh())
+		{
+			ViewModel->SetVisibility(false, true);
+		}
+	}
+	// Nothing is being held down any more by the time it comes back out.
+	bAttackHeld = false;
+	bAttackPressedThisFrame = false;
+	bReloadHeld = false;
+	bInReload = false;
+}
+
+void ALambdaWeapon::Deploy()
+{
+	bHolstered = false;
+	if (ALambdaCharacter* WeaponOwner = OwningCharacter.Get())
+	{
+		if (USourceStudioModelComponent* ViewModel = WeaponOwner->GetViewModelMesh())
+		{
+			ViewModel->SetVisibility(true, true);
+		}
+	}
+	// Deploy plays the draw animation and holds fire until it has run.
+	SendWeaponAnim(TEXT("ACT_VM_DRAW"));
+	NextPrimaryAttack = GetCurrentTime() + 0.5f;
+	SetWeaponIdleTime(GetCurrentTime() + 0.5f);
+}
+
 void ALambdaWeapon::ItemPostFrame()
 {
 	// CBaseCombatWeapon::ItemPostFrame
 	ALambdaCharacter* WeaponOwner = OwningCharacter.Get();
-	if (!WeaponOwner)
+	if (!WeaponOwner || bHolstered)
 	{
 		return;
 	}

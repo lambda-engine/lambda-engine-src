@@ -73,6 +73,8 @@ public:
 
 	/** CC_NPC_Create: spawns the named NPC at the crosshair trace point (or MaxDistanceCm ahead if nearer), facing the player. */
 	AActor* NPCCreate(const FString& ClassName, float MaxDistanceCm = 5000.0f);
+	/** prop_physics_create: drops a physics prop of that model where the player is looking. */
+	AActor* PropCreate(const FString& ModelPath, float MaxDistanceCm = 5000.0f);
 
 	/** The material library the loaded map built, used to resolve $surfaceprop at a bullet impact. */
 	ULambdaMaterialLibrary* GetWorldMaterialLibrary() const;
@@ -101,6 +103,14 @@ protected:
 	void Input_SprintStart();
 	void Input_SprintEnd();
 	void Input_Use();
+	/** CPlayerPickupController: picks up the physics prop in front of the player, or drops the carried one. */
+	void TogglePropCarry();
+	/** CGrabController::UpdateObject: keeps the carried prop in front of the player. */
+	void UpdatePropCarry(float DeltaSeconds);
+	/** Shutdown(): lets go of the carried prop and puts the weapon back. */
+	void DropCarriedProp(bool bThrown);
+	/** Throws the carried prop (player_throwforce, scaled by its mass). Returns false when nothing is carried. */
+	bool ThrowCarriedProp();
 	void Input_AttackStart();
 	void Input_AttackStop();
 	void Input_ReloadStart();
@@ -143,6 +153,14 @@ protected:
 	float AutoFireFinalTimer = 0.0f;
 	bool AutoFirePulse = false;
 	TWeakObjectPtr<AActor> AutoFireTarget;
+	/** The prop the player is carrying (CPlayerPickupController's grab controller), and how it is held. */
+	TWeakObjectPtr<class ASourcePropPhysics> CarriedProp;
+	FRotator CarriedPropRelativeRotation = FRotator::ZeroRotator;
+	/** How much room the carried prop needs to clear the player, in cm. */
+	float CarriedPropRadiusCm = 0.0f;
+	/** lambda.propcarry.auto state: seconds until the prop is grabbed, and until it is thrown. */
+	float AutoCarryGrabTimer = -1.0f;
+	float AutoCarryThrowTimer = -1.0f;
 	float DecalTestScreenshotTimer = 0.0f;
 	bool bAutoFireAimHead = false;
 	/** m_Local.m_vecPunchAngle / m_vecPunchAngleVel (pitch, yaw, roll degrees). */

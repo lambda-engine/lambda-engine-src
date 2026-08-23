@@ -16,7 +16,26 @@ namespace SourceDamageType
 	constexpr int32 DMG_SHOCK = (1 << 8);
 	constexpr int32 DMG_SONIC = (1 << 9);
 	constexpr int32 DMG_BUCKSHOT = (1 << 13);
+	constexpr int32 DMG_FALL = (1 << 5);
+	constexpr int32 DMG_PREVENT_PHYSICS_FORCE = (1 << 11);
+	constexpr int32 DMG_DROWN = (1 << 14);
+	constexpr int32 DMG_PARALYZE = (1 << 15);
+	constexpr int32 DMG_NERVEGAS = (1 << 16);
+	constexpr int32 DMG_POISON = (1 << 17);
+	constexpr int32 DMG_RADIATION = (1 << 18);
+	constexpr int32 DMG_DROWNRECOVER = (1 << 19);
+	constexpr int32 DMG_ACID = (1 << 20);
+	constexpr int32 DMG_SLOWBURN = (1 << 21);
+	constexpr int32 DMG_PHYSGUN = (1 << 23);
+	constexpr int32 DMG_PLASMA = (1 << 24);
 	constexpr int32 DMG_SNIPER = (1 << 25);
+
+	/** CSingleplayRules::Damage_GetTimeBased - damage that is dealt out over time rather than in one blow. */
+	constexpr int32 DMG_TIMEBASED = DMG_PARALYZE | DMG_NERVEGAS | DMG_POISON | DMG_RADIATION | DMG_DROWNRECOVER
+		| DMG_ACID | DMG_SLOWBURN;
+	/** CSingleplayRules::Damage_GetNoPhysicsForce - damage that must not push what it is dealt to. */
+	constexpr int32 DMG_NO_PHYSICS_FORCE = DMG_FALL | DMG_BURN | DMG_PLASMA | DMG_DROWN | DMG_TIMEBASED | DMG_CRUSH
+		| DMG_PHYSGUN | DMG_PREVENT_PHYSICS_FORCE;
 	constexpr int32 DMG_REMOVENORAGDOLL = (1 << 22);
 }
 

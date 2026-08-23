@@ -47,6 +47,15 @@ public:
 	/** CBaseCombatWeapon::HandleFireOnEmpty. */
 	virtual void HandleFireOnEmpty();
 
+	/**
+	 * CBaseCombatWeapon::Holster - the weapon is put away: the view model goes out of sight and the weapon stops
+	 * taking input. This is what happens when the player picks a physics prop up with both hands.
+	 */
+	virtual void Holster();
+	/** CBaseCombatWeapon::Deploy - the weapon comes back out. */
+	virtual void Deploy();
+	bool IsHolstered() const { return bHolstered; }
+
 	void SetOwningCharacter(ALambdaCharacter* InOwner) { OwningCharacter = InOwner; }
 	ALambdaCharacter* GetOwningCharacter() const { return OwningCharacter.Get(); }
 
@@ -94,6 +103,7 @@ protected:
 	float NextPrimaryAttack = 0.0f;		// m_flNextPrimaryAttack
 	float NextEmptySoundTime = 0.0f;	// m_flNextEmptySoundTime
 	bool bInReload = false;				// m_bInReload
+	bool bHolstered = false;
 	float ReloadFinishTime = 0.0f;
 
 	UPROPERTY(Transient)

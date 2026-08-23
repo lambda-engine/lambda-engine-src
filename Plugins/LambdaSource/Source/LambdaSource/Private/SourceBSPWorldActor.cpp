@@ -3,6 +3,7 @@
 #include "SourceNPCHeadcrab.h"
 #include "SourceNPCZombie.h"
 #include "SourceItem.h"
+#include "SourcePropPhysics.h"
 #include "LambdaFileSystem.h"
 #include "LambdaMaterialLibrary.h"
 #include "LambdaSourceModule.h"
@@ -236,6 +237,10 @@ void ASourceBSPWorldActor::SpawnEntities()
 		{
 			SpawnItem(Entity);
 		}
+		else if (ASourcePropPhysics::IsPropClass(Class))
+		{
+			SpawnPropPhysics(Entity);
+		}
 		else
 		{
 			UnhandledEntityCounts.FindOrAdd(Class)++;
@@ -277,8 +282,55 @@ AActor* ASourceBSPWorldActor::CreateNPC(const FString& ClassName, const FVector&
 	Entity.ClassName = ClassName;
 	Entity.Pairs.Emplace(TEXT("classname"), ClassName);
 	Entity.Pairs.Emplace(TEXT("origin"), FString::Printf(TEXT("%g %g %g"), Origin.X, Origin.Y, Origin.Z));
-	Entity.Pairs.Emplace(TEXT("angles"), FString::Printf(TEXT("0 %g 0"), -YawDegrees));	// UE yaw -> Source yaw
+	// CreatePhysicsProp spawns physics props unrotated and lets them settle.
+	Entity.Pairs.Emplace(TEXT("angles"), FString::Printf(TEXT("0 %g 0"), YawDegrees));	// UE yaw -> Source yaw
 	return SpawnNPC(Entity, NPCClass);
+}
+
+AActor* ASourceBSPWorldActor::CreateProp(const FString& ModelPath, const FVector& Location, float YawDegrees)
+{
+	// prop_physics_create builds the entity the map would have held, then spawns it.
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+	FSourceEntity Entity;
+	Entity.ClassName = TEXT("prop_physics");
+	// CC_Prop_Physics_Create takes a path under models/ and defaults the extension: "props_junk/wood_crate001a".
+	FString Model = ModelPath;
+	if (!Model.StartsWith(TEXT("models/"), ESearchCase::IgnoreCase))
+	{
+		Model = TEXT("models/") + Model;
+	}
+	if (!Model.EndsWith(TEXT(".mdl"), ESearchCase::IgnoreCase))
+	{
+		Model += TEXT(".mdl");
+	}
+	Entity.Pairs.Emplace(TEXT("model"), Model);
+	const FVector3f Source = FSourceCoords::ToSource(Location, Scale);
+	Entity.Pairs.Emplace(TEXT("origin"), FString::Printf(TEXT("%g %g %g"), Source.X, Source.Y, Source.Z));
+	Entity.Pairs.Emplace(TEXT("angles"), FString::Printf(TEXT("0 %g 0"), -YawDegrees));
+	return SpawnPropPhysics(Entity);
+}
+
+ASourcePropPhysics* ASourceBSPWorldActor::SpawnPropPhysics(const FSourceEntity& Entity)
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return nullptr;
+	}
+	FActorSpawnParameters Params;
+	Params.ObjectFlags |= RF_Transient;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	ASourcePropPhysics* Prop = World->SpawnActor<ASourcePropPhysics>(ASourcePropPhysics::StaticClass(), FTransform::Identity, Params);
+	if (!Prop)
+	{
+		return nullptr;
+	}
+	Prop->InitializeFromEntity(Entity, MaterialLibrary);
+	if (IsValid(Prop))
+	{
+		++Stats.NumProps;
+	}
+	return Prop;
 }
 
 ASourceItem* ASourceBSPWorldActor::SpawnItem(const FSourceEntity& Entity)

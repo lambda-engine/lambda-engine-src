@@ -21,6 +21,7 @@
 #include "LambdaWeapon.h"
 #include "SourceAmmoDef.h"
 #include "SourceCoordinates.h"
+#include "SourcePropPhysics.h"
 #include "SourceWeaponScript.h"
 #include "SourceMDLFile.h"
 #include "SourceGeometryBuilder.h"
@@ -64,7 +65,21 @@ static FString GSetPosAuto;
 static FAutoConsoleVariableRef CVarSetPosAuto(
 	TEXT("lambda.setpos.auto"),
 	GSetPosAuto,
-	TEXT("\"<x> <y> <z>\": move the player to that Source-space position 2s after spawn"));
+	TEXT("\"<x> <y> <z> [yaw] [pitch]\": move the player to that Source-space position 2s after spawn"));
+
+// lambda.prop_create.auto "<model> [distance_cm]" drops a physics prop in front of the player after spawn.
+static FString GPropCreateAuto;
+static FAutoConsoleVariableRef CVarPropCreateAuto(
+	TEXT("lambda.prop_create.auto"),
+	GPropCreateAuto,
+	TEXT("\"<model> [distance_cm]\": prop_physics_create where the player looks, 2s after spawn"));
+
+// lambda.propcarry.auto "<grab_delay_s> [throw_delay_s]" exercises the +USE carry without injecting input.
+static FString GPropCarryAuto;
+static FAutoConsoleVariableRef CVarPropCarryAuto(
+	TEXT("lambda.propcarry.auto"),
+	GPropCarryAuto,
+	TEXT("\"<grab_delay_s> [throw_delay_s]\": pick up the prop ahead, then throw it"));
 
 static FString GFireAuto;
 static FAutoConsoleVariableRef CVarFireAuto(
@@ -343,6 +358,12 @@ void ALambdaCharacter::Input_JumpEnd()
 
 void ALambdaCharacter::Input_SprintStart()
 {
+	// EnableSprint( false ): no running about with a crate in your hands.
+	if (CarriedProp.IsValid())
+	{
+		return;
+	}
+
 	GetCharacterMovement()->MaxWalkSpeed = SprintSpeedCm;
 }
 
@@ -398,13 +419,182 @@ AActor* ALambdaCharacter::FindUseEntity() const
 
 void ALambdaCharacter::Input_Use()
 {
+	// CBasePlayer::PlayerUse: a carried object is put down first, then whatever is in front is used - a button,
+	// a door, or a physics prop light enough to pick up.
+	if (CarriedProp.IsValid())
+	{
+		DropCarriedProp(false);
+		return;
+	}
+
 	if (AActor* UseTarget = FindUseEntity())
 	{
 		if (ASourceBrushEntity* BrushEntity = Cast<ASourceBrushEntity>(UseTarget))
 		{
 			BrushEntity->OnUsed(this);
+			return;
 		}
 	}
+	TogglePropCarry();
+}
+
+void ALambdaCharacter::TogglePropCarry()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+
+	// CBasePlayer::FindUseEntity looks along the player's view; PLAYER_USE_RADIUS is 80 units.
+	FVector Eye;
+	FRotator EyeRot;
+	GetActorEyesViewPoint(Eye, EyeRot);
+	const FVector Forward = EyeRot.Vector();
+
+	FHitResult Hit;
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(LambdaUsePickup), true, this);
+	if (!World->LineTraceSingleByChannel(Hit, Eye, Eye + Forward * 80.0f * Scale, ECC_Visibility, Params))
+	{
+		UE_LOG(LogLambda, Verbose, TEXT("+use: nothing within reach"));
+		return;
+	}
+	UE_LOG(LogLambda, Verbose, TEXT("+use: hit %s at %s"), *GetNameSafe(Hit.GetActor()), *Hit.ImpactPoint.ToString());
+	ASourcePropPhysics* Prop = Cast<ASourcePropPhysics>(Hit.GetActor());
+	if (!Prop || Prop->IsHeld() || Prop->IsPickupPrevented())
+	{
+		return;
+	}
+
+	// CHL2_Player::PlayerUse -> CBasePlayer::CanPickupObject( pObject, 35, 128 ): too heavy or too big to hold.
+	constexpr float PlayerPickupMassLimitKg = 35.0f;
+	constexpr float PlayerPickupSizeLimitUnits = 128.0f;
+	if (Prop->GetMass() > PlayerPickupMassLimitKg || Prop->GetSizeUnits() > PlayerPickupSizeLimitUnits)
+	{
+		UE_LOG(LogLambda, Verbose, TEXT("cannot pick up %s: %.1f kg, %.0f units"),
+			*GetNameSafe(Prop), Prop->GetMass(), Prop->GetSizeUnits());
+		return;
+	}
+
+	Prop->StartCarry(this);
+	CarriedProp = Prop;
+	// The prop keeps the orientation it had, relative to where the player is looking, as Source's grab controller
+	// does when it stores the object's angles at pickup.
+	CarriedPropRelativeRotation = (Prop->GetActorQuat() * FQuat(FRotator(0.0f, EyeRot.Yaw, 0.0f)).Inverse()).Rotator();
+	// CGrabController::UpdateObject holds it at 24 units plus twice the radius it needs to clear the player.
+	CarriedPropRadiusCm = GetCapsuleComponent()->GetScaledCapsuleRadius() + Prop->GetSizeUnits() * 0.5f * Scale;
+
+	// CPlayerPickupController::Init holsters the weapon and takes sprint away while you have your hands full.
+	if (ActiveWeapon)
+	{
+		ActiveWeapon->Holster();
+	}
+}
+
+void ALambdaCharacter::UpdatePropCarry(float DeltaSeconds)
+{
+	ASourcePropPhysics* Prop = CarriedProp.Get();
+	if (!Prop)
+	{
+		return;
+	}
+	UWorld* World = GetWorld();
+	// "pPlayer->GetGroundEntity() == pEntity": standing on the thing you are holding drops it, or the player
+	// could ride it upwards.
+	const FHitResult& Floor = GetCharacterMovement()->CurrentFloor.HitResult;
+	if (!World || Floor.GetActor() == Prop)
+	{
+		DropCarriedProp(false);
+		return;
+	}
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+
+	FVector Eye;
+	FRotator EyeRot;
+	GetActorEyesViewPoint(Eye, EyeRot);
+	// Clamped pitch: looking straight down should not drive the prop into the floor.
+	EyeRot.Pitch = FMath::Clamp(EyeRot.Pitch, -75.0f, 75.0f);
+	const FVector Forward = EyeRot.Vector();
+
+	// A sphere of the prop's radius has to clear the player's own bounds: radius = the player's 2D extent plus
+	// how far the prop reaches back towards him, and the prop hangs 24 units beyond that.
+	const float RadiusCm = CarriedPropRadiusCm;
+	const float DistanceCm = 24.0f * Scale + RadiusCm * 2.0f;
+
+	// The hold point is pulled in when it would be inside the world - up against a wall the prop comes back
+	// towards the player rather than pushing through it.
+	FHitResult Wall;
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(LambdaCarryClear), false, this);
+	Params.AddIgnoredActor(Prop);
+	FVector Target = Eye + Forward * (DistanceCm - RadiusCm);
+	if (World->LineTraceSingleByChannel(Wall, Eye, Eye + Forward * DistanceCm, ECC_WorldStatic, Params)
+		&& (Wall.Time < 0.5f))
+	{
+		Target = Eye + Forward * (RadiusCm * 0.5f);
+	}
+
+	// ...and it is kept out of the player's own column, so looking down does not stuff it into his feet.
+	const FVector PlayerLine = GetActorLocation();
+	FVector Nearest = FVector(PlayerLine.X, PlayerLine.Y, FMath::Clamp(Target.Z,
+		PlayerLine.Z - GetCapsuleComponent()->GetScaledCapsuleHalfHeight(),
+		PlayerLine.Z + GetCapsuleComponent()->GetScaledCapsuleHalfHeight()));
+	FVector Delta = Target - Nearest;
+	const float Len = Delta.Size();
+	if (Len < RadiusCm && Len > KINDA_SMALL_NUMBER)
+	{
+		Target = Nearest + Delta / Len * RadiusCm;
+	}
+
+	const FRotator TargetRotation = (FQuat(CarriedPropRelativeRotation) * FQuat(FRotator(0.0f, EyeRot.Yaw, 0.0f))).Rotator();
+	// ComputeError() > 12 units and the object is considered stuck; Source drops it.
+	if (!Prop->UpdateCarry(Target, TargetRotation, DeltaSeconds, 12.0f))
+	{
+		DropCarriedProp(false);
+	}
+}
+
+void ALambdaCharacter::DropCarriedProp(bool bThrown)
+{
+	if (ASourcePropPhysics* Prop = CarriedProp.Get())
+	{
+		Prop->StopCarry(bThrown);
+	}
+	CarriedProp.Reset();
+	// Shutdown(): the weapon comes back out and the player can sprint again.
+	if (ActiveWeapon)
+	{
+		ActiveWeapon->Deploy();
+	}
+}
+
+bool ALambdaCharacter::ThrowCarriedProp()
+{
+	ASourcePropPhysics* Prop = CarriedProp.Get();
+	if (!Prop)
+	{
+		return false;
+	}
+	UPrimitiveComponent* Body = Prop->GetPhysicsBody();
+	// Shutdown( true ) first: the prop is back to its real mass before the throw is applied to it.
+	DropCarriedProp(true);
+	if (!Body)
+	{
+		return true;
+	}
+
+	// CPlayerPickupController::Use, IN_ATTACK: player_throwforce 1000, scaled by the object's mass, plus a bit of
+	// spin. Source's force is in its own units; converted here to the impulse UE wants.
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+	const float MassFactor = FMath::GetMappedRangeValueClamped(FVector2D(0.5f, 15.0f), FVector2D(0.5f, 4.0f),
+		FMath::Clamp(Body->GetMass(), 0.5f, 15.0f));
+	FVector Eye;
+	FRotator EyeRot;
+	GetActorEyesViewPoint(Eye, EyeRot);
+	Body->AddImpulse(EyeRot.Vector() * 1000.0f * MassFactor * Scale);
+	Body->AddAngularImpulseInDegrees(FVector(FMath::FRandRange(-10.0f, 10.0f), FMath::FRandRange(-10.0f, 10.0f),
+		FMath::FRandRange(-10.0f, 10.0f)) * MassFactor * Scale);
+	return true;
 }
 
 
@@ -421,6 +611,41 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 	{
 		ActiveWeapon->ItemPostFrame();
 	}
+
+	// lambda.propcarry.auto: grab the prop ahead, hold it, then throw it.
+	if (AutoCarryGrabTimer > 0.0f)
+	{
+		AutoCarryGrabTimer -= DeltaSeconds;
+		if (AutoCarryGrabTimer <= 0.0f)
+		{
+			if (GEngine)
+			{
+				GEngine->Exec(GetWorld(), TEXT("lambda.prop_list"));
+			}
+			TogglePropCarry();
+			// Look back up once it is in hand, the way a player does after picking something up off the floor.
+			if (CarriedProp.IsValid())
+			{
+				if (AController* PC = GetController())
+				{
+					FRotator View = PC->GetControlRotation();
+					View.Pitch = 0.0f;
+					PC->SetControlRotation(View);
+				}
+			}
+			UE_LOG(LogLambda, Display, TEXT("propcarry: %s"), CarriedProp.IsValid() ? TEXT("carrying") : TEXT("nothing to carry"));
+		}
+	}
+	else if (AutoCarryThrowTimer > 0.0f)
+	{
+		AutoCarryThrowTimer -= DeltaSeconds;
+		if (AutoCarryThrowTimer <= 0.0f)
+		{
+			UE_LOG(LogLambda, Display, TEXT("propcarry: throwing (%s)"), ThrowCarriedProp() ? TEXT("ok") : TEXT("nothing held"));
+		}
+	}
+
+	UpdatePropCarry(DeltaSeconds);
 
 	// CalcPlayerView: the punch angle rides on top of the view angles and springs back (DecayPunchAngle).
 	DecayPunchAngle(DeltaSeconds);
@@ -463,8 +688,33 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 					const FVector Feet = FSourceCoords::ToUE(Source, ULambdaSourceSettings::Get().UnitScale);
 					const float HalfHeight = GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
 					SetActorLocation(Feet + FVector(0, 0, HalfHeight + 2.0f), false, nullptr, ETeleportType::TeleportPhysics);
+					// setang: the two extra arguments aim the view, Source-style (yaw first, then pitch).
+					if (Parts.Num() >= 4)
+					{
+						const FVector3f Angles(Parts.Num() >= 5 ? FCString::Atof(*Parts[4]) : 0.0f, FCString::Atof(*Parts[3]), 0.0f);
+						if (AController* PC = GetController())
+						{
+							PC->SetControlRotation(FSourceCoords::AnglesToUE(Angles));
+						}
+					}
 					UE_LOG(LogLambda, Display, TEXT("setpos %s"), *GetActorLocation().ToString());
 				}
+			}
+			if (!GPropCreateAuto.IsEmpty())
+			{
+				TArray<FString> Parts;
+				GPropCreateAuto.ParseIntoArrayWS(Parts);
+				if (Parts.Num() > 0)
+				{
+					PropCreate(Parts[0], Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : 300.0f);
+				}
+			}
+			if (!GPropCarryAuto.IsEmpty())
+			{
+				TArray<FString> Parts;
+				GPropCarryAuto.ParseIntoArrayWS(Parts);
+				AutoCarryGrabTimer = Parts.Num() > 0 ? FCString::Atof(*Parts[0]) : 2.0f;
+				AutoCarryThrowTimer = Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : -1.0f;
 			}
 			if (!GFireAuto.IsEmpty())
 			{
@@ -791,6 +1041,12 @@ void ALambdaCharacter::RemoveAmmo(const FString& AmmoType, int32 Count)
 
 void ALambdaCharacter::Input_AttackStart()
 {
+	// CPlayerPickupController::Use: firing while carrying something throws it instead (the weapon is holstered
+	// while the player has his hands full).
+	if (ThrowCarriedProp())
+	{
+		return;
+	}
 	if (ActiveWeapon)
 	{
 		ActiveWeapon->bAttackHeld = true;
@@ -1082,6 +1338,34 @@ ULambdaMaterialLibrary* ALambdaCharacter::GetWorldMaterialLibrary() const
 		}
 	}
 	return WorldMaterialLibrary;
+}
+
+AActor* ALambdaCharacter::PropCreate(const FString& ModelPath, float MaxDistanceCm)
+{
+	UWorld* World = GetWorld();
+	ASourceBSPWorldActor* BSPWorld = World ? Cast<ASourceBSPWorldActor>(UGameplayStatics::GetActorOfClass(World, ASourceBSPWorldActor::StaticClass())) : nullptr;
+	if (!BSPWorld)
+	{
+		UE_LOG(LogLambda, Warning, TEXT("prop_create: no BSP world actor"));
+		return nullptr;
+	}
+	// prop_physics_create drops the prop where the player is looking, a little off the surface so it falls in.
+	FVector Eye;
+	FRotator EyeRot;
+	GetActorEyesViewPoint(Eye, EyeRot);
+	const FVector Forward = EyeRot.Vector();
+	FHitResult Hit;
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(LambdaPropCreate), true, this);
+	// CreatePhysicsProp sweeps the model's own hull and sets the prop a unit off whatever it hit. The hull is not
+	// known before the model is loaded, so the prop is dropped a short way clear of the surface and left to settle.
+	FVector Spot = Eye + Forward * MaxDistanceCm;
+	if (World->LineTraceSingleByChannel(Hit, Eye, Spot, ECC_Visibility, Params))
+	{
+		Spot = Hit.ImpactPoint + Hit.ImpactNormal * 32.0f;
+	}
+	AActor* Prop = BSPWorld->CreateProp(ModelPath, Spot, 0.0f);
+	UE_LOG(LogLambda, Display, TEXT("prop_create %s: %s"), *ModelPath, Prop ? *Prop->GetActorLocation().ToString() : TEXT("failed"));
+	return Prop;
 }
 
 AActor* ALambdaCharacter::NPCCreate(const FString& ClassName, float MaxDistanceCm)
