@@ -113,6 +113,7 @@ bool ASourceNPCBase::SetModel(const FString& ModelPath)
 
 void ASourceNPCBase::SetHull(float HalfWidthUnits, float HeightUnits)
 {
+
 	// A Source hull is a box from (-w,-w,0) to (w,w,h) around the feet. The capsule stands in for it: same
 	// height, radius from the half width. The model hangs from the capsule centre down to the feet.
 	const float Scale = ULambdaSourceSettings::Get().UnitScale;
@@ -121,7 +122,25 @@ void ASourceNPCBase::SetHull(float HalfWidthUnits, float HeightUnits)
 	GetCapsuleComponent()->SetCapsuleSize(Radius, HullHalfHeightCm);
 	if (Model)
 	{
-		Model->SetRelativeLocation(FVector(0, 0, -HullHalfHeightCm));
+		// Source authors NPC models to fit their hull; an imported one need not. Half-Life: Alyx's zombie leans a
+		// long way forward of its origin, so with the hull kept at Source's size (a fatter hull would not fit
+		// through corridors the player does) the model is drawn back by however far it overhangs the front. Only
+		// the facing side moves: the hull is unchanged, and what the NPC walks into stops at its chest, not at
+		// its waist with its head through the wall.
+		float ModelForwardOffsetCm = 0.0f;
+		if (Model->HasModel())
+		{
+			const float Overhang = Model->GetModel()->GetHullMax().X - HalfWidthUnits;
+			if (Overhang > 0.5f)
+			{
+				// A hull's worth of shift is as far as this goes; beyond that the model would visibly stand
+				// away from where it is.
+				ModelForwardOffsetCm = FMath::Min(Overhang, HalfWidthUnits) * Scale;
+				UE_LOG(LogLambdaSource, Log, TEXT("%s: '%s' overhangs its %.0f unit hull by %.0f units; drawing it that far back"),
+					*Entity.ClassName, *Model->GetModelPath(), HalfWidthUnits, Overhang);
+			}
+		}
+		Model->SetRelativeLocation(FVector(-ModelForwardOffsetCm, 0, -HullHalfHeightCm));
 	}
 	if (UCharacterMovementComponent* Move = GetCharacterMovement())
 	{
@@ -323,6 +342,30 @@ void ASourceNPCBase::Tick(float DeltaSeconds)
 	if (!MoveDirection.IsNearlyZero())
 	{
 		AddMovementInput(MoveDirection, 1.0f);
+
+		// Pushed but not moving: something is in the way. A quarter of a second of it is a block, not a stumble.
+		const UCharacterMovementComponent* Move = GetCharacterMovement();
+		const float Speed = Move ? Move->Velocity.Size2D() : 0.0f;
+		const float Wanted = Move ? Move->MaxWalkSpeed : 0.0f;
+		if (Wanted > 0.0f && Speed < Wanted * 0.25f)
+		{
+			BlockedTime += DeltaSeconds;
+			if (BlockedTime > 0.25f && !bMovementBlocked)
+			{
+				bMovementBlocked = true;
+				StopMoving();
+				OnMovementBlocked();
+			}
+		}
+		else
+		{
+			BlockedTime = 0.0f;
+			bMovementBlocked = false;
+		}
+	}
+	else
+	{
+		BlockedTime = 0.0f;
 	}
 	// If it's been a while since we did a full flinch, forget that we flinched so we'll flinch fully again
 	if (bFlinchedMemory && GetWorld()->GetTimeSeconds() > NextFlinchTime)

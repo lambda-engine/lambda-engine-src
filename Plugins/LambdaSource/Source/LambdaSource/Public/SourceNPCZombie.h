@@ -40,6 +40,7 @@ protected:
 	virtual void OnTakeDamage_Alive(float Damage, AActor* Attacker, const FSourceDamageEvent& Info) override;
 	virtual bool IsHeavyDamage(float Damage, const FSourceDamageEvent& Info) const override;
 
+	virtual void OnMovementBlocked() override;
 	virtual void IdleSound() override;
 	virtual void AlertSound() override;
 	virtual void PainSound() override { EmitSound(TEXT("Zombie.Pain")); }
@@ -66,5 +67,6 @@ private:
 	bool bHeadShot = false;		// m_bHeadShot: the last TraceAttack hit HITGROUP_HEAD
 	bool bHeadless = false;		// m_fIsHeadless
 	float NextMoanTime = 0.0f;	// m_flNextMoanSound
+	float NextPoundTime = 0.0f;	// when the zombie may pound at an obstruction again
 	int32 HeadcrabBodyPart = INDEX_NONE;	// ZOMBIE_BODYGROUP_HEADCRAB
 };

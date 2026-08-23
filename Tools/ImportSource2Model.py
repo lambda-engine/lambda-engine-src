@@ -423,7 +423,20 @@ def main():
 
     # ---- reference SMDs (one per mesh)
     mat_used = set()
+    # How far the skinned mesh reaches past each bone, in Source units: studiomdl derives $bbox from bone
+    # positions alone, which leaves whatever hangs off them (a headcrab riding a zombie's head) outside the hull.
+    bone_radius = [0.0] * len(kept)
+    # Which bones the hull has to bound. Source sizes an NPC's hull to its body, not to where its arms swing
+    # (limbs clipping a wall is normal in HL2); "hull_bones" names the ones that must stay inside it.
+    hull_bone_names = profile.get('hull_bones', [])
+    hull_bone_indices = [i for i, ni in enumerate(kept) if node_name[ni] in hull_bone_names]
+    if hull_bone_names and not hull_bone_indices:
+        print(f'[model] WARNING: none of hull_bones {hull_bone_names} are kept bones')
+
     def write_reference(mesh_name, path):
+        # "mesh_offsets" nudges a whole mesh in the bind pose (Source units, z up). The headcrab riding a zombie's
+        # head is skinned to head bones, so an offset here rides along with it.
+        mesh_offset = profile.get('mesh_offsets', {}).get(mesh_name)
         ni = mesh_nodes[mesh_name]
         skin = skins[nodes[ni]['skin']]
         lines = nodes_block() + ['skeleton', 'time 0'] + smd_bone_lines(bind_world) + ['end', 'triangles']
@@ -439,6 +452,8 @@ def main():
             idx = [x[0] for x in glb.acc(prim['indices'])]
             def vline(v):
                 p = pos_to_source(list(pos[v]))
+                if mesh_offset:
+                    p = [p[k] + mesh_offset[k] for k in range(3)]
                 nn = m_vec(PERM, list(nrm[v]))
                 u, vv = uv[v]  # SMD's V axis points up; studiomdl flips it back to the top-left origin
                 wmap = {}
@@ -462,6 +477,11 @@ def main():
                 pairs = sorted(wmap.items(), key=lambda kvp: -kvp[1])[:3]
                 total = sum(w for _, w in pairs) or 1.0
                 ws = ' '.join(f'{b} {w / total:.6f}' for b, w in pairs)
+                for bi3, _w3 in pairs:
+                    bp = pos_to_source(bind_world[kept[bi3]][1])
+                    d = math.dist(p, bp)
+                    if d > bone_radius[bi3]:
+                        bone_radius[bi3] = d
                 return f'0 {p[0]:.4f} {p[1]:.4f} {p[2]:.4f} {nn[0]:.4f} {nn[1]:.4f} {nn[2]:.4f} {u:.6f} {1.0 - vv:.6f} {len(pairs)} {ws}'
             for k in range(0, len(idx), 3):
                 # the axis change is a cyclic permutation (a rotation, det +1): the winding is preserved
@@ -502,6 +522,11 @@ def main():
 
         lines = nodes_block() + ['skeleton']
         foot_heights = {'ankle_L': [], 'ankle_R': []}
+        # The hull bounds the model around its origin, so the travel that studiomdl extracts as movement (LX LY)
+        # is taken back out here, and the animations that throw the body across the floor - the deaths and the
+        # ragdoll - are left out of it entirely.
+        reach = model_extents if not seq.get('activity', '').startswith(('ACT_DIE', 'ACT_DIERAGDOLL')) else None
+        travel0 = None
         base_root = None
         for f in range(frames):
             t = min(maxt, f / FPS)
@@ -519,6 +544,21 @@ def main():
                     foot_heights[foot].append(world[name_node[foot]][1][1])  # glTF y = height
                 else:
                     foot_heights[foot].append(0.0)
+            if reach is not None and hull_bone_indices:
+                root = pos_to_source(world[kept[0]][1])
+                if travel0 is None:
+                    travel0 = [root[0], root[1]]
+                # Always measured around the model's own root: how far a lunge or a stride carries it is not part
+                # of its shape (and studiomdl takes the locomotion out as movement anyway).
+                travel = [root[0] - travel0[0], root[1] - travel0[1], 0.0]
+                for bi4 in hull_bone_indices:
+                    ni4 = kept[bi4]
+                    bp = pos_to_source(world[ni4][1])
+                    bp = [bp[k] - travel[k] for k in range(3)]
+                    r = bone_radius[bi4]
+                    reach[0] = min(reach[0], bp[0] - r); reach[3] = max(reach[3], bp[0] + r)
+                    reach[1] = min(reach[1], bp[1] - r); reach[4] = max(reach[4], bp[1] + r)
+                    reach[2] = min(reach[2], bp[2] - r); reach[5] = max(reach[5], bp[2] + r)
             lines.append(f'time {f}')
             lines += smd_bone_lines(world)
         lines.append('end')
@@ -595,6 +635,7 @@ def main():
 
     # ---- write everything
     os.makedirs(work, exist_ok=True)
+    model_extents = [1e9, 1e9, 1e9, -1e9, -1e9, -1e9]
     ref_files = {}
     for mesh in dict.fromkeys(wanted_meshes):
         fn = f'{mesh}.smd'
@@ -655,6 +696,17 @@ def main():
         for frame, cls in sorted(events):
             qc.append(f'\t{{ event {cls} {min(frame, frames - 1)} }}')
         qc.append('}')
+
+    # $bbox last: the extents are only known once every sequence has been written. studiomdl would otherwise
+    # derive the hull from bone positions alone, leaving whatever is skinned to them (a headcrab riding a zombie's
+    # head) outside the hull - and outside the NPC hull the engine builds from it.
+    bbox = profile.get('bbox')
+    if not bbox and model_extents[3] > model_extents[0]:
+        bbox = [round(model_extents[0], 1), round(model_extents[1], 1), min(0.0, round(model_extents[2], 1)),
+                round(model_extents[3], 1), round(model_extents[4], 1), round(model_extents[5], 1)]
+        print(f'[model] bbox from the animated mesh: {bbox}')
+    if bbox:
+        qc.append('$bbox %g %g %g %g %g %g' % tuple(bbox))
 
     qc.append(f'$collisionjoints "physics.smd"')
     qc.append('{')

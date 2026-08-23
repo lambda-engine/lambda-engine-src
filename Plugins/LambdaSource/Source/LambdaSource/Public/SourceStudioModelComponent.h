@@ -53,7 +53,11 @@ public:
 
 	/** CBaseCombatWeapon::SendWeaponAnim: picks a sequence for the activity and plays it from the start. */
 	bool PlayActivity(const FString& ActivityName);
-	bool PlaySequence(int32 SequenceIndex);
+	/**
+	 * SetSequence: the sequence that was playing keeps running for a moment and is blended out
+	 * (CSequenceTransitioner), so activities do not snap. bInterpolate false snaps, as does STUDIO_SNAP.
+	 */
+	bool PlaySequence(int32 SequenceIndex, bool bInterpolate = true);
 
 	int32 GetSequence() const { return CurrentSequence; }
 	float GetCycle() const { return Cycle; }
@@ -107,7 +111,7 @@ public:
 private:
 	/** Re-skins the mesh from the current pose and pushes it to the render thread. */
 	void RefreshPose();
-	/** Evaluates the current sequence plus gesture layers into BoneToModel and refreshes. */
+	/** Evaluates the current sequence, the sequences fading out behind it and the gesture layers, then refreshes. */
 	void ComposePose();
 
 	struct FGestureLayer
@@ -117,6 +121,24 @@ private:
 		float Cycle = 0.0f;
 	};
 	TArray<FGestureLayer> Gestures;
+
+	/**
+	 * One entry of CSequenceTransitioner's queue: a sequence that has been replaced, still running, its weight
+	 * fading to zero. Ordered oldest first.
+	 */
+	struct FTransitionLayer
+	{
+		int32 Sequence = INDEX_NONE;
+		float Cycle = 0.0f;
+		float PlaybackRate = 1.0f;
+		float Age = 0.0f;			// seconds since it was laid down (curtime - m_flLayerAnimtime)
+		float FadeOutTime = 0.2f;	// m_flLayerFadeOuttime
+		bool bLooping = false;
+	};
+	TArray<FTransitionLayer> Transitions;
+
+	/** CAnimationLayer::GetFadeout: the layer's weight, 1 -> 0 over its fade time. */
+	static float TransitionWeight(const FTransitionLayer& Layer);
 
 	TSharedPtr<FSourceMDLFile> Model;
 	FString ModelPath;

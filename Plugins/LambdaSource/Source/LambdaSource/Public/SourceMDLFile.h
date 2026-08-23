@@ -103,6 +103,9 @@ struct LAMBDASOURCE_API FSourceStudioSequence
 	int32 ActivityWeight = 0;
 	int32 NumBlends = 0;
 	int32 AnimDescIndex = INDEX_NONE;
+	/** fadeintime / fadeouttime: how long studiomdl says a transition into or out of this sequence should take. */
+	float FadeInTime = 0.2f;
+	float FadeOutTime = 0.2f;
 	TArray<FSourceStudioEvent> Events;
 	TArray<FSourceStudioAutoLayer> AutoLayers;
 	/** Per-bone blend weights (the $weightlist); empty means 1 everywhere. */
@@ -161,6 +164,8 @@ public:
 
 	/** studio.h sequence/animation flags. */
 	static constexpr int32 STUDIO_LOOPING = 0x0001;
+	/** STUDIO_SNAP: this sequence is not blended into - it snaps (CSequenceTransitioner). */
+	static constexpr int32 STUDIO_SNAP = 0x0002;
 
 	/** Loads "models/weapons/v_pistol.mdl" through the virtual file system, plus its .vvd and best .vtx. */
 	bool Load(const FString& RelativeModelPath, float Scale, FString* OutError = nullptr);
@@ -193,6 +198,13 @@ public:
 
 	/** GetSequenceGroundSpeed: the animation's root-motion distance over its duration, in Source units/sec. */
 	float GetSequenceGroundSpeed(int32 SequenceIndex) const;
+
+	/**
+	 * studiohdr_t::hull_min / hull_max: the box the model claims to occupy, in Source units. studiomdl writes
+	 * either the QC's $bbox or, without one, how far the compiled animations actually throw the model about.
+	 */
+	const FVector3f& GetHullMin() const { return HullMin; }
+	const FVector3f& GetHullMax() const { return HullMax; }
 
 	/** $surfaceprop of the model ("alienflesh", "metal"...), from studiohdr_t::surfacepropindex. */
 	const FString& GetSurfaceProp() const { return SurfaceProp; }
@@ -291,4 +303,6 @@ private:
 	FString AnimBlockName;
 	TArray<TPair<int32, int32>> AnimBlocks;	// (datastart, dataend) per block; block 0 is "in the .mdl"
 	FString SurfaceProp;
+	FVector3f HullMin = FVector3f::ZeroVector;
+	FVector3f HullMax = FVector3f::ZeroVector;
 };

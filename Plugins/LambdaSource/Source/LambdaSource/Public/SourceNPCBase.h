@@ -119,6 +119,12 @@ public:
 
 	bool IsOnGround() const;
 	APawn* GetPlayerPawn() const;
+	/**
+	 * CAI_Motor: the hull is being pushed but is not moving (a wall, a door, a corner). Source's AI fails the
+	 * route and picks another schedule; ours stops shoving the model into the obstruction, which is what makes a
+	 * hunched NPC lean through a thin door.
+	 */
+	bool IsMovementBlocked() const { return bMovementBlocked; }
 
 	/**
 	 * CAI_Motor: the direction the NPC is moving in, held until changed. UE's movement component consumes input per
@@ -165,6 +171,8 @@ protected:
 	virtual void DeathSound() {}
 	/** CAI_BaseNPC::ShouldPlayIdleSound: a 1-in-100 chance per think while idle or alert. */
 	virtual bool ShouldPlayIdleSound() const;
+	/** Called the moment the hull gets stuck against something while moving. */
+	virtual void OnMovementBlocked() {}
 
 	/** Loads the studio model onto the mesh component. */
 	bool SetModel(const FString& ModelPath);
@@ -219,4 +227,6 @@ private:
 	float IdealYaw = 0.0f;
 	float ThinkAccumulator = 0.0f;
 	float HullHalfHeightCm = 0.0f;
+	float BlockedTime = 0.0f;		// how long the hull has been pushed without moving
+	bool bMovementBlocked = false;
 };

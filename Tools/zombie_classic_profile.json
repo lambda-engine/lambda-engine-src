@@ -261,6 +261,24 @@
       "anim": "zombie_classic_ragdoll",
       "activity": "ACT_DIERAGDOLL",
       "weight": 1
+    },
+    {
+      "name": "wallpound",
+      "anim": "zombie_act_busy_pounding_hitting_01",
+      "activity": "ACT_ZOMBIE_WALLPOUND",
+      "weight": 1
+    },
+    {
+      "name": "wallpound2",
+      "anim": "zombie_act_busy_pounding_head_01",
+      "activity": "ACT_ZOMBIE_WALLPOUND",
+      "weight": 1
+    },
+    {
+      "name": "tantrum",
+      "anim": "zombie_act_busy_pounding_shoulderram_03",
+      "activity": "ACT_ZOMBIE_TANTRUM",
+      "weight": 1
     }
   ],
   "joint_constraints": {
@@ -409,5 +427,21 @@
       -25,
       25
     ]
-  }
+  },
+  "mesh_offsets": {
+    "zombie_classic_headcrab": [
+      0,
+      0,
+      3.0
+    ]
+  },
+  "hull_bones": [
+    "pelvis",
+    "spine_0",
+    "spine_1",
+    "spine_2",
+    "spine_3",
+    "neck_0",
+    "head"
+  ]
 }

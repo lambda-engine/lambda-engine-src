@@ -42,6 +42,7 @@ bool USourceStudioModelComponent::SetModel(const FString& RelativeModelPath, ULa
 	bSequenceFinished = false;
 	bSequenceLooping = false;
 	Gestures.Reset();
+	Transitions.Reset();
 	return true;
 }
 
@@ -55,6 +56,8 @@ void USourceStudioModelComponent::ClearModel()
 	Cycle = 0.0f;
 	bSequenceFinished = false;
 	bSequenceLooping = false;
+	Gestures.Reset();
+	Transitions.Reset();
 }
 
 bool USourceStudioModelComponent::PlayActivity(const FString& ActivityName)
@@ -71,12 +74,38 @@ bool USourceStudioModelComponent::PlayActivity(const FString& ActivityName)
 	return PlaySequence(Sequence);
 }
 
-bool USourceStudioModelComponent::PlaySequence(int32 SequenceIndex)
+bool USourceStudioModelComponent::PlaySequence(int32 SequenceIndex, bool bInterpolate)
 {
 	if (!HasModel() || !Model->GetSequences().IsValidIndex(SequenceIndex))
 	{
 		return false;
 	}
+
+	// CSequenceTransitioner::CheckForSequenceChange: the sequence being replaced stays in the queue, running on
+	// its own, and is blended over the new one with a weight that fades to zero - which is what keeps an NPC from
+	// snapping between idle, walk and attack. A STUDIO_SNAP sequence clears the queue instead.
+	const FSourceStudioSequence& NewSeq = Model->GetSequences()[SequenceIndex];
+	if (!bInterpolate || (NewSeq.Flags & FSourceMDLFile::STUDIO_SNAP))
+	{
+		Transitions.Reset();
+	}
+	else if (CurrentSequence != INDEX_NONE && CurrentSequence != SequenceIndex)
+	{
+		FTransitionLayer& Layer = Transitions.AddDefaulted_GetRef();
+		Layer.Sequence = CurrentSequence;
+		Layer.Cycle = Cycle;
+		Layer.PlaybackRate = PlaybackRate;
+		Layer.Age = 0.0f;
+		// Source blends over the outgoing sequence's fadeout time, floored at studiomdl's 0.2s default.
+		Layer.FadeOutTime = FMath::Max(0.05f, Model->GetSequences()[CurrentSequence].FadeOutTime);
+		Layer.bLooping = bSequenceLooping;
+		// more than a couple of these at once is a slideshow of half-blended poses; keep the newest few
+		while (Transitions.Num() > 3)
+		{
+			Transitions.RemoveAt(0);
+		}
+	}
+
 	CurrentSequence = SequenceIndex;
 	Cycle = 0.0f;
 	bSequenceLooping = Model->IsSequenceLooping(SequenceIndex);
@@ -84,6 +113,25 @@ bool USourceStudioModelComponent::PlaySequence(int32 SequenceIndex)
 
 	ComposePose();
 	return true;
+}
+
+float USourceStudioModelComponent::TransitionWeight(const FTransitionLayer& Layer)
+{
+	// CAnimationLayer::GetFadeout: 1 -> 0 over the fade time, on a spline.
+	if (Layer.FadeOutTime <= 0.0f)
+	{
+		return 0.0f;
+	}
+	const float S = 1.0f - Layer.Age / Layer.FadeOutTime;
+	if (S <= 0.0f)
+	{
+		return 0.0f;
+	}
+	if (S >= 1.0f)
+	{
+		return 1.0f;
+	}
+	return 3.0f * S * S - 2.0f * S * S * S;	// SimpleSpline
 }
 
 void USourceStudioModelComponent::ComposePose()
@@ -98,6 +146,14 @@ void USourceStudioModelComponent::ComposePose()
 	if (CurrentSequence != INDEX_NONE)
 	{
 		Model->AccumulateSequence(Pose, CurrentSequence, Cycle, 1.0f);
+	}
+	// C_BaseAnimating::MaintainSequenceTransitions: the sequences on their way out are accumulated over the
+	// current one, newest first, at their fade weight - so the pose starts as the old animation and slides to the
+	// new one over the fade time.
+	for (int32 i = Transitions.Num() - 1; i >= 0; --i)
+	{
+		const FTransitionLayer& Layer = Transitions[i];
+		Model->AccumulateSequence(Pose, Layer.Sequence, Layer.Cycle, TransitionWeight(Layer));
 	}
 	for (const FGestureLayer& Gesture : Gestures)
 	{
@@ -265,8 +321,25 @@ void USourceStudioModelComponent::TickComponent(float DeltaTime, ELevelTick Tick
 		return;
 	}
 
-	// Gesture layers run on their own cycles and drop off when done (CBaseAnimatingOverlay::StudioFrameAdvance).
+	// The transition layers keep playing (CSequenceTransitioner::UpdateCurrent) and expire once faded out.
 	bool bGesturesChanged = false;
+	for (int32 i = Transitions.Num() - 1; i >= 0; --i)
+	{
+		FTransitionLayer& Layer = Transitions[i];
+		Layer.Age += DeltaTime;
+		const float LayerDuration = Model->GetSequenceDuration(Layer.Sequence);
+		if (LayerDuration > 0.0f)
+		{
+			Layer.Cycle += (DeltaTime * Layer.PlaybackRate) / LayerDuration;
+			Layer.Cycle = Layer.bLooping ? FMath::Fmod(Layer.Cycle, 1.0f) : FMath::Min(Layer.Cycle, 1.0f);
+		}
+		if (TransitionWeight(Layer) <= 0.0f)
+		{
+			Transitions.RemoveAt(i);
+		}
+		bGesturesChanged = true;	// the pose changes while anything is fading
+	}
+
 	for (int32 g = Gestures.Num() - 1; g >= 0; --g)
 	{
 		FGestureLayer& Gesture = Gestures[g];

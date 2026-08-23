@@ -41,6 +41,7 @@ namespace
 		constexpr int32 SEQ_OFF_LABELINDEX = 4, SEQ_OFF_ACTIVITYNAMEINDEX = 8, SEQ_OFF_FLAGS = 12;
 		constexpr int32 SEQ_OFF_ACTWEIGHT = 20, SEQ_OFF_NUMEVENTS = 24, SEQ_OFF_EVENTINDEX = 28;
 		constexpr int32 SEQ_OFF_NUMBLENDS = 56, SEQ_OFF_ANIMINDEXINDEX = 60;
+		constexpr int32 SEQ_OFF_FADEINTIME = 104, SEQ_OFF_FADEOUTTIME = 108;
 		constexpr int32 SEQ_OFF_NUMAUTOLAYERS = 148, SEQ_OFF_AUTOLAYERINDEX = 152, SEQ_OFF_WEIGHTLISTINDEX = 156;
 		constexpr int32 SIZE_AUTOLAYER = 24;	// mstudioautolayer_t: short iSequence, short iPose, int flags, float start, peak, tail, end
 
@@ -52,6 +53,7 @@ namespace
 		constexpr int32 SIZE_EVENT = 80;
 		constexpr int32 EVENT_OFF_EVENT = 4, EVENT_OFF_OPTIONS = 12, EVENT_OFF_NAMEINDEX = 76;
 
+		constexpr int32 OFF_HULLMIN = 104, OFF_HULLMAX = 116;
 		constexpr int32 OFF_SURFACEPROPINDEX = 308;
 		constexpr int32 OFF_SZANIMBLOCKNAMEINDEX = 348, OFF_NUMANIMBLOCKS = 352, OFF_ANIMBLOCKINDEX = 356;
 		constexpr int32 SIZE_ANIMBLOCK = 8;		// mstudioanimblock_t: datastart, dataend
@@ -512,6 +514,8 @@ bool FSourceMDLFile::Load(const FString& RelativeModelPath, float Scale, FString
 	ReadAttachments(Mdl);
 
 	SurfaceProp = ReadCString(Mdl, ReadInt(Mdl, MDL::OFF_SURFACEPROPINDEX));
+	HullMin = ReadVec3(Mdl, MDL::OFF_HULLMIN);
+	HullMax = ReadVec3(Mdl, MDL::OFF_HULLMAX);
 
 	// External animation blocks. studiomdl writes character animation to "<model>.ani" and leaves only the block
 	// table (and any block-0 animations) in the .mdl; without the file every sequence would fall back to the bind
@@ -982,6 +986,8 @@ void FSourceMDLFile::ReadSequences(const TArray<uint8>& Mdl)
 		Seq.Flags = ReadInt(Mdl, Off + MDL::SEQ_OFF_FLAGS);
 		Seq.ActivityWeight = ReadInt(Mdl, Off + MDL::SEQ_OFF_ACTWEIGHT);
 		Seq.NumBlends = ReadInt(Mdl, Off + MDL::SEQ_OFF_NUMBLENDS);
+		Seq.FadeInTime = ReadFloat(Mdl, Off + MDL::SEQ_OFF_FADEINTIME);
+		Seq.FadeOutTime = ReadFloat(Mdl, Off + MDL::SEQ_OFF_FADEOUTTIME);
 
 		// animindexindex points at a short[] of animdesc indices, one per blend. Only blend 0 is used: the others
 		// are selected by pose parameters, which a view model never drives.

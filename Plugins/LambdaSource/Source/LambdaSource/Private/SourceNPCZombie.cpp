@@ -129,7 +129,17 @@ void ASourceNPCZombie::NPCThink()
 		return;
 	}
 
-	// SCHED_CHASE_ENEMY: walk straight at the player.
+	// SCHED_CHASE_ENEMY: walk straight at the player - unless the hull is stuck against something, in which case
+	// the pound animation owns the NPC until it finishes (and the block is re-tested after that).
+	if (IsMovementBlocked())
+	{
+		const float NowTime = World ? World->GetTimeSeconds() : 0.0f;
+		if (NowTime < NextPoundTime)
+		{
+			StopMoving();
+			return;
+		}
+	}
 	if (GetActivity() != TEXT("ACT_WALK"))
 	{
 		SetActivity(TEXT("ACT_WALK"));
@@ -218,6 +228,28 @@ void ASourceNPCZombie::ClawAttack(float DistUnits, float Damage, const FRotator&
 	else
 	{
 		AttackMissSound();
+	}
+}
+
+void ASourceNPCZombie::OnMovementBlocked()
+{
+	// CZombie::OnObstructingDoor -> SelectDoorBash: a zombie that cannot get past something takes it out on the
+	// obstruction rather than walking into it. Without the door-bashing schedule (and the interaction with
+	// func_door) it just pounds; the important part is that it stops leaning into the geometry.
+	UWorld* World = GetWorld();
+	const float Now = World ? World->GetTimeSeconds() : 0.0f;
+	if (Now < NextPoundTime)
+	{
+		return;
+	}
+	if (SetActivity(TEXT("ACT_ZOMBIE_WALLPOUND")) || SetActivity(TEXT("ACT_ZOMBIE_TANTRUM")))
+	{
+		NextPoundTime = Now + FMath::Max(0.5f, Model ? Model->GetSequenceDuration() : 1.0f);
+	}
+	else
+	{
+		SetActivity(TEXT("ACT_IDLE"));
+		NextPoundTime = Now + 1.0f;
 	}
 }
 
