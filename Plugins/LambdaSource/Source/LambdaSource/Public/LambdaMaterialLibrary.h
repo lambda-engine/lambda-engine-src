@@ -22,6 +22,7 @@ struct LAMBDASOURCE_API FSourceMaterialInfo
 	bool bNoCull = false;
 	bool bSelfIllum = false;
 	bool bIsPatch = false;
+	FString SurfaceProp;	// $surfaceprop: the key into scripts/surfaceproperties*.txt
 };
 
 /**
@@ -46,6 +47,18 @@ public:
 	/** Parses a VMT (following "patch" includes). */
 	bool LoadMaterialInfo(const FString& SourceMaterialName, FSourceMaterialInfo& OutInfo, FString* OutError = nullptr, int32 Depth = 0);
 
+	/** $surfaceprop for a material name, "" when it declares none. Cached alongside the material. */
+	FString GetSurfaceProp(const FString& SourceMaterialName);
+
+	/**
+	 * Builds a decal material for a Source decal name ("decals/concrete/shot3_subrect"), resolving the Subrect
+	 * indirection every HL2 impact decal uses. OutSizeUnits is the decal's world size in Hammer units.
+	 */
+	UMaterialInterface* GetDecalMaterial(const FString& SourceMaterialName, float& OutSizeUnits);
+
+	/** Builds an additive unlit sprite material (muzzle flashes and other UnlitGeneric $additive effects). */
+	UMaterialInterface* GetSpriteMaterial(const FString& SourceMaterialName);
+
 	UMaterialInterface* GetFallbackMaterial() const { return FallbackMaterial; }
 	UMaterialInterface* GetMasterMaterial() const { return MasterMaterial; }
 	int32 GetNumMaterials() const { return MaterialCache.Num(); }
@@ -61,6 +74,8 @@ public:
 
 private:
 	UMaterialInterface* CreateMaterial(const FString& NormalizedName);
+	/** Reads a "Subrect" VMT and the atlas material it references. */
+	bool LoadDecalSubrect(const FString& NormalizedName, struct FSourceDecalSubrect& OutSubrect, FString& OutSheetTexture);
 	UTexture2D* CreateTexture(const FString& NormalizedName);
 	static void ApplyPatchBlock(const FSourceKeyValues* Block, FSourceKeyValues& Target, bool bInsertOnly);
 
@@ -69,6 +84,24 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInterface> FallbackMaterial;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInterface> DecalMasterMaterial;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInterface> SpriteMasterMaterial;
+
+	UPROPERTY(Transient)
+	TMap<FString, TObjectPtr<UMaterialInterface>> DecalCache;
+
+	UPROPERTY(Transient)
+	TMap<FString, TObjectPtr<UMaterialInterface>> SpriteCache;
+
+	/** Decal world size in Hammer units, keyed the same way as DecalCache. */
+	TMap<FString, float> DecalSizeCache;
+
+	/** $surfaceprop per material name, so a bullet impact does not re-parse the VMT every shot. */
+	TMap<FString, FString> SurfacePropCache;
 
 	UPROPERTY(Transient)
 	TMap<FString, TObjectPtr<UMaterialInterface>> MaterialCache;

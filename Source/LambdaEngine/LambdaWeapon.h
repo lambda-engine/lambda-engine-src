@@ -53,6 +53,15 @@ public:
 	/** Plays one of the weapon script's SoundData entries through the soundscript system. */
 	void WeaponSound(ESourceWeaponSound Sound);
 
+	/** CBaseCombatWeapon::SendWeaponAnim - plays the view-model sequence for an activity and re-arms the idle timer. */
+	bool SendWeaponAnim(const FString& ActivityName);
+	/** CBaseAnimating::SequenceDuration for the view-model sequence now playing. */
+	float SequenceDuration() const;
+	/** CBaseCombatWeapon::WeaponIdle - returns to ACT_VM_IDLE once the current animation has run out. */
+	virtual void WeaponIdle();
+	bool HasWeaponIdleTimeElapsed() const { return GetCurrentTime() > TimeWeaponIdle; }
+	void SetWeaponIdleTime(float Time) { TimeWeaponIdle = Time; }
+
 	UFUNCTION(BlueprintPure, Category = "Lambda") int32 GetClip1() const { return Clip1; }
 	UFUNCTION(BlueprintPure, Category = "Lambda") int32 GetClipSize() const { return WeaponInfo.ClipSize; }
 	UFUNCTION(BlueprintPure, Category = "Lambda") FString GetWeaponClassName() const { return WeaponInfo.ClassName; }
@@ -72,10 +81,12 @@ protected:
 	virtual float GetFireRate() const { return 0.5f; }
 	/** The cone this weapon fires within, in the Source VECTOR_CONE_* form (sin of half-angle per axis). */
 	virtual FVector GetBulletSpread() const { return FVector::ZeroVector; }
-	/** Seconds the reload takes; Source drives this from the view-model animation, which we do not have. */
-	virtual float GetReloadTime() const { return 1.5f; }
+	/** Activity played on a primary attack (CBaseCombatWeapon::GetPrimaryAttackActivity). */
+	virtual FString GetPrimaryAttackActivity() const { return TEXT("ACT_VM_PRIMARYATTACK"); }
 
 	float GetCurrentTime() const;
+
+	float TimeWeaponIdle = 0.0f;		// m_flTimeWeaponIdle
 
 	FSourceWeaponInfo WeaponInfo;
 

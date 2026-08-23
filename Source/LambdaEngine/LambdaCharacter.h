@@ -5,7 +5,9 @@
 #include "LambdaCharacter.generated.h"
 
 class UCameraComponent;
+class USourceStudioModelComponent;
 class UProceduralMeshComponent;
+class UPointLightComponent;
 class ULambdaMaterialLibrary;
 class ALambdaWeapon;
 class UInputAction;
@@ -52,6 +54,17 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Lambda")
 	bool SetViewModel(const FString& ModelPath);
 
+	/** CBaseViewModel::SendViewModelAnim - plays the sequence matching a Source activity ("ACT_VM_IDLE", ...). */
+	bool SendViewModelAnim(const FString& ActivityName);
+
+	/** CBasePlayer::DoMuzzleFlash - flashes the view model's "muzzle" attachment. */
+	void DoMuzzleFlash();
+
+	/** The material library the loaded map built, used to resolve $surfaceprop at a bullet impact. */
+	ULambdaMaterialLibrary* GetWorldMaterialLibrary() const;
+
+	USourceStudioModelComponent* GetViewModelMesh() const { return ViewModelMesh; }
+
 	UFUNCTION(BlueprintPure, Category = "Lambda") float GetHealth() const { return Health; }
 	UFUNCTION(BlueprintPure, Category = "Lambda") float GetArmor() const { return Armor; }
 
@@ -81,10 +94,29 @@ protected:
 
 	/** The first-person weapon model, parented to the camera. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Lambda")
-	TObjectPtr<UProceduralMeshComponent> ViewModelMesh;
+	TObjectPtr<USourceStudioModelComponent> ViewModelMesh;
 
 	UPROPERTY(Transient)
 	TObjectPtr<ULambdaMaterialLibrary> ViewModelMaterials;
+
+	/** Quads for the muzzle flash sprite, in the camera's space (FX_MuzzleEffect). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Lambda")
+	TObjectPtr<UProceduralMeshComponent> MuzzleFlashMesh;
+
+	/** The elight ProcessMuzzleFlashEvent allocates at the muzzle. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Lambda")
+	TObjectPtr<UPointLightComponent> MuzzleFlashLight;
+
+	/** World times at which the flash sprite and its light are switched off again. */
+	float MuzzleFlashSpriteDieTime = 0.0f;
+	float MuzzleFlashLightDieTime = 0.0f;
+	float MuzzleFlashLightRadius = 0.0f;
+
+	void UpdateMuzzleFlash();
+
+	/** Cached so a bullet impact does not search the level for the BSP actor on every shot. */
+	UPROPERTY(Transient)
+	mutable TObjectPtr<ULambdaMaterialLibrary> WorldMaterialLibrary;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UInputMappingContext> MappingContext;

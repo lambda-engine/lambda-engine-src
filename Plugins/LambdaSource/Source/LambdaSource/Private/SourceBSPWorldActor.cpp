@@ -29,7 +29,7 @@ ASourceBSPWorldActor::ASourceBSPWorldActor()
 {
 	PrimaryActorTick.bCanEverTick = true;
 
-	WorldMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("WorldMesh"));
+	WorldMesh = CreateDefaultSubobject<USourceBrushMeshComponent>(TEXT("WorldMesh"));
 	RootComponent = WorldMesh;
 	WorldMesh->Mobility = EComponentMobility::Static;
 	WorldMesh->bUseComplexAsSimpleCollision = true;

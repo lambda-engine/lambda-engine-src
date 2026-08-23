@@ -181,6 +181,13 @@ void SourceGeometry::ApplyToComponent(UProceduralMeshComponent* Mesh, TArray<FSo
 		return;
 	}
 	Mesh->ClearAllMeshSections();
+
+	USourceBrushMeshComponent* BrushMesh = Cast<USourceBrushMeshComponent>(Mesh);
+	if (BrushMesh)
+	{
+		BrushMesh->SectionMaterialNames.Reset(Sections.Num());
+	}
+
 	for (int32 SectionIndex = 0; SectionIndex < Sections.Num(); ++SectionIndex)
 	{
 		FSourceMeshSection& Section = Sections[SectionIndex];
@@ -194,7 +201,19 @@ void SourceGeometry::ApplyToComponent(UProceduralMeshComponent* Mesh, TArray<FSo
 		{
 			Mesh->SetMaterial(SectionIndex, MaterialLibrary->GetMaterial(Section.MaterialName));
 		}
+		if (BrushMesh)
+		{
+			BrushMesh->SectionMaterialNames.Add(Section.MaterialName);
+		}
 		UE_LOG(LogLambdaSource, Verbose, TEXT("  section %d: %s verts=%d tris=%d%s"), SectionIndex, *Section.MaterialName,
 			Section.Vertices.Num(), Section.Triangles.Num() / 3, Section.bVisible ? TEXT("") : TEXT(" (collision only)"));
 	}
+}
+
+FString USourceBrushMeshComponent::GetMaterialNameForFaceIndex(int32 FaceIndex) const
+{
+	int32 SectionIndex = INDEX_NONE;
+	// UProceduralMeshComponent maps a cooked-collision face back to the section that produced it.
+	GetMaterialFromCollisionFaceIndex(FaceIndex, SectionIndex);
+	return SectionMaterialNames.IsValidIndex(SectionIndex) ? SectionMaterialNames[SectionIndex] : FString();
 }

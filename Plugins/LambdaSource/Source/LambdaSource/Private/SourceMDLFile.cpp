@@ -15,6 +15,9 @@ namespace
 		constexpr int32 OFF_NUMCDTEXTURES = 212, OFF_CDTEXTUREINDEX = 216;
 		constexpr int32 OFF_NUMSKINREF = 220, OFF_NUMSKINFAMILIES = 224, OFF_SKININDEX = 228;
 		constexpr int32 OFF_NUMBODYPARTS = 232, OFF_BODYPARTINDEX = 236;
+		constexpr int32 OFF_NUMLOCALANIM = 180, OFF_LOCALANIMINDEX = 184;
+		constexpr int32 OFF_NUMLOCALSEQ = 188, OFF_LOCALSEQINDEX = 192;
+		constexpr int32 OFF_NUMLOCALATTACHMENTS = 240, OFF_LOCALATTACHMENTINDEX = 244;
 
 		constexpr int32 SIZE_TEXTURE = 64;		// mstudiotexture_t
 		constexpr int32 SIZE_BODYPART = 16;		// mstudiobodyparts_t
@@ -22,6 +25,45 @@ namespace
 		constexpr int32 SIZE_MESH = 116;		// mstudiomesh_t
 		// mstudiomodel_t: name[64], type, boundingradius, nummeshes, meshindex, numvertices, vertexindex, ...
 		constexpr int32 MODEL_OFF_NUMMESHES = 72;
+
+		constexpr int32 SIZE_BONE = 216;		// mstudiobone_t
+		// mstudiobone_t: sznameindex, parent, bonecontroller[6], pos, quat, rot, posscale, rotscale, poseToBone, qAlignment, flags
+		constexpr int32 BONE_OFF_PARENT = 4, BONE_OFF_POS = 32, BONE_OFF_QUAT = 44, BONE_OFF_ROT = 60;
+		constexpr int32 BONE_OFF_POSSCALE = 72, BONE_OFF_ROTSCALE = 84, BONE_OFF_POSETOBONE = 96;
+		constexpr int32 BONE_OFF_ALIGNMENT = 144, BONE_OFF_FLAGS = 160;
+
+		constexpr int32 SIZE_ANIMDESC = 100;	// mstudioanimdesc_t
+		constexpr int32 ANIM_OFF_NAMEINDEX = 4, ANIM_OFF_FPS = 8, ANIM_OFF_FLAGS = 12, ANIM_OFF_NUMFRAMES = 16;
+		constexpr int32 ANIM_OFF_ANIMBLOCK = 52, ANIM_OFF_ANIMINDEX = 56;
+		constexpr int32 ANIM_OFF_SECTIONINDEX = 80, ANIM_OFF_SECTIONFRAMES = 84;
+
+		constexpr int32 SIZE_SEQDESC = 212;		// mstudioseqdesc_t
+		constexpr int32 SEQ_OFF_LABELINDEX = 4, SEQ_OFF_ACTIVITYNAMEINDEX = 8, SEQ_OFF_FLAGS = 12;
+		constexpr int32 SEQ_OFF_ACTWEIGHT = 20, SEQ_OFF_NUMEVENTS = 24, SEQ_OFF_EVENTINDEX = 28;
+		constexpr int32 SEQ_OFF_NUMBLENDS = 56, SEQ_OFF_ANIMINDEXINDEX = 60;
+
+		constexpr int32 SIZE_EVENT = 76;		// mstudioevent_t: cycle, event, type, options[64], szeventindex
+		constexpr int32 EVENT_OFF_EVENT = 4, EVENT_OFF_OPTIONS = 8, EVENT_OFF_NAMEINDEX = 72;
+
+		constexpr int32 SIZE_ATTACHMENT = 92;	// mstudioattachment_t: sznameindex, flags, localbone, local(48), unused[8]
+		constexpr int32 ATTACH_OFF_BONE = 8, ATTACH_OFF_LOCAL = 12;
+	}
+
+	/** studio.h per-bone animation flags (mstudio_rle_anim_t::flags). FLAG_-prefixed: <winnt.h> defines DELTA. */
+	namespace STUDIOANIM
+	{
+		constexpr uint8 FLAG_RAWPOS = 0x01;		// Vector48
+		constexpr uint8 FLAG_RAWROT = 0x02;		// Quaternion48
+		constexpr uint8 FLAG_ANIMPOS = 0x04;		// mstudioanim_valueptr_t
+		constexpr uint8 FLAG_ANIMROT = 0x08;		// mstudioanim_valueptr_t
+		constexpr uint8 FLAG_DELTA = 0x10;
+		constexpr uint8 FLAG_RAWROT2 = 0x20;		// Quaternion64
+
+		constexpr int32 SIZE_RLE_HEADER = 4;	// bone, flags, nextoffset
+		constexpr int32 SIZE_QUAT48 = 6;
+		constexpr int32 SIZE_QUAT64 = 8;
+		constexpr int32 SIZE_VALUEPTR = 6;		// short offset[3]
+
 	}
 
 	namespace VVD
@@ -31,6 +73,8 @@ namespace
 		constexpr int32 OFF_NUMFIXUPS = 48, OFF_FIXUPTABLESTART = 52, OFF_VERTEXDATASTART = 56, OFF_TANGENTDATASTART = 60;
 		constexpr int32 SIZE_VERTEX = 48;			// mstudiovertex_t: boneweights(16) pos(12) normal(12) uv(8)
 		constexpr int32 VERTEX_OFF_POS = 16, VERTEX_OFF_NORMAL = 28, VERTEX_OFF_UV = 40;
+		// mstudioboneweight_t sits at the front of mstudiovertex_t: float weight[3], char bone[3], byte numbones.
+		constexpr int32 VERTEX_OFF_WEIGHTS = 0, VERTEX_OFF_BONES = 12, VERTEX_OFF_NUMBONES = 15;
 		constexpr int32 SIZE_FIXUP = 12;			// vertexFileFixup_t
 	}
 
@@ -100,6 +144,216 @@ namespace
 	}
 }
 
+namespace
+{
+	// ---- Compressed value formats (mathlib/compressed_vector.h) ----
+
+	/** Source's float16: 5-bit exponent, 10-bit mantissa, with its own denormal and "infinity clamps to max" rules. */
+	float ReadFloat16(uint16 Bits)
+	{
+		const uint32 Sign = (Bits >> 15) & 1;
+		const uint32 Exp = (Bits >> 10) & 0x1F;
+		const uint32 Mantissa = Bits & 0x3FF;
+
+		float Value;
+		if (Exp == 0)
+		{
+			Value = (Mantissa / 1024.0f) * FMath::Pow(2.0f, -14.0f);
+		}
+		else if (Exp == 31)
+		{
+			Value = 65504.0f;
+		}
+		else
+		{
+			Value = (1.0f + Mantissa / 1024.0f) * FMath::Pow(2.0f, (float)Exp - 15.0f);
+		}
+		return Sign ? -Value : Value;
+	}
+
+	FVector3f ReadVector48(const TArray<uint8>& Data, int64 Offset)
+	{
+		return FVector3f(ReadFloat16(ReadU16(Data, Offset)),
+			ReadFloat16(ReadU16(Data, Offset + 2)),
+			ReadFloat16(ReadU16(Data, Offset + 4)));
+	}
+
+	/** Quaternion48: x:16, y:16, z:15, wneg:1. w is recovered from the unit-length constraint. */
+	FQuat4f ReadQuat48(const TArray<uint8>& Data, int64 Offset)
+	{
+		uint64 Raw = 0;
+		for (int32 i = 0; i < 6; ++i)
+		{
+			uint8 Byte = 0;
+			Peek(Data, Offset + i, Byte);
+			Raw |= (uint64)Byte << (8 * i);
+		}
+		const float X = ((int32)(Raw & 0xFFFF) - 32768) * (1.0f / 32768.5f);
+		const float Y = ((int32)((Raw >> 16) & 0xFFFF) - 32768) * (1.0f / 32768.5f);
+		const float Z = ((int32)((Raw >> 32) & 0x7FFF) - 16384) * (1.0f / 16384.5f);
+		float W = FMath::Sqrt(FMath::Max(0.0f, 1.0f - X * X - Y * Y - Z * Z));
+		if ((Raw >> 47) & 1)
+		{
+			W = -W;
+		}
+		return FQuat4f(X, Y, Z, W);
+	}
+
+	/** Quaternion64: x:21, y:21, z:21, wneg:1. */
+	FQuat4f ReadQuat64(const TArray<uint8>& Data, int64 Offset)
+	{
+		uint64 Raw = 0;
+		for (int32 i = 0; i < 8; ++i)
+		{
+			uint8 Byte = 0;
+			Peek(Data, Offset + i, Byte);
+			Raw |= (uint64)Byte << (8 * i);
+		}
+		const float X = ((int32)(Raw & 0x1FFFFF) - 1048576) * (1.0f / 1048576.5f);
+		const float Y = ((int32)((Raw >> 21) & 0x1FFFFF) - 1048576) * (1.0f / 1048576.5f);
+		const float Z = ((int32)((Raw >> 42) & 0x1FFFFF) - 1048576) * (1.0f / 1048576.5f);
+		float W = FMath::Sqrt(FMath::Max(0.0f, 1.0f - X * X - Y * Y - Z * Z));
+		if ((Raw >> 63) & 1)
+		{
+			W = -W;
+		}
+		return FQuat4f(X, Y, Z, W);
+	}
+
+	int16 ReadI16(const TArray<uint8>& Data, int64 Offset)
+	{
+		int16 Value = 0;
+		Peek(Data, Offset, Value);
+		return Value;
+	}
+
+	FVector3f ReadVec3(const TArray<uint8>& Data, int64 Offset)
+	{
+		return FVector3f(ReadFloat(Data, Offset), ReadFloat(Data, Offset + 4), ReadFloat(Data, Offset + 8));
+	}
+
+	FQuat4f ReadQuat(const TArray<uint8>& Data, int64 Offset)
+	{
+		return FQuat4f(ReadFloat(Data, Offset), ReadFloat(Data, Offset + 4),
+			ReadFloat(Data, Offset + 8), ReadFloat(Data, Offset + 12));
+	}
+
+	FSourceMatrix3x4 ReadMatrix3x4(const TArray<uint8>& Data, int64 Offset)
+	{
+		FSourceMatrix3x4 Out;
+		for (int32 R = 0; R < 3; ++R)
+		{
+			for (int32 C = 0; C < 4; ++C)
+			{
+				Out.M[R][C] = ReadFloat(Data, Offset + (R * 4 + C) * 4);
+			}
+		}
+		return Out;
+	}
+
+	/** AngleQuaternion(RadianEuler) from mathlib - Source composes its Euler angles in X, Y, Z order. */
+	FQuat4f AngleQuaternion(const FVector3f& Angles)
+	{
+		const float SR = FMath::Sin(Angles.X * 0.5f), CR = FMath::Cos(Angles.X * 0.5f);
+		const float SP = FMath::Sin(Angles.Y * 0.5f), CP = FMath::Cos(Angles.Y * 0.5f);
+		const float SY = FMath::Sin(Angles.Z * 0.5f), CY = FMath::Cos(Angles.Z * 0.5f);
+		return FQuat4f(
+			SR * CP * CY - CR * SP * SY,
+			CR * SP * CY + SR * CP * SY,
+			CR * CP * SY - SR * SP * CY,
+			CR * CP * CY + SR * SP * SY);
+	}
+
+	/**
+	 * ExtractAnimValue (bonesetup/bone_decode.cpp), single-value form. The track is a run-length list of
+	 * mstudioanimvalue_t: a {valid, total} header followed by `valid` shorts. Frames past `valid` repeat the last
+	 * value, and runs are walked until the one containing the frame is found.
+	 */
+	float ExtractAnimValue(const TArray<uint8>& Data, int64 RunOffset, int32 Frame, float Scale)
+	{
+		if (RunOffset <= 0)
+		{
+			return 0.0f;
+		}
+		int64 P = RunOffset;
+		int32 K = Frame;
+
+		// Guard the walk: a corrupt track must not spin forever or read outside the file.
+		for (int32 Guard = 0; Guard < 1024; ++Guard)
+		{
+			uint8 Valid = 0, Total = 0;
+			if (!Peek(Data, P, Valid) || !Peek(Data, P + 1, Total) || Total == 0)
+			{
+				return 0.0f;
+			}
+			if (Total > K)
+			{
+				// v1 = panimvalue[k+1] when the frame has its own value, else the last valid one.
+				const int32 Index = (Valid > K) ? (K + 1) : Valid;
+				return ReadI16(Data, P + 2 * Index) * Scale;
+			}
+			K -= Total;
+			P += 2 * ((int64)Valid + 1);
+		}
+		return 0.0f;
+	}
+}
+
+// ---- FSourceMatrix3x4 ----
+
+FSourceMatrix3x4 FSourceMatrix3x4::FromQuatPos(const FQuat4f& Q, const FVector3f& P)
+{
+	// QuaternionMatrix from mathlib.
+	FSourceMatrix3x4 Out;
+	Out.M[0][0] = 1.0f - 2.0f * Q.Y * Q.Y - 2.0f * Q.Z * Q.Z;
+	Out.M[1][0] = 2.0f * Q.X * Q.Y + 2.0f * Q.W * Q.Z;
+	Out.M[2][0] = 2.0f * Q.X * Q.Z - 2.0f * Q.W * Q.Y;
+
+	Out.M[0][1] = 2.0f * Q.X * Q.Y - 2.0f * Q.W * Q.Z;
+	Out.M[1][1] = 1.0f - 2.0f * Q.X * Q.X - 2.0f * Q.Z * Q.Z;
+	Out.M[2][1] = 2.0f * Q.Y * Q.Z + 2.0f * Q.W * Q.X;
+
+	Out.M[0][2] = 2.0f * Q.X * Q.Z + 2.0f * Q.W * Q.Y;
+	Out.M[1][2] = 2.0f * Q.Y * Q.Z - 2.0f * Q.W * Q.X;
+	Out.M[2][2] = 1.0f - 2.0f * Q.X * Q.X - 2.0f * Q.Y * Q.Y;
+
+	Out.M[0][3] = P.X;
+	Out.M[1][3] = P.Y;
+	Out.M[2][3] = P.Z;
+	return Out;
+}
+
+FVector3f FSourceMatrix3x4::TransformPosition(const FVector3f& V) const
+{
+	return FVector3f(
+		M[0][0] * V.X + M[0][1] * V.Y + M[0][2] * V.Z + M[0][3],
+		M[1][0] * V.X + M[1][1] * V.Y + M[1][2] * V.Z + M[1][3],
+		M[2][0] * V.X + M[2][1] * V.Y + M[2][2] * V.Z + M[2][3]);
+}
+
+FVector3f FSourceMatrix3x4::TransformVector(const FVector3f& V) const
+{
+	return FVector3f(
+		M[0][0] * V.X + M[0][1] * V.Y + M[0][2] * V.Z,
+		M[1][0] * V.X + M[1][1] * V.Y + M[1][2] * V.Z,
+		M[2][0] * V.X + M[2][1] * V.Y + M[2][2] * V.Z);
+}
+
+FSourceMatrix3x4 FSourceMatrix3x4::Concat(const FSourceMatrix3x4& Other) const
+{
+	// ConcatTransforms: out = this * Other.
+	FSourceMatrix3x4 Out;
+	for (int32 R = 0; R < 3; ++R)
+	{
+		for (int32 C = 0; C < 3; ++C)
+		{
+			Out.M[R][C] = M[R][0] * Other.M[0][C] + M[R][1] * Other.M[1][C] + M[R][2] * Other.M[2][C];
+		}
+		Out.M[R][3] = M[R][0] * Other.M[0][3] + M[R][1] * Other.M[1][3] + M[R][2] * Other.M[2][3] + M[R][3];
+	}
+	return Out;
+}
+
 int32 FSourceMDLFile::GetNumTriangles() const
 {
 	int32 Total = 0;
@@ -130,6 +384,13 @@ bool FSourceMDLFile::Load(const FString& RelativeModelPath, float Scale, FString
 {
 	bLoaded = false;
 	Sections.Reset();
+	SkinVertices.Reset();
+	Bones.Reset();
+	AnimDescs.Reset();
+	Sequences.Reset();
+	Attachments.Reset();
+	MdlData.Reset();
+	UnitScale = Scale;
 
 	auto Fail = [&](const FString& Msg)
 	{
@@ -170,7 +431,6 @@ bool FSourceMDLFile::Load(const FString& RelativeModelPath, float Scale, FString
 
 	Version = ReadInt(Mdl, MDL::OFF_VERSION);
 	ModelName = ReadCString(Mdl, MDL::OFF_NAME);
-	NumBones = ReadInt(Mdl, MDL::OFF_NUMBONES);
 
 	// All three files must belong to the same model.
 	const int32 Checksum = ReadInt(Mdl, MDL::OFF_CHECKSUM);
@@ -178,6 +438,10 @@ bool FSourceMDLFile::Load(const FString& RelativeModelPath, float Scale, FString
 	{
 		return Fail(TEXT("Checksum mismatch between .mdl, .vvd and .vtx (mismatched model files)"));
 	}
+
+	ReadBones(Mdl);
+	ReadSequences(Mdl);
+	ReadAttachments(Mdl);
 
 	// ---- Materials: cdmaterials path + texture name ----
 	const int32 NumTextures = ReadInt(Mdl, MDL::OFF_NUMTEXTURES);
@@ -253,7 +517,8 @@ bool FSourceMDLFile::Load(const FString& RelativeModelPath, float Scale, FString
 		}
 	}
 
-	auto ReadVertex = [&](int32 LodVertexIndex, FVector& OutPos, FVector& OutNormal, FVector2D& OutUV) -> bool
+	auto ReadVertex = [&](int32 LodVertexIndex, FVector& OutPos, FVector& OutNormal, FVector2D& OutUV,
+		FSourceSkinVertex& OutSkin) -> bool
 	{
 		if (!VertexMap.IsValidIndex(LodVertexIndex))
 		{
@@ -264,11 +529,25 @@ bool FSourceMDLFile::Load(const FString& RelativeModelPath, float Scale, FString
 		{
 			return false;
 		}
-		const FVector3f Pos(ReadFloat(Vvd, Off + VVD::VERTEX_OFF_POS), ReadFloat(Vvd, Off + VVD::VERTEX_OFF_POS + 4), ReadFloat(Vvd, Off + VVD::VERTEX_OFF_POS + 8));
-		const FVector3f Nrm(ReadFloat(Vvd, Off + VVD::VERTEX_OFF_NORMAL), ReadFloat(Vvd, Off + VVD::VERTEX_OFF_NORMAL + 4), ReadFloat(Vvd, Off + VVD::VERTEX_OFF_NORMAL + 8));
+		const FVector3f Pos = ReadVec3(Vvd, Off + VVD::VERTEX_OFF_POS);
+		const FVector3f Nrm = ReadVec3(Vvd, Off + VVD::VERTEX_OFF_NORMAL);
 		OutPos = FSourceCoords::ToUE(Pos, Scale);
 		OutNormal = FSourceCoords::ToUEDirection(Nrm);
 		OutUV = FVector2D(ReadFloat(Vvd, Off + VVD::VERTEX_OFF_UV), ReadFloat(Vvd, Off + VVD::VERTEX_OFF_UV + 4));
+
+		// Keep the untransformed vertex and its mstudioboneweight_t so ApplyPose can re-skin it later.
+		OutSkin.Position = Pos;
+		OutSkin.Normal = Nrm;
+		uint8 NumBoneWeights = 0;
+		Peek(Vvd, Off + VVD::VERTEX_OFF_NUMBONES, NumBoneWeights);
+		OutSkin.NumBones = FMath::Clamp<uint8>(NumBoneWeights, 0, 3);
+		for (int32 b = 0; b < OutSkin.NumBones; ++b)
+		{
+			uint8 BoneId = 0;
+			Peek(Vvd, Off + VVD::VERTEX_OFF_BONES + b, BoneId);
+			OutSkin.Bones[b] = BoneId;
+			OutSkin.Weights[b] = ReadFloat(Vvd, Off + VVD::VERTEX_OFF_WEIGHTS + b * 4);
+		}
 		return true;
 	};
 
@@ -334,10 +613,12 @@ bool FSourceMDLFile::Load(const FString& RelativeModelPath, float Scale, FString
 				else
 				{
 					SectionIndex = Sections.AddDefaulted();
+					SkinVertices.AddDefaulted();
 					Sections[SectionIndex].MaterialName = MaterialName;
 					SectionByMaterial.Add(MaterialName, SectionIndex);
 				}
 				FSourceMeshSection& Section = Sections[SectionIndex];
+				TArray<FSourceSkinVertex>& SectionSkin = SkinVertices[SectionIndex];
 
 				for (int32 sg = 0; sg < NumStripGroups; ++sg)
 				{
@@ -364,7 +645,8 @@ bool FSourceMDLFile::Load(const FString& RelativeModelPath, float Scale, FString
 
 							FVector Pos, Normal;
 							FVector2D UV;
-							if (!ReadVertex(LodVertexIndex, Pos, Normal, UV))
+							FSourceSkinVertex Skin;
+							if (!ReadVertex(LodVertexIndex, Pos, Normal, UV, Skin))
 							{
 								return INDEX_NONE;
 							}
@@ -373,6 +655,7 @@ bool FSourceMDLFile::Load(const FString& RelativeModelPath, float Scale, FString
 							Section.UV0.Add(UV);
 							Section.Colors.Add(FLinearColor::White);
 							Section.Tangents.Add(FProcMeshTangent(1.0f, 0.0f, 0.0f));
+							SectionSkin.Add(Skin);
 							return New;
 						};
 
@@ -425,13 +708,395 @@ bool FSourceMDLFile::Load(const FString& RelativeModelPath, float Scale, FString
 		}
 	}
 
+	MdlData = MoveTemp(Mdl);
 	bLoaded = true;
-	UE_LOG(LogLambdaSource, Log, TEXT("Model '%s' (v%d, %d bones): %d sections, %d tris [%s]"),
-		*ModelName, Version, NumBones, Sections.Num(), GetNumTriangles(), *VtxPath);
+	UE_LOG(LogLambdaSource, Log, TEXT("Model '%s' (v%d): %d bones, %d sequences, %d attachments, %d sections, %d tris [%s]"),
+		*ModelName, Version, Bones.Num(), Sequences.Num(), Attachments.Num(), Sections.Num(), GetNumTriangles(), *VtxPath);
 	for (const FSourceMeshSection& Section : Sections)
 	{
 		UE_LOG(LogLambdaSource, Verbose, TEXT("  section '%s': %d verts, %d tris"),
 			*Section.MaterialName, Section.Vertices.Num(), Section.Triangles.Num() / 3);
 	}
 	return true;
+}
+
+// ---- Bones, sequences, attachments ----
+
+void FSourceMDLFile::ReadBones(const TArray<uint8>& Mdl)
+{
+	const int32 NumBonesInFile = ReadInt(Mdl, MDL::OFF_NUMBONES);
+	const int32 BoneIndex = ReadInt(Mdl, MDL::OFF_BONEINDEX);
+	Bones.Reserve(NumBonesInFile);
+
+	for (int32 i = 0; i < NumBonesInFile; ++i)
+	{
+		const int64 Off = BoneIndex + (int64)i * MDL::SIZE_BONE;
+		FSourceStudioBone& Bone = Bones.AddDefaulted_GetRef();
+		Bone.Name = ReadCString(Mdl, Off + ReadInt(Mdl, Off));
+		Bone.Parent = ReadInt(Mdl, Off + MDL::BONE_OFF_PARENT);
+		Bone.Pos = ReadVec3(Mdl, Off + MDL::BONE_OFF_POS);
+		Bone.Quat = ReadQuat(Mdl, Off + MDL::BONE_OFF_QUAT);
+		Bone.Rot = ReadVec3(Mdl, Off + MDL::BONE_OFF_ROT);
+		Bone.PosScale = ReadVec3(Mdl, Off + MDL::BONE_OFF_POSSCALE);
+		Bone.RotScale = ReadVec3(Mdl, Off + MDL::BONE_OFF_ROTSCALE);
+		Bone.PoseToBone = ReadMatrix3x4(Mdl, Off + MDL::BONE_OFF_POSETOBONE);
+		Bone.Alignment = ReadQuat(Mdl, Off + MDL::BONE_OFF_ALIGNMENT);
+		Bone.Flags = ReadInt(Mdl, Off + MDL::BONE_OFF_FLAGS);
+	}
+}
+
+void FSourceMDLFile::ReadSequences(const TArray<uint8>& Mdl)
+{
+	const int32 NumAnims = ReadInt(Mdl, MDL::OFF_NUMLOCALANIM);
+	const int32 AnimIndex = ReadInt(Mdl, MDL::OFF_LOCALANIMINDEX);
+	AnimDescs.Reserve(NumAnims);
+	for (int32 i = 0; i < NumAnims; ++i)
+	{
+		const int64 Off = AnimIndex + (int64)i * MDL::SIZE_ANIMDESC;
+		FSourceStudioAnimDesc& Anim = AnimDescs.AddDefaulted_GetRef();
+		Anim.FileOffset = Off;
+		Anim.Name = ReadCString(Mdl, Off + ReadInt(Mdl, Off + MDL::ANIM_OFF_NAMEINDEX));
+		Anim.Fps = ReadFloat(Mdl, Off + MDL::ANIM_OFF_FPS);
+		Anim.Flags = ReadInt(Mdl, Off + MDL::ANIM_OFF_FLAGS);
+		Anim.NumFrames = ReadInt(Mdl, Off + MDL::ANIM_OFF_NUMFRAMES);
+		Anim.AnimBlock = ReadInt(Mdl, Off + MDL::ANIM_OFF_ANIMBLOCK);
+		Anim.AnimIndex = ReadInt(Mdl, Off + MDL::ANIM_OFF_ANIMINDEX);
+		Anim.SectionIndex = ReadInt(Mdl, Off + MDL::ANIM_OFF_SECTIONINDEX);
+		Anim.SectionFrames = ReadInt(Mdl, Off + MDL::ANIM_OFF_SECTIONFRAMES);
+	}
+
+	const int32 NumSeqs = ReadInt(Mdl, MDL::OFF_NUMLOCALSEQ);
+	const int32 SeqIndex = ReadInt(Mdl, MDL::OFF_LOCALSEQINDEX);
+	Sequences.Reserve(NumSeqs);
+	for (int32 i = 0; i < NumSeqs; ++i)
+	{
+		const int64 Off = SeqIndex + (int64)i * MDL::SIZE_SEQDESC;
+		FSourceStudioSequence& Seq = Sequences.AddDefaulted_GetRef();
+		Seq.Label = ReadCString(Mdl, Off + ReadInt(Mdl, Off + MDL::SEQ_OFF_LABELINDEX));
+		Seq.ActivityName = ReadCString(Mdl, Off + ReadInt(Mdl, Off + MDL::SEQ_OFF_ACTIVITYNAMEINDEX));
+		Seq.Flags = ReadInt(Mdl, Off + MDL::SEQ_OFF_FLAGS);
+		Seq.ActivityWeight = ReadInt(Mdl, Off + MDL::SEQ_OFF_ACTWEIGHT);
+		Seq.NumBlends = ReadInt(Mdl, Off + MDL::SEQ_OFF_NUMBLENDS);
+
+		// animindexindex points at a short[] of animdesc indices, one per blend. Only blend 0 is used: the others
+		// are selected by pose parameters, which a view model never drives.
+		const int32 AnimIndexIndex = ReadInt(Mdl, Off + MDL::SEQ_OFF_ANIMINDEXINDEX);
+		if (AnimIndexIndex != 0)
+		{
+			const int32 Resolved = ReadI16(Mdl, Off + AnimIndexIndex);
+			Seq.AnimDescIndex = AnimDescs.IsValidIndex(Resolved) ? Resolved : INDEX_NONE;
+		}
+
+		const int32 NumEvents = ReadInt(Mdl, Off + MDL::SEQ_OFF_NUMEVENTS);
+		const int32 EventIndex = ReadInt(Mdl, Off + MDL::SEQ_OFF_EVENTINDEX);
+		for (int32 e = 0; e < NumEvents && EventIndex != 0; ++e)
+		{
+			const int64 EvOff = Off + EventIndex + (int64)e * MDL::SIZE_EVENT;
+			FSourceStudioEvent& Event = Seq.Events.AddDefaulted_GetRef();
+			Event.Cycle = ReadFloat(Mdl, EvOff);
+			Event.Event = ReadInt(Mdl, EvOff + MDL::EVENT_OFF_EVENT);
+			Event.Options = ReadCString(Mdl, EvOff + MDL::EVENT_OFF_OPTIONS);
+			const int32 NameIndex = ReadInt(Mdl, EvOff + MDL::EVENT_OFF_NAMEINDEX);
+			if (NameIndex != 0)
+			{
+				Event.Name = ReadCString(Mdl, EvOff + NameIndex);
+			}
+		}
+	}
+}
+
+void FSourceMDLFile::ReadAttachments(const TArray<uint8>& Mdl)
+{
+	const int32 Num = ReadInt(Mdl, MDL::OFF_NUMLOCALATTACHMENTS);
+	const int32 Index = ReadInt(Mdl, MDL::OFF_LOCALATTACHMENTINDEX);
+	Attachments.Reserve(Num);
+	for (int32 i = 0; i < Num; ++i)
+	{
+		const int64 Off = Index + (int64)i * MDL::SIZE_ATTACHMENT;
+		FSourceStudioAttachment& Attach = Attachments.AddDefaulted_GetRef();
+		Attach.Name = ReadCString(Mdl, Off + ReadInt(Mdl, Off));
+		Attach.Bone = ReadInt(Mdl, Off + MDL::ATTACH_OFF_BONE);
+		Attach.Local = ReadMatrix3x4(Mdl, Off + MDL::ATTACH_OFF_LOCAL);
+	}
+}
+
+// ---- Sequence selection ----
+
+int32 FSourceMDLFile::FindSequenceByLabel(const FString& Label) const
+{
+	for (int32 i = 0; i < Sequences.Num(); ++i)
+	{
+		if (Sequences[i].Label.Equals(Label, ESearchCase::IgnoreCase))
+		{
+			return i;
+		}
+	}
+	return INDEX_NONE;
+}
+
+int32 FSourceMDLFile::SelectWeightedSequence(const FString& ActivityName) const
+{
+	// CStudioHdr::SelectWeightedSequence: reservoir-sample the matching sequences by actweight, so a weapon with
+	// several recoil animations does not play the same one every shot.
+	int32 Chosen = INDEX_NONE;
+	int32 TotalWeight = 0;
+	for (int32 i = 0; i < Sequences.Num(); ++i)
+	{
+		const FSourceStudioSequence& Seq = Sequences[i];
+		if (Seq.ActivityName.IsEmpty() || !Seq.ActivityName.Equals(ActivityName, ESearchCase::IgnoreCase))
+		{
+			continue;
+		}
+		const int32 Weight = FMath::Max(1, Seq.ActivityWeight);
+		TotalWeight += Weight;
+		if (Chosen == INDEX_NONE || FMath::RandRange(0, TotalWeight - 1) < Weight)
+		{
+			Chosen = i;
+		}
+	}
+	return Chosen;
+}
+
+float FSourceMDLFile::GetSequenceDuration(int32 SequenceIndex) const
+{
+	if (!Sequences.IsValidIndex(SequenceIndex))
+	{
+		return 0.0f;
+	}
+	const int32 AnimIdx = Sequences[SequenceIndex].AnimDescIndex;
+	if (!AnimDescs.IsValidIndex(AnimIdx))
+	{
+		return 0.0f;
+	}
+	// Studio_Duration: the last frame closes the loop back onto the first, so it is not counted.
+	const FSourceStudioAnimDesc& Anim = AnimDescs[AnimIdx];
+	return Anim.Fps > 0.0f ? (Anim.NumFrames - 1) / Anim.Fps : 0.0f;
+}
+
+bool FSourceMDLFile::IsSequenceLooping(int32 SequenceIndex) const
+{
+	return Sequences.IsValidIndex(SequenceIndex) && (Sequences[SequenceIndex].Flags & STUDIO_LOOPING) != 0;
+}
+
+// ---- Pose evaluation ----
+
+void FSourceMDLFile::EvaluateBindPose(TArray<FSourceMatrix3x4>& OutBoneToModel) const
+{
+	OutBoneToModel.SetNum(Bones.Num());
+	for (int32 i = 0; i < Bones.Num(); ++i)
+	{
+		const FSourceMatrix3x4 Local = FSourceMatrix3x4::FromQuatPos(Bones[i].Quat, Bones[i].Pos);
+		OutBoneToModel[i] = (Bones[i].Parent >= 0 && Bones[i].Parent < i)
+			? OutBoneToModel[Bones[i].Parent].Concat(Local)
+			: Local;
+	}
+}
+
+bool FSourceMDLFile::EvaluateSequence(int32 SequenceIndex, float Cycle, TArray<FSourceMatrix3x4>& OutBoneToModel) const
+{
+	if (!Sequences.IsValidIndex(SequenceIndex) || Bones.Num() == 0)
+	{
+		EvaluateBindPose(OutBoneToModel);
+		return false;
+	}
+	const FSourceStudioSequence& Seq = Sequences[SequenceIndex];
+	if (!AnimDescs.IsValidIndex(Seq.AnimDescIndex))
+	{
+		EvaluateBindPose(OutBoneToModel);
+		return false;
+	}
+	const FSourceStudioAnimDesc& Anim = AnimDescs[Seq.AnimDescIndex];
+	if (Anim.AnimBlock != 0 || Anim.AnimIndex == 0)
+	{
+		// The track lives in an external .ani block, which we do not mount.
+		EvaluateBindPose(OutBoneToModel);
+		return false;
+	}
+
+	// InitPose: every bone starts at its bind pose. studiomdl omits bones the animation never moves, and those
+	// must keep the bind pose rather than collapse to the origin.
+	TArray<FQuat4f> LocalQuat;
+	TArray<FVector3f> LocalPos;
+	LocalQuat.SetNum(Bones.Num());
+	LocalPos.SetNum(Bones.Num());
+	for (int32 i = 0; i < Bones.Num(); ++i)
+	{
+		LocalQuat[i] = Bones[i].Quat;
+		LocalPos[i] = Bones[i].Pos;
+	}
+
+	// Studio_CalcFrame: the cycle spans [0, numframes - 1]. We sample the nearest frame rather than blending
+	// between two, which is what Source does when its interpolation fraction is below 0.001.
+	const int32 MaxFrame = FMath::Max(0, Anim.NumFrames - 1);
+	const int32 Frame = FMath::Clamp(FMath::RoundToInt(FMath::Clamp(Cycle, 0.0f, 1.0f) * MaxFrame), 0, MaxFrame);
+
+	int64 P = Anim.FileOffset + Anim.AnimIndex;
+	for (int32 Guard = 0; Guard <= Bones.Num(); ++Guard)
+	{
+		uint8 BoneIdx = 0, Flags = 0;
+		if (!Peek(MdlData, P, BoneIdx) || !Peek(MdlData, P + 1, Flags) || BoneIdx >= Bones.Num())
+		{
+			break;
+		}
+		const FSourceStudioBone& Bone = Bones[BoneIdx];
+		const int16 NextOffset = ReadI16(MdlData, P + 2);
+		const int64 Data = P + STUDIOANIM::SIZE_RLE_HEADER;
+
+		// CalcBoneQuaternion
+		FQuat4f Q;
+		if (Flags & STUDIOANIM::FLAG_RAWROT)
+		{
+			Q = ReadQuat48(MdlData, Data);
+		}
+		else if (Flags & STUDIOANIM::FLAG_RAWROT2)
+		{
+			Q = ReadQuat64(MdlData, Data);
+		}
+		else if (Flags & STUDIOANIM::FLAG_ANIMROT)
+		{
+			FVector3f Angle(0.0f);
+			for (int32 j = 0; j < 3; ++j)
+			{
+				const int16 RunOffset = ReadI16(MdlData, Data + 2 * j);
+				Angle[j] = ExtractAnimValue(MdlData, RunOffset > 0 ? Data + RunOffset : 0, Frame, Bone.RotScale[j]);
+			}
+			if (!(Flags & STUDIOANIM::FLAG_DELTA))
+			{
+				Angle += Bone.Rot;
+			}
+			Q = AngleQuaternion(Angle);
+		}
+		else
+		{
+			Q = (Flags & STUDIOANIM::FLAG_DELTA) ? FQuat4f::Identity : Bone.Quat;
+		}
+
+		// CalcBonePosition
+		FVector3f Pos(0.0f);
+		if (Flags & STUDIOANIM::FLAG_RAWPOS)
+		{
+			const int64 PosOff = Data
+				+ ((Flags & STUDIOANIM::FLAG_RAWROT) ? STUDIOANIM::SIZE_QUAT48 : 0)
+				+ ((Flags & STUDIOANIM::FLAG_RAWROT2) ? STUDIOANIM::SIZE_QUAT64 : 0);
+			Pos = ReadVector48(MdlData, PosOff);
+		}
+		else if (Flags & STUDIOANIM::FLAG_ANIMPOS)
+		{
+			// The position value pointers follow the rotation ones when both are animated.
+			const int64 PosV = Data + ((Flags & STUDIOANIM::FLAG_ANIMROT) ? STUDIOANIM::SIZE_VALUEPTR : 0);
+			for (int32 j = 0; j < 3; ++j)
+			{
+				const int16 RunOffset = ReadI16(MdlData, PosV + 2 * j);
+				Pos[j] = ExtractAnimValue(MdlData, RunOffset > 0 ? PosV + RunOffset : 0, Frame, Bone.PosScale[j]);
+			}
+			if (!(Flags & STUDIOANIM::FLAG_DELTA))
+			{
+				Pos += Bone.Pos;
+			}
+		}
+		else
+		{
+			Pos = (Flags & STUDIOANIM::FLAG_DELTA) ? FVector3f::ZeroVector : Bone.Pos;
+		}
+
+		LocalQuat[BoneIdx] = Q;
+		LocalPos[BoneIdx] = Pos;
+
+		if (NextOffset == 0)
+		{
+			break;
+		}
+		P += NextOffset;
+	}
+
+	// Local transforms -> bone-to-model. studiomdl orders the table so a parent always precedes its children.
+	OutBoneToModel.SetNum(Bones.Num());
+	for (int32 i = 0; i < Bones.Num(); ++i)
+	{
+		const FSourceMatrix3x4 Local = FSourceMatrix3x4::FromQuatPos(LocalQuat[i], LocalPos[i]);
+		OutBoneToModel[i] = (Bones[i].Parent >= 0 && Bones[i].Parent < i)
+			? OutBoneToModel[Bones[i].Parent].Concat(Local)
+			: Local;
+	}
+	return true;
+}
+
+void FSourceMDLFile::ApplyPose(const TArray<FSourceMatrix3x4>& BoneToModel)
+{
+	if (SkinVertices.Num() != Sections.Num() || BoneToModel.Num() != Bones.Num() || Bones.Num() == 0)
+	{
+		return;
+	}
+
+	// CStudioRender builds one matrix per bone that takes a reference-pose vertex straight to posed model space.
+	TArray<FSourceMatrix3x4> SkinMatrices;
+	SkinMatrices.SetNum(Bones.Num());
+	for (int32 i = 0; i < Bones.Num(); ++i)
+	{
+		SkinMatrices[i] = BoneToModel[i].Concat(Bones[i].PoseToBone);
+	}
+
+	for (int32 s = 0; s < Sections.Num(); ++s)
+	{
+		FSourceMeshSection& Section = Sections[s];
+		const TArray<FSourceSkinVertex>& Skin = SkinVertices[s];
+		const int32 Count = FMath::Min(Section.Vertices.Num(), Skin.Num());
+		for (int32 v = 0; v < Count; ++v)
+		{
+			const FSourceSkinVertex& In = Skin[v];
+			FVector3f Pos = FVector3f::ZeroVector;
+			FVector3f Nrm = FVector3f::ZeroVector;
+			for (int32 b = 0; b < In.NumBones; ++b)
+			{
+				const uint8 BoneIdx = In.Bones[b];
+				if (BoneIdx >= SkinMatrices.Num())
+				{
+					continue;
+				}
+				const FSourceMatrix3x4& Mat = SkinMatrices[BoneIdx];
+				Pos += Mat.TransformPosition(In.Position) * In.Weights[b];
+				Nrm += Mat.TransformVector(In.Normal) * In.Weights[b];
+			}
+			Section.Vertices[v] = FSourceCoords::ToUE(Pos, UnitScale);
+			Section.Normals[v] = FSourceCoords::ToUEDirection(Nrm.GetSafeNormal());
+		}
+	}
+}
+
+bool FSourceMDLFile::GetAttachment(const FString& Name, const TArray<FSourceMatrix3x4>& BoneToModel,
+	FVector& OutPosition, FVector& OutForward) const
+{
+	for (const FSourceStudioAttachment& Attach : Attachments)
+	{
+		if (!Attach.Name.Equals(Name, ESearchCase::IgnoreCase) || !BoneToModel.IsValidIndex(Attach.Bone))
+		{
+			continue;
+		}
+		const FSourceMatrix3x4 World = BoneToModel[Attach.Bone].Concat(Attach.Local);
+		OutPosition = FSourceCoords::ToUE(World.GetOrigin(), UnitScale);
+		OutForward = FSourceCoords::ToUEDirection(World.GetForward().GetSafeNormal());
+		return true;
+	}
+	return false;
+}
+
+void FSourceMDLFile::CollectEvents(int32 SequenceIndex, float PrevCycle, float NewCycle, bool bLooping,
+	TArray<const FSourceStudioEvent*>& OutEvents) const
+{
+	if (!Sequences.IsValidIndex(SequenceIndex))
+	{
+		return;
+	}
+	for (const FSourceStudioEvent& Event : Sequences[SequenceIndex].Events)
+	{
+		// C_BaseAnimating::DoAnimationEvents fires an event as the cycle crosses it, allowing for the wrap that a
+		// looping sequence makes each time it restarts.
+		const bool bCrossed = (bLooping && NewCycle < PrevCycle)
+			? (Event.Cycle > PrevCycle || Event.Cycle <= NewCycle)
+			: (Event.Cycle > PrevCycle && Event.Cycle <= NewCycle);
+		if (bCrossed)
+		{
+			OutEvents.Add(&Event);
+		}
+	}
 }

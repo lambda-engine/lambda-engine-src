@@ -63,6 +63,28 @@ public:
 	UPROPERTY(config, EditAnywhere, Category = "Materials")
 	FName BaseTextureParameterName = TEXT("BaseTexture");
 
+	/** Deferred-decal master material used for bullet impacts. Needs a "BaseTexture" and a "UVRect" parameter. */
+	UPROPERTY(config, EditAnywhere, Category = "Materials", meta = (AllowedClasses = "/Script/Engine.MaterialInterface"))
+	FSoftObjectPath DecalMaterial;
+
+	/** Unlit additive master material used for muzzle flashes and other sprite effects. */
+	UPROPERTY(config, EditAnywhere, Category = "Materials", meta = (AllowedClasses = "/Script/Engine.MaterialInterface"))
+	FSoftObjectPath SpriteMaterial;
+
+	// ---- Effects ----
+
+	/** Seconds a bullet-impact decal stays before it fades out (Source's r_decal_cullsize/decal lifetime analogue). */
+	UPROPERTY(config, EditAnywhere, Category = "Effects", meta = (ClampMin = "0.0"))
+	float DecalLifetime = 30.0f;
+
+	/** Whether a muzzle flash also spawns the dynamic light Source's ProcessMuzzleFlashEvent creates. */
+	UPROPERTY(config, EditAnywhere, Category = "Effects")
+	bool bMuzzleFlashLight = true;
+
+	/** Brightness of that muzzle flash light, in candelas. */
+	UPROPERTY(config, EditAnywhere, Category = "Effects", meta = (ClampMin = "0.0"))
+	float MuzzleFlashLightIntensity = 4000.0f;
+
 	// ---- Lighting ----
 
 	/** Multiplier from Source light brightness (the 4th component of _light, typically ~200) to UE candelas. */
@@ -96,14 +118,14 @@ public:
 	// ---- View model ----
 
 	/**
-	 * Where the first-person weapon model sits relative to the camera, in centimetres (forward, right, up).
-	 * Source positions the view model through its idle animation; until sequence decoding exists we place the
-	 * model's reference pose here instead, so this is a presentation setting rather than a ported value.
+	 * Offset of the first-person weapon model from the camera, in centimetres (forward, right, up). The model's
+	 * own animation already places the hands and weapon relative to the eye, exactly as in Source, so this is a
+	 * nudge on top of that - the equivalent of Source's viewmodel_offset_x/y/z - and zero is the faithful value.
 	 */
 	UPROPERTY(config, EditAnywhere, Category = "View Model")
-	FVector ViewModelOffset = FVector(38.0, 12.0, -14.0);
+	FVector ViewModelOffset = FVector::ZeroVector;
 
-	/** Extra yaw/pitch/roll applied to the view model, for models whose reference pose is not facing forward. */
+	/** Extra yaw/pitch/roll applied to the view model. Zero is the faithful value; see ViewModelOffset. */
 	UPROPERTY(config, EditAnywhere, Category = "View Model")
 	FRotator ViewModelRotation = FRotator(0.0f, 0.0f, 0.0f);
 

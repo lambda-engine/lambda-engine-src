@@ -24,7 +24,11 @@
 #include "SourceGeometryBuilder.h"
 #include "LambdaMaterialLibrary.h"
 #include "LambdaSourceSettings.h"
+#include "SourceBSPWorldActor.h"
+#include "Kismet/GameplayStatics.h"
+#include "SourceStudioModelComponent.h"
 #include "ProceduralMeshComponent.h"
+#include "Components/PointLightComponent.h"
 #include "Engine/World.h"
 
 ALambdaCharacter::ALambdaCharacter()
@@ -52,12 +56,25 @@ ALambdaCharacter::ALambdaCharacter()
 	FirstPersonCamera->FieldOfView = 90.0f;
 
 	// Source draws the view model with its own narrower FOV (viewmodel_fov 54) so it does not distort at the edges.
-	ViewModelMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("ViewModel"));
+	ViewModelMesh = CreateDefaultSubobject<USourceStudioModelComponent>(TEXT("ViewModel"));
 	ViewModelMesh->SetupAttachment(FirstPersonCamera);
-	ViewModelMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	ViewModelMesh->SetCastShadow(false);
-	ViewModelMesh->bUseComplexAsSimpleCollision = false;
 	ViewModelMesh->SetMobility(EComponentMobility::Movable);
+
+	MuzzleFlashMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("MuzzleFlash"));
+	MuzzleFlashMesh->SetupAttachment(FirstPersonCamera);
+	MuzzleFlashMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	MuzzleFlashMesh->SetCastShadow(false);
+	MuzzleFlashMesh->SetMobility(EComponentMobility::Movable);
+	MuzzleFlashMesh->SetVisibility(false);
+
+	MuzzleFlashLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("MuzzleFlashLight"));
+	MuzzleFlashLight->SetupAttachment(FirstPersonCamera);
+	MuzzleFlashLight->SetMobility(EComponentMobility::Movable);
+	MuzzleFlashLight->SetVisibility(false);
+	MuzzleFlashLight->SetCastShadows(false);
+	// el->color in ProcessMuzzleFlashEvent: a warm orange flash.
+	MuzzleFlashLight->SetLightColor(FLinearColor(FColor(255, 192, 64)));
+	MuzzleFlashLight->SetIntensityUnits(ELightUnits::Candelas);
 
 	// No visible body for the POC.
 	if (USkeletalMeshComponent* MeshComp = GetMesh())
@@ -348,6 +365,8 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 	{
 		ActiveWeapon->ItemPostFrame();
 	}
+
+	UpdateMuzzleFlash();
 }
 
 ALambdaWeapon* ALambdaCharacter::GiveWeapon(const FString& WeaponClassName)
@@ -399,17 +418,8 @@ bool ALambdaCharacter::SetViewModel(const FString& ModelPath)
 	}
 	if (ModelPath.IsEmpty())
 	{
-		ViewModelMesh->ClearAllMeshSections();
+		ViewModelMesh->ClearModel();
 		return true;
-	}
-
-	const float Scale = ULambdaSourceSettings::Get().UnitScale;
-	FSourceMDLFile Model;
-	FString Error;
-	if (!Model.Load(ModelPath, Scale, &Error))
-	{
-		UE_LOG(LogLambda, Warning, TEXT("View model '%s': %s"), *ModelPath, *Error);
-		return false;
 	}
 
 	if (!ViewModelMaterials)
@@ -417,32 +427,35 @@ bool ALambdaCharacter::SetViewModel(const FString& ModelPath)
 		ViewModelMaterials = NewObject<ULambdaMaterialLibrary>(this);
 		ViewModelMaterials->Initialize();
 	}
-	SourceGeometry::ApplyToComponent(ViewModelMesh, Model.Sections, ViewModelMaterials);
-
-	// A view model's in-game position comes from its idle animation, which needs sequence decoding we do not have
-	// yet - the .vvd holds only the reference pose, which for v_pistol sits about a metre above the eye. Until then,
-	// centre the model on a configurable camera-relative offset so it reads as a held weapon.
-	FBox Bounds(ForceInit);
-	for (const FSourceMeshSection& Section : Model.Sections)
+	if (!ViewModelMesh->SetModel(ModelPath, ViewModelMaterials))
 	{
-		for (const FVector& V : Section.Vertices)
-		{
-			Bounds += V;
-		}
+		return false;
 	}
 
+	// Source draws the view model as an entity standing at the player's eye with the player's view angles; the
+	// model's own animation places the hands and weapon relative to that. So the component sits on the camera with
+	// no offset of its own, and the settings below are only the equivalent of viewmodel_offset_x/y/z.
 	const ULambdaSourceSettings& Settings = ULambdaSourceSettings::Get();
-	const FVector Centre = Bounds.IsValid ? Bounds.GetCenter() : FVector::ZeroVector;
 	ViewModelMesh->SetRelativeScale3D(FVector(Settings.ViewModelScale));
 	ViewModelMesh->SetRelativeRotation(Settings.ViewModelRotation);
-	// The component rotates about its own origin, not about the mesh, so the centre-cancelling offset has to be
-	// rotated too - otherwise any non-zero ViewModelRotation swings the model away from the camera.
-	const FVector ScaledCentre = Settings.ViewModelRotation.RotateVector(Centre * Settings.ViewModelScale);
-	ViewModelMesh->SetRelativeLocation(Settings.ViewModelOffset - ScaledCentre);
+	ViewModelMesh->SetRelativeLocation(Settings.ViewModelOffset);
 
-	UE_LOG(LogLambda, Log, TEXT("View model '%s': %d tris, bounds %s, placed at %s"),
-		*ModelPath, Model.GetNumTriangles(), *Bounds.GetSize().ToString(), *ViewModelMesh->GetRelativeLocation().ToString());
+	// ACT_VM_DRAW is what Source plays when a weapon is deployed; it settles into the idle pose at its end.
+	if (!SendViewModelAnim(TEXT("ACT_VM_DRAW")))
+	{
+		SendViewModelAnim(TEXT("ACT_VM_IDLE"));
+	}
+
+	const FSourceMDLFile* Model = ViewModelMesh->GetModel();
+	UE_LOG(LogLambda, Log, TEXT("View model '%s': %d tris, %d bones, %d sequences, sequence %d (%.2fs)"),
+		*ModelPath, Model ? Model->GetNumTriangles() : 0, Model ? Model->GetNumBones() : 0,
+		Model ? Model->GetSequences().Num() : 0, ViewModelMesh->GetSequence(), ViewModelMesh->GetSequenceDuration());
 	return true;
+}
+
+bool ALambdaCharacter::SendViewModelAnim(const FString& ActivityName)
+{
+	return ViewModelMesh && ViewModelMesh->PlayActivity(ActivityName);
 }
 
 int32 ALambdaCharacter::GetAmmoCount(const FString& AmmoType) const
@@ -526,4 +539,147 @@ void ALambdaCharacter::Input_ReloadStop()
 void ALambdaCharacter::Input_Quit()
 {
 	UKismetSystemLibrary::QuitGame(this, Cast<APlayerController>(GetController()), EQuitPreference::Quit, false);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Muzzle flash - FX_MuzzleEffect (game/client/fx.cpp) and C_BaseAnimating::ProcessMuzzleFlashEvent
+// ---------------------------------------------------------------------------------------------------------------------
+
+void ALambdaCharacter::DoMuzzleFlash()
+{
+	if (!MuzzleFlashMesh || !ViewModelMesh || !ViewModelMesh->HasModel())
+	{
+		return;
+	}
+
+	// Source hangs the effect off the view model's "muzzle" attachment, which its animation moves with the gun.
+	FVector MuzzleWorld, MuzzleForward;
+	if (!ViewModelMesh->GetAttachmentWorld(TEXT("muzzle"), MuzzleWorld, MuzzleForward))
+	{
+		return;
+	}
+
+	const ULambdaSourceSettings& Settings = ULambdaSourceSettings::Get();
+	const float Scale = Settings.UnitScale;
+	UWorld* World = GetWorld();
+	const float Now = World ? World->GetTimeSeconds() : 0.0f;
+
+	if (!ViewModelMaterials)
+	{
+		ViewModelMaterials = NewObject<ULambdaMaterialLibrary>(this);
+		ViewModelMaterials->Initialize();
+	}
+
+	// FX_MuzzleEffect picks one of effects/muzzleflash1..4 per particle; one material for the whole burst is
+	// close enough here and keeps this to a single mesh section.
+	const FString SpriteName = FString::Printf(TEXT("effects/muzzleflash%d"), FMath::RandRange(1, 4));
+	UMaterialInterface* SpriteMaterial = ViewModelMaterials->GetSpriteMaterial(SpriteName);
+	if (!SpriteMaterial)
+	{
+		return;
+	}
+
+	// The quads are built in the muzzle flash component's space, which is the camera's, so "facing the camera"
+	// is simply "perpendicular to the component's forward axis".
+	const FTransform ToLocal = MuzzleFlashMesh->GetComponentTransform().Inverse();
+	const FVector LocalMuzzle = ToLocal.TransformPosition(MuzzleWorld);
+	const FVector LocalForward = ToLocal.TransformVectorNoScale(MuzzleForward).GetSafeNormal();
+
+	TArray<FVector> Vertices;
+	TArray<int32> Triangles;
+	TArray<FVector> Normals;
+	TArray<FVector2D> UVs;
+	TArray<FLinearColor> Colors;
+	TArray<FProcMeshTangent> Tangents;
+
+	const float FlashScale = FMath::FRandRange(0.75f, 1.25f);
+
+	// FX_MuzzleEffect lays 8 sprites along the muzzle direction, shrinking with distance.
+	for (int32 i = 1; i < 9; ++i)
+	{
+		const FVector Centre = LocalMuzzle + LocalForward * (i * 2.0f * FlashScale * Scale);
+		const float SizeUnits = (FMath::FRandRange(6.0f, 9.0f) * (12 - i) / 9.0f) * FlashScale;
+		const float Half = SizeUnits * Scale * 0.5f;
+
+		// Camera-facing quad with a random roll, as Source gives each particle.
+		const float Roll = FMath::FRandRange(0.0f, 2.0f * PI);
+		const FVector Right = FVector(0.0, FMath::Cos(Roll), FMath::Sin(Roll)) * Half;
+		const FVector Up = FVector(0.0, -FMath::Sin(Roll), FMath::Cos(Roll)) * Half;
+
+		const int32 Base = Vertices.Num();
+		Vertices.Add(Centre - Right - Up);
+		Vertices.Add(Centre + Right - Up);
+		Vertices.Add(Centre + Right + Up);
+		Vertices.Add(Centre - Right + Up);
+		UVs.Add(FVector2D(0, 1)); UVs.Add(FVector2D(1, 1)); UVs.Add(FVector2D(1, 0)); UVs.Add(FVector2D(0, 0));
+		for (int32 v = 0; v < 4; ++v)
+		{
+			Normals.Add(FVector(-1, 0, 0));
+			Colors.Add(FLinearColor::White);
+			Tangents.Add(FProcMeshTangent(0, 1, 0));
+		}
+		Triangles.Append({ Base, Base + 1, Base + 2, Base, Base + 2, Base + 3 });
+	}
+
+	MuzzleFlashMesh->ClearAllMeshSections();
+	MuzzleFlashMesh->CreateMeshSection_LinearColor(0, Vertices, Triangles, Normals, UVs, Colors, Tangents, /*bCreateCollision=*/ false);
+	MuzzleFlashMesh->SetMaterial(0, SpriteMaterial);
+	MuzzleFlashMesh->SetVisibility(true);
+	MuzzleFlashSpriteDieTime = Now + 0.1f;		// pParticle->m_flDieTime
+
+	// ProcessMuzzleFlashEvent's elight: a short warm flash lighting whatever the gun is pointed at.
+	if (MuzzleFlashLight && Settings.bMuzzleFlashLight)
+	{
+		MuzzleFlashLightRadius = FMath::RandRange(32, 64) * Scale;
+		MuzzleFlashLight->SetWorldLocation(MuzzleWorld);
+		MuzzleFlashLight->SetAttenuationRadius(MuzzleFlashLightRadius);
+		MuzzleFlashLight->SetIntensity(Settings.MuzzleFlashLightIntensity);
+		MuzzleFlashLight->SetVisibility(true);
+		MuzzleFlashLightDieTime = Now + 0.05f;	// el->die
+	}
+}
+
+void ALambdaCharacter::UpdateMuzzleFlash()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+	const float Now = World->GetTimeSeconds();
+
+	if (MuzzleFlashMesh && MuzzleFlashMesh->IsVisible() && Now >= MuzzleFlashSpriteDieTime)
+	{
+		MuzzleFlashMesh->SetVisibility(false);
+	}
+
+	if (MuzzleFlashLight && MuzzleFlashLight->IsVisible())
+	{
+		if (Now >= MuzzleFlashLightDieTime)
+		{
+			MuzzleFlashLight->SetVisibility(false);
+		}
+		else
+		{
+			// el->decay = radius / 0.05: the light shrinks away over its lifetime rather than popping off.
+			const float Remaining = FMath::Max(0.0f, MuzzleFlashLightDieTime - Now) / 0.05f;
+			MuzzleFlashLight->SetAttenuationRadius(FMath::Max(1.0f, MuzzleFlashLightRadius * Remaining));
+		}
+	}
+}
+
+ULambdaMaterialLibrary* ALambdaCharacter::GetWorldMaterialLibrary() const
+{
+	if (WorldMaterialLibrary)
+	{
+		return WorldMaterialLibrary;
+	}
+	if (UWorld* World = GetWorld())
+	{
+		if (ASourceBSPWorldActor* BSPWorld = Cast<ASourceBSPWorldActor>(UGameplayStatics::GetActorOfClass(World, ASourceBSPWorldActor::StaticClass())))
+		{
+			WorldMaterialLibrary = BSPWorld->MaterialLibrary;
+		}
+	}
+	return WorldMaterialLibrary;
 }

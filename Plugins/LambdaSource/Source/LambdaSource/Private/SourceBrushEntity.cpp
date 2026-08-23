@@ -11,7 +11,7 @@ ASourceBrushEntity::ASourceBrushEntity()
 {
 	PrimaryActorTick.bCanEverTick = false;
 
-	BrushMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("BrushMesh"));
+	BrushMesh = CreateDefaultSubobject<USourceBrushMeshComponent>(TEXT("BrushMesh"));
 	RootComponent = BrushMesh;
 	// Brush entities move (doors, platforms), so they cannot be Static.
 	BrushMesh->SetMobility(EComponentMobility::Movable);

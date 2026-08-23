@@ -2,9 +2,29 @@
 
 #include "CoreMinimal.h"
 #include "ProceduralMeshComponent.h"
+#include "SourceGeometryBuilder.generated.h"
 
 class FSourceBSPFile;
 class ULambdaMaterialLibrary;
+
+/**
+ * A procedural mesh that remembers the Source material name behind each of its sections, so a trace hit can be
+ * resolved back to a VMT and from there to a $surfaceprop. Source gets this from the BSP's texinfo/texdata at the
+ * point of impact; we group faces by material when building, so the section index carries the same information.
+ */
+UCLASS(ClassGroup = (Lambda))
+class LAMBDASOURCE_API USourceBrushMeshComponent : public UProceduralMeshComponent
+{
+	GENERATED_BODY()
+
+public:
+	/** Source material name per section index, parallel to the procedural mesh's sections. */
+	UPROPERTY(Transient)
+	TArray<FString> SectionMaterialNames;
+
+	/** Resolves a trace's FaceIndex (requires bReturnFaceIndex) to the Source material name it belongs to. */
+	FString GetMaterialNameForFaceIndex(int32 FaceIndex) const;
+};
 
 /** One material's worth of triangles from a BSP model, ready to hand to a UProceduralMeshComponent. */
 struct LAMBDASOURCE_API FSourceMeshSection

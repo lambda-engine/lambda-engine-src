@@ -4,6 +4,7 @@
 #include "LambdaSourceSettings.h"
 #include "SourceKeyValues.h"
 #include "SourceVTFFile.h"
+#include "SourceDecalScript.h"
 #include "Engine/Texture2D.h"
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -59,6 +60,14 @@ void ULambdaMaterialLibrary::Initialize()
 	if (Settings.FallbackMaterial.IsValid())
 	{
 		FallbackMaterial = Cast<UMaterialInterface>(Settings.FallbackMaterial.TryLoad());
+	}
+	if (Settings.DecalMaterial.IsValid())
+	{
+		DecalMasterMaterial = Cast<UMaterialInterface>(Settings.DecalMaterial.TryLoad());
+	}
+	if (Settings.SpriteMaterial.IsValid())
+	{
+		SpriteMasterMaterial = Cast<UMaterialInterface>(Settings.SpriteMaterial.TryLoad());
 	}
 	if (!FallbackMaterial)
 	{
@@ -165,6 +174,7 @@ bool ULambdaMaterialLibrary::LoadMaterialInfo(const FString& SourceMaterialName,
 	OutInfo.bAlphaTest = Root.GetBool(TEXT("$alphatest"));
 	OutInfo.bNoCull = Root.GetBool(TEXT("$nocull"));
 	OutInfo.bSelfIllum = Root.GetBool(TEXT("$selfillum"));
+	OutInfo.SurfaceProp = Root.GetString(TEXT("$surfaceprop"));
 	return true;
 }
 
@@ -462,4 +472,170 @@ UTexture2D* ULambdaMaterialLibrary::CreateTextureFromVTF(const FSourceVTFFile& V
 
 	Texture->UpdateResource();
 	return Texture;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Surface properties, decals and sprites
+// ---------------------------------------------------------------------------------------------------------------------
+
+FString ULambdaMaterialLibrary::GetSurfaceProp(const FString& SourceMaterialName)
+{
+	Initialize();
+	const FString Name = NormalizeMaterialName(SourceMaterialName);
+	if (const FString* Cached = SurfacePropCache.Find(Name))
+	{
+		return *Cached;
+	}
+
+	FSourceMaterialInfo Info;
+	FString SurfaceProp;
+	if (LoadMaterialInfo(Name, Info))
+	{
+		SurfaceProp = Info.SurfaceProp;
+	}
+	SurfacePropCache.Add(Name, SurfaceProp);
+	return SurfaceProp;
+}
+
+bool ULambdaMaterialLibrary::LoadDecalSubrect(const FString& NormalizedName, FSourceDecalSubrect& OutSubrect, FString& OutSheetTexture)
+{
+	// A "Subrect" VMT does not carry a texture: it names an atlas material plus the tile to cut from it.
+	TArray<uint8> Bytes;
+	if (!FLambdaFileSystem::Get().ReadFile(FString::Printf(TEXT("materials/%s.vmt"), *NormalizedName), Bytes))
+	{
+		return false;
+	}
+	FSourceKeyValues Root;
+	if (!FSourceKeyValues::ParseSingle(Bytes, Root))
+	{
+		return false;
+	}
+	if (!Root.Key.Equals(TEXT("Subrect"), ESearchCase::IgnoreCase))
+	{
+		return false;
+	}
+
+	auto ParseVec2 = [](const FString& Text, FVector2D Default) -> FVector2D
+	{
+		TArray<FString> Parts;
+		Text.ParseIntoArray(Parts, TEXT(" "), true);
+		return Parts.Num() >= 2 ? FVector2D(FCString::Atod(*Parts[0]), FCString::Atod(*Parts[1])) : Default;
+	};
+
+	OutSubrect.SheetMaterial = NormalizeMaterialName(Root.GetString(TEXT("$Material")));
+	OutSubrect.Pos = ParseVec2(Root.GetString(TEXT("$Pos")), FVector2D::ZeroVector);
+	OutSubrect.Size = ParseVec2(Root.GetString(TEXT("$Size")), FVector2D(64.0, 64.0));
+	OutSubrect.DecalScale = Root.GetFloat(TEXT("$decalscale"), 0.1f);
+
+	FSourceMaterialInfo SheetInfo;
+	if (!LoadMaterialInfo(OutSubrect.SheetMaterial, SheetInfo))
+	{
+		return false;
+	}
+	OutSheetTexture = SheetInfo.BaseTexture;
+	// DecalModulate is Source's mod2x blend; anything else (decals_lit) is an ordinary translucent decal.
+	OutSubrect.bModulate = SheetInfo.Shader.Equals(TEXT("DecalModulate"), ESearchCase::IgnoreCase);
+	return !OutSheetTexture.IsEmpty();
+}
+
+UMaterialInterface* ULambdaMaterialLibrary::GetDecalMaterial(const FString& SourceMaterialName, float& OutSizeUnits)
+{
+	Initialize();
+	const FString Name = NormalizeMaterialName(SourceMaterialName);
+	OutSizeUnits = 6.4f;	// 64 texels at the standard $decalscale 0.1
+
+	if (TObjectPtr<UMaterialInterface>* Found = DecalCache.Find(Name))
+	{
+		if (const float* Size = DecalSizeCache.Find(Name))
+		{
+			OutSizeUnits = *Size;
+		}
+		return Found->Get();
+	}
+
+	UMaterialInterface* Result = nullptr;
+	if (DecalMasterMaterial)
+	{
+		FSourceDecalSubrect Subrect;
+		FString SheetTexture;
+		FString TextureName;
+		FVector4 UVRect(0.0, 0.0, 1.0, 1.0);	// (offsetU, offsetV, scaleU, scaleV)
+
+		if (LoadDecalSubrect(Name, Subrect, SheetTexture))
+		{
+			TextureName = SheetTexture;
+			OutSizeUnits = FMath::Max(Subrect.Size.X, Subrect.Size.Y) * Subrect.DecalScale;
+		}
+		else
+		{
+			// Not a subrect: an ordinary decal material with its own texture.
+			FSourceMaterialInfo Info;
+			if (LoadMaterialInfo(Name, Info))
+			{
+				TextureName = Info.BaseTexture;
+			}
+		}
+
+		if (UTexture2D* Texture = TextureName.IsEmpty() ? nullptr : GetTexture(TextureName))
+		{
+			if (Subrect.Size.X > 0.0 && Texture->GetSizeX() > 0 && Texture->GetSizeY() > 0 && !SheetTexture.IsEmpty())
+			{
+				const double SheetW = Texture->GetSizeX();
+				const double SheetH = Texture->GetSizeY();
+				UVRect = FVector4(Subrect.Pos.X / SheetW, Subrect.Pos.Y / SheetH,
+					Subrect.Size.X / SheetW, Subrect.Size.Y / SheetH);
+			}
+
+			UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(DecalMasterMaterial, this,
+				*FString::Printf(TEXT("Decal_%s"), *Name.Replace(TEXT("/"), TEXT("_"))));
+			if (MID)
+			{
+				MID->SetTextureParameterValue(ULambdaSourceSettings::Get().BaseTextureParameterName, Texture);
+				MID->SetVectorParameterValue(TEXT("UVRect"), FLinearColor(UVRect.X, UVRect.Y, UVRect.Z, UVRect.W));
+				// DecalModulate atlases carry their shape as brightness; translucent ones carry it in alpha.
+				MID->SetScalarParameterValue(TEXT("Modulate"), Subrect.bModulate ? 1.0f : 0.0f);
+				Result = MID;
+			}
+		}
+	}
+
+	if (!Result)
+	{
+		UE_LOG(LogLambdaSource, Warning, TEXT("Decal material '%s' could not be built (run Tools/CreateAssets.bat if M_LambdaDecal is missing)"), *Name);
+	}
+	DecalCache.Add(Name, Result);
+	DecalSizeCache.Add(Name, OutSizeUnits);
+	return Result;
+}
+
+UMaterialInterface* ULambdaMaterialLibrary::GetSpriteMaterial(const FString& SourceMaterialName)
+{
+	Initialize();
+	const FString Name = NormalizeMaterialName(SourceMaterialName);
+	if (TObjectPtr<UMaterialInterface>* Found = SpriteCache.Find(Name))
+	{
+		return Found->Get();
+	}
+
+	UMaterialInterface* Result = nullptr;
+	if (SpriteMasterMaterial)
+	{
+		FSourceMaterialInfo Info;
+		if (LoadMaterialInfo(Name, Info))
+		{
+			if (UTexture2D* Texture = Info.BaseTexture.IsEmpty() ? nullptr : GetTexture(Info.BaseTexture))
+			{
+				UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(SpriteMasterMaterial, this,
+					*FString::Printf(TEXT("Sprite_%s"), *Name.Replace(TEXT("/"), TEXT("_"))));
+				if (MID)
+				{
+					MID->SetTextureParameterValue(ULambdaSourceSettings::Get().BaseTextureParameterName, Texture);
+					Result = MID;
+				}
+			}
+		}
+	}
+
+	SpriteCache.Add(Name, Result);
+	return Result;
 }

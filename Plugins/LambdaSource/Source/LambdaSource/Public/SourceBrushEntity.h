@@ -3,9 +3,9 @@
 #include "CoreMinimal.h"
 #include "SourceEntity.h"
 #include "SourceBSPFile.h"
+#include "SourceGeometryBuilder.h"
 #include "SourceBrushEntity.generated.h"
 
-class UProceduralMeshComponent;
 class ULambdaMaterialLibrary;
 class FSourceBSPFile;
 
@@ -34,7 +34,7 @@ public:
 	virtual bool IsUsable() const { return false; }
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Lambda")
-	TObjectPtr<UProceduralMeshComponent> BrushMesh;
+	TObjectPtr<USourceBrushMeshComponent> BrushMesh;
 
 	/** Entity origin in Source units (the pivot the mesh is built around). */
 	const FVector3f& GetSourceOrigin() const { return SourceOrigin; }

@@ -1,10 +1,12 @@
 #include "LambdaWeapon.h"
 #include "LambdaCharacter.h"
+#include "SourceStudioModelComponent.h"
 #include "LambdaEngine.h"
 #include "LambdaSoundLibrary.h"
 #include "LambdaSourceSettings.h"
 #include "SourceAmmoDef.h"
 #include "SourceCoordinates.h"
+#include "SourceImpactEffects.h"
 #include "Camera/CameraComponent.h"
 #include "Engine/HitResult.h"
 #include "Engine/DamageEvents.h"
@@ -90,6 +92,35 @@ void ALambdaWeapon::HandleFireOnEmpty()
 	NextPrimaryAttack = GetCurrentTime() + 0.5f;
 }
 
+bool ALambdaWeapon::SendWeaponAnim(const FString& ActivityName)
+{
+	// CBaseCombatWeapon::SendWeaponAnim -> SetIdealActivity: play the sequence, then set the time at which the
+	// weapon falls back to its idle animation.
+	ALambdaCharacter* WeaponOwner = OwningCharacter.Get();
+	if (!WeaponOwner || !WeaponOwner->SendViewModelAnim(ActivityName))
+	{
+		return false;
+	}
+	SetWeaponIdleTime(GetCurrentTime() + SequenceDuration());
+	return true;
+}
+
+float ALambdaWeapon::SequenceDuration() const
+{
+	const ALambdaCharacter* WeaponOwner = OwningCharacter.Get();
+	const USourceStudioModelComponent* ViewModel = WeaponOwner ? WeaponOwner->GetViewModelMesh() : nullptr;
+	return ViewModel ? ViewModel->GetSequenceDuration() : 0.0f;
+}
+
+void ALambdaWeapon::WeaponIdle()
+{
+	// CBaseCombatWeapon::WeaponIdle
+	if (HasWeaponIdleTimeElapsed())
+	{
+		SendWeaponAnim(TEXT("ACT_VM_IDLE"));
+	}
+}
+
 void ALambdaWeapon::ItemPostFrame()
 {
 	// CBaseCombatWeapon::ItemPostFrame
@@ -142,6 +173,12 @@ void ALambdaWeapon::ItemPostFrame()
 		Reload();
 	}
 
+	// No buttons down: let the weapon drift back to its idle animation.
+	if (!bAttackHeld && !bReloadHeld && !bInReload)
+	{
+		WeaponIdle();
+	}
+
 	bAttackPressedThisFrame = false;
 }
 
@@ -160,6 +197,9 @@ void ALambdaWeapon::PrimaryAttack()
 		Reload();
 		return;
 	}
+
+	SendWeaponAnim(GetPrimaryAttackActivity());
+	WeaponOwner->DoMuzzleFlash();
 
 	const float FireRate = GetFireRate();
 	const float Now = GetCurrentTime();
@@ -234,10 +274,15 @@ void ALambdaWeapon::FireBullet(float Damage, const FVector& Spread)
 
 	FHitResult Hit;
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(LambdaFireBullet), /*bTraceComplex=*/ true, WeaponOwner);
+	// The face index is what resolves the impact point back to a material, and from there to a $surfaceprop.
+	Params.bReturnFaceIndex = true;
 	if (World->LineTraceSingleByChannel(Hit, EyeLocation, End, ECC_Visibility, Params))
 	{
 		UE_LOG(LogLambda, Verbose, TEXT("bullet hit %s at %s (damage %g)"),
 			*GetNameSafe(Hit.GetActor()), *Hit.ImpactPoint.ToString(), Damage);
+
+		// UTIL_ImpactTrace: the decal and impact sound come from the surface that was struck.
+		SourceImpact::PlayImpact(Hit, WeaponOwner->GetWorldMaterialLibrary(), this);
 
 		// Nothing in the map takes damage yet (no NPCs or breakables), so this is where TakeDamage would go.
 		if (AActor* HitActor = Hit.GetActor())
@@ -264,9 +309,13 @@ bool ALambdaWeapon::Reload()
 		return false;
 	}
 
+	// CBaseCombatWeapon::DefaultReload: the reload takes exactly as long as its view-model animation.
 	WeaponSound(ESourceWeaponSound::Reload);
+	SendWeaponAnim(TEXT("ACT_VM_RELOAD"));
 	bInReload = true;
-	ReloadFinishTime = GetCurrentTime() + GetReloadTime();
+
+	const float Duration = SequenceDuration();
+	ReloadFinishTime = GetCurrentTime() + (Duration > 0.0f ? Duration : 1.5f);
 	NextPrimaryAttack = ReloadFinishTime;
 	return true;
 }
@@ -317,6 +366,7 @@ void ALambdaWeaponPistol::DryFire()
 {
 	// CWeaponPistol::DryFire
 	WeaponSound(ESourceWeaponSound::Empty);
+	SendWeaponAnim(TEXT("ACT_VM_DRYFIRE"));
 	SoonestPrimaryAttack = GetCurrentTime() + PISTOL_FASTEST_DRY_REFIRE_TIME;
 	NextPrimaryAttack = GetCurrentTime() + PISTOL_FASTEST_DRY_REFIRE_TIME;
 }

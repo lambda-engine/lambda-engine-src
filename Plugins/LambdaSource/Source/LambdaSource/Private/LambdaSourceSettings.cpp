@@ -7,5 +7,7 @@ ULambdaSourceSettings::ULambdaSourceSettings()
 
 	GameDirectories.Add(TEXT("../game/Game/lambda"));
 	MasterMaterial = FSoftObjectPath(TEXT("/LambdaSource/Materials/M_LambdaBase.M_LambdaBase"));
+	DecalMaterial = FSoftObjectPath(TEXT("/LambdaSource/Materials/M_LambdaDecal.M_LambdaDecal"));
+	SpriteMaterial = FSoftObjectPath(TEXT("/LambdaSource/Materials/M_LambdaSprite.M_LambdaSprite"));
 	FallbackMaterial = FSoftObjectPath(TEXT("/Engine/EngineMaterials/WorldGridMaterial.WorldGridMaterial"));
 }

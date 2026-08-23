@@ -5,6 +5,7 @@
 #include "ProceduralMeshComponent.h"
 #include "SourceBSPFile.h"
 #include "SourceEntityIO.h"
+#include "SourceGeometryBuilder.h"
 #include "SourceBSPWorldActor.generated.h"
 
 class ULambdaMaterialLibrary;
@@ -82,7 +83,7 @@ public:
 	virtual void Tick(float DeltaSeconds) override;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Lambda")
-	TObjectPtr<UProceduralMeshComponent> WorldMesh;
+	TObjectPtr<USourceBrushMeshComponent> WorldMesh;
 
 	UPROPERTY(Transient)
 	TObjectPtr<ULambdaMaterialLibrary> MaterialLibrary;

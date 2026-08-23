@@ -11,6 +11,8 @@
 #include "SourceBSPWorldActor.h"
 #include "EngineUtils.h"
 #include "LambdaCharacter.h"
+#include "SourceDecalScript.h"
+#include "SourceSurfaceProps.h"
 
 DEFINE_LOG_CATEGORY(LogLambda);
 
@@ -208,3 +210,40 @@ static FAutoConsoleCommandWithWorldAndArgs GLambdaViewModelCommand(
 	TEXT("lambda.viewmodel"),
 	TEXT("Load a Source .mdl as the first-person view model"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaViewModelCommand));
+
+// lambda.surfaceinfo [surfaceprop ...] - show how each surface resolves to a game material and impact decal,
+// the chain GetImpactDecal walks (VMT $surfaceprop -> surfaceproperties gamematerial -> decals_subrect group).
+static void LambdaSurfaceInfoCommand(const TArray<FString>& Args, UWorld* World)
+{
+	FSourceSurfaceProps& Props = FSourceSurfaceProps::Get();
+	FSourceDecalScript& Decals = FSourceDecalScript::Get();
+	Props.Initialize();
+	Decals.Initialize();
+
+	TArray<FString> Names = Args;
+	if (Names.Num() == 0)
+	{
+		Names = { TEXT("concrete"), TEXT("metal"), TEXT("wood"), TEXT("glass"), TEXT("dirt"), TEXT("sand"),
+			TEXT("flesh"), TEXT("tile"), TEXT("plastic"), TEXT("water") };
+	}
+
+	UE_LOG(LogLambda, Display, TEXT("%-14s %-4s %-22s %-34s %s"), TEXT("surfaceprop"), TEXT("mat"), TEXT("decal group"), TEXT("decal material"), TEXT("bullet impact sound"));
+	for (const FString& Name : Names)
+	{
+		const FSourceSurfaceProp* Prop = Props.Find(Name);
+		const TCHAR GameMaterial = Props.GetGameMaterial(Name);
+		const FString Group = Decals.TranslateDecalForGameMaterial(TEXT("Impact.Concrete"), GameMaterial);
+		const FString Picked = Decals.GetImpactDecalMaterial(GameMaterial);
+		UE_LOG(LogLambda, Display, TEXT("%-14s %-4c %-22s %-34s %s"),
+			*Name, GameMaterial,
+			Group.IsEmpty() ? TEXT("(none)") : *Group,
+			Picked.IsEmpty() ? TEXT("(none)") : *Picked,
+			Prop ? *Prop->BulletImpactSound : TEXT("(unknown surfaceprop)"));
+	}
+}
+
+static FAutoConsoleCommandWithWorldAndArgs GLambdaSurfaceInfoCommand(
+	TEXT("lambda.surfaceinfo"),
+	TEXT("Show the surfaceprop -> game material -> impact decal chain for one or more surfaces"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaSurfaceInfoCommand));
+
