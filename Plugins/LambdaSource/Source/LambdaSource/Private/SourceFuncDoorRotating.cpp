@@ -310,7 +310,26 @@ void ASourceFuncDoorRotating::SetToggleState(ESourceToggleState State)
 
 void ASourceFuncDoorRotating::PlayLockSounds(bool bLockedSound)
 {
+	// PlayLockSounds(): silent doors never play these, and consecutive plays are debounced by DOOR_SOUNDWAIT (1s)
+	// via locksound_t::flwaitSound - touch fires every frame while the player overlaps, so without this the locked
+	// sound would stack up once per tick.
+	if (HasSpawnFlags(SF_DOOR_SILENT))
+	{
+		return;
+	}
+	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	if (Now <= LockSoundWaitTime)
+	{
+		return;
+	}
 	const FString& SoundName = bLockedSound ? LockedSound : UnlockedSound;
+	if (SoundName.IsEmpty() || SoundName == TEXT("0"))
+	{
+		return;
+	}
+	constexpr float DOOR_SOUNDWAIT = 1.0f;
+	LockSoundWaitTime = Now + DOOR_SOUNDWAIT;
+	UE_LOG(LogLambdaSource, Verbose, TEXT("func_door_rotating '%s': %s sound '%s' at t=%.2f"), *TargetName, bLockedSound ? TEXT("locked") : TEXT("unlocked"), *SoundName, Now);
 	float Volume = 1.0f, Pitch = 1.0f;
 	if (ULambdaSoundWave* Wave = FLambdaSoundCache::Get().CreateWaveResolved(this, SoundName, false, Volume, Pitch))
 	{

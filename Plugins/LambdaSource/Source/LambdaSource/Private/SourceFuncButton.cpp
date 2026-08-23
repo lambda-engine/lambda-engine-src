@@ -473,8 +473,19 @@ void ASourceFuncButton::PlayButtonSound()
 
 void ASourceFuncButton::PlayLockSounds(bool bLockedSound)
 {
-	// PlayLockSounds( this, &m_ls, flocked, fbutton ) - the map may give a direct wav name.
+	// PlayLockSounds( this, &m_ls, flocked, fbutton=TRUE ) - debounced by BUTTON_SOUNDWAIT (0.5s) via flwaitSound.
+	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	if (Now <= LockSoundWaitTime)
+	{
+		return;
+	}
 	const FString& SoundName = bLockedSound ? LockedSound : UnlockedSound;
+	if (SoundName.IsEmpty() || SoundName == TEXT("0"))
+	{
+		return;
+	}
+	constexpr float BUTTON_SOUNDWAIT = 0.5f;
+	LockSoundWaitTime = Now + BUTTON_SOUNDWAIT;
 	float Volume = 1.0f, Pitch = 1.0f;
 	if (ULambdaSoundWave* Wave = FLambdaSoundCache::Get().CreateWaveResolved(this, SoundName, false, Volume, Pitch))
 	{

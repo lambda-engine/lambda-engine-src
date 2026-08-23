@@ -146,6 +146,7 @@ protected:
 	// paths like "doors/door_locked2.wav" are used as-is).
 	FString LockedSound;			// locked_sound
 	FString UnlockedSound;			// unlocked_sound
+	float LockSoundWaitTime = 0.0f;	// locksound_t::flwaitSound - next time a lock/unlock sound may play
 
 	float BlockDamage = 0.0f;		// m_flBlockDamage ("dmg")
 	bool bForceClosed = false;		// m_bForceClosed ("forceclosed")

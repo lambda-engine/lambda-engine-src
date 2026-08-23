@@ -88,6 +88,7 @@ protected:
 	FString NoiseButton;			// m_sNoise, resolved from "sounds"
 	FString LockedSound;			// locked_sound
 	FString UnlockedSound;			// unlocked_sound
+	float LockSoundWaitTime = 0.0f;	// locksound_t::flwaitSound
 
 	float MoveDoneTime = -1.0f;
 	enum class EPendingMove : uint8 { None, TriggerAndWait, BackHome, Return };

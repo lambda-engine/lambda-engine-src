@@ -8,6 +8,8 @@
 #include "SourceCoordinates.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
+#include "SourceBSPWorldActor.h"
+#include "EngineUtils.h"
 
 DEFINE_LOG_CATEGORY(LogLambda);
 
@@ -112,3 +114,27 @@ static FAutoConsoleCommandWithWorldAndArgs GLambdaSetAngCommand(
 	TEXT("lambda.setang"),
 	TEXT("Set the player's view angles in Source (pitch yaw roll) degrees"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaSetAngCommand));
+
+// Source's ent_fire: lambda.ent_fire <targetname> <input> [parameter]
+static void LambdaEntFireCommand(const TArray<FString>& Args, UWorld* World)
+{
+	if (!World || Args.Num() < 2)
+	{
+		UE_LOG(LogLambda, Display, TEXT("Usage: lambda.ent_fire <targetname> <input> [parameter]"));
+		return;
+	}
+	for (TActorIterator<ASourceBSPWorldActor> It(World); It; ++It)
+	{
+		APlayerController* PC = World->GetFirstPlayerController();
+		APawn* Pawn = PC ? PC->GetPawn() : nullptr;
+		It->QueueEntityEvent(Args[0], Args[1], Args.Num() > 2 ? Args[2] : FString(), Pawn, Pawn, 0.0f);
+		UE_LOG(LogLambda, Display, TEXT("ent_fire %s %s %s"), *Args[0], *Args[1], Args.Num() > 2 ? *Args[2] : TEXT(""));
+		return;
+	}
+	UE_LOG(LogLambda, Display, TEXT("ent_fire: no BSP world loaded"));
+}
+
+static FAutoConsoleCommandWithWorldAndArgs GLambdaEntFireCommand(
+	TEXT("lambda.ent_fire"),
+	TEXT("Fire an input on an entity by targetname: lambda.ent_fire <targetname> <input> [parameter]"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaEntFireCommand));
