@@ -42,8 +42,12 @@ public:
 	/** Returns a (cached) UE material for a Source material name ("dev/dev_measuregeneric01", "DEV/DEV_X", "materials/dev/x.vmt"...). Never null after Initialize. */
 	UMaterialInterface* GetMaterial(const FString& SourceMaterialName);
 
-	/** Returns a (cached) UE texture for a Source texture name ("dev/dev_measuregeneric01", "materials/dev/x.vtf"...). May be null. */
-	UTexture2D* GetTexture(const FString& SourceTextureName);
+	/**
+	 * Returns a (cached) UE texture for a Source texture name ("dev/dev_measuregeneric01", "materials/dev/x.vtf"...).
+	 * May be null. bSRGB is decided by the shader that will sample it, as in Source: lit and unlit base textures
+	 * are gamma-encoded colour, but DecalModulate reads its atlas raw because mod2x is a gamma-space blend.
+	 */
+	UTexture2D* GetTexture(const FString& SourceTextureName, bool bSRGB = true);
 
 	/** Parses a VMT (following "patch" includes). */
 	bool LoadMaterialInfo(const FString& SourceMaterialName, FSourceMaterialInfo& OutInfo, FString* OutError = nullptr, int32 Depth = 0);
@@ -71,13 +75,13 @@ public:
 	static FString NormalizeTextureName(const FString& InName);
 
 	/** Builds a transient UTexture2D (with mip chain) from a parsed VTF. Returns null and sets OutError on failure. */
-	static UTexture2D* CreateTextureFromVTF(const FSourceVTFFile& VTF, const FString& DebugName, FString* OutError = nullptr);
+	static UTexture2D* CreateTextureFromVTF(const FSourceVTFFile& VTF, const FString& DebugName, FString* OutError = nullptr, bool bSRGB = true);
 
 private:
 	UMaterialInterface* CreateMaterial(const FString& NormalizedName);
 	/** Reads a "Subrect" VMT and the atlas material it references. */
 	bool LoadDecalSubrect(const FString& NormalizedName, struct FSourceDecalSubrect& OutSubrect, FString& OutSheetTexture);
-	UTexture2D* CreateTexture(const FString& NormalizedName);
+	UTexture2D* CreateTexture(const FString& NormalizedName, bool bSRGB);
 	static void ApplyPatchBlock(const FSourceKeyValues* Block, FSourceKeyValues& Target, bool bInsertOnly);
 
 	UPROPERTY(Transient)

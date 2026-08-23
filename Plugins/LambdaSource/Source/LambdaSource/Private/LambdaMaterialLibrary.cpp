@@ -242,23 +242,25 @@ UMaterialInterface* ULambdaMaterialLibrary::CreateMaterial(const FString& Name)
 // Textures
 // ---------------------------------------------------------------------------------------------------------------------
 
-UTexture2D* ULambdaMaterialLibrary::GetTexture(const FString& SourceTextureName)
+UTexture2D* ULambdaMaterialLibrary::GetTexture(const FString& SourceTextureName, bool bSRGB)
 {
 	const FString Name = NormalizeTextureName(SourceTextureName);
 	if (Name.IsEmpty())
 	{
 		return nullptr;
 	}
-	if (TObjectPtr<UTexture2D>* Found = TextureCache.Find(Name))
+	// The same VTF can legitimately be wanted both ways, so the encoding is part of the cache key.
+	const FString Key = bSRGB ? Name : Name + TEXT("#raw");
+	if (TObjectPtr<UTexture2D>* Found = TextureCache.Find(Key))
 	{
 		return Found->Get();
 	}
-	UTexture2D* Texture = CreateTexture(Name);
-	TextureCache.Add(Name, Texture);
+	UTexture2D* Texture = CreateTexture(Name, bSRGB);
+	TextureCache.Add(Key, Texture);
 	return Texture;
 }
 
-UTexture2D* ULambdaMaterialLibrary::CreateTexture(const FString& Name)
+UTexture2D* ULambdaMaterialLibrary::CreateTexture(const FString& Name, bool bSRGB)
 {
 	const FString RelPath = FString::Printf(TEXT("materials/%s.vtf"), *Name);
 	TArray<uint8> Bytes;
@@ -276,7 +278,7 @@ UTexture2D* ULambdaMaterialLibrary::CreateTexture(const FString& Name)
 		return nullptr;
 	}
 
-	UTexture2D* Texture = CreateTextureFromVTF(VTF, Name, &Error);
+	UTexture2D* Texture = CreateTextureFromVTF(VTF, Name, &Error, bSRGB);
 	if (!Texture)
 	{
 		UE_LOG(LogLambdaSource, Warning, TEXT("Texture '%s': %s"), *Name, *Error);
@@ -349,7 +351,7 @@ namespace
 	}
 }
 
-UTexture2D* ULambdaMaterialLibrary::CreateTextureFromVTF(const FSourceVTFFile& VTF, const FString& DebugName, FString* OutError)
+UTexture2D* ULambdaMaterialLibrary::CreateTextureFromVTF(const FSourceVTFFile& VTF, const FString& DebugName, FString* OutError, bool bSRGB)
 {
 	auto Fail = [&](const FString& Msg)
 	{
@@ -416,7 +418,7 @@ UTexture2D* ULambdaMaterialLibrary::CreateTextureFromVTF(const FSourceVTFFile& V
 	}
 
 	const bool bIsNormalMap = (Flags & (FSourceVTFFile::FLAG_NORMAL | FSourceVTFFile::FLAG_SSBUMP)) != 0;
-	Texture->SRGB = !bIsNormalMap;
+	Texture->SRGB = bSRGB && !bIsNormalMap;
 	Texture->NeverStream = true;
 	Texture->Filter = (Flags & FSourceVTFFile::FLAG_POINTSAMPLE) ? TF_Nearest : TF_Default;
 	Texture->AddressX = (Flags & FSourceVTFFile::FLAG_CLAMPS) ? TA_Clamp : TA_Wrap;
@@ -543,6 +545,20 @@ bool ULambdaMaterialLibrary::LoadDecalSubrect(const FString& NormalizedName, FSo
 	return !OutSheetTexture.IsEmpty();
 }
 
+// Debug aids for the 3D decal: the height field drives both a parallax offset and a normal, and being able to
+// zero either at runtime is how a bad-looking decal is traced to one or the other.
+static float GDecalDepth = 1.0f;
+static FAutoConsoleVariableRef CVarDecalDepth(
+	TEXT("lambda.decal.depth"),
+	GDecalDepth,
+	TEXT("DecalDepth parameter on new impact decals (0 = flat Source-style decal)"));
+
+static float GDecalNormalStrength = 3.0f;
+static FAutoConsoleVariableRef CVarDecalNormalStrength(
+	TEXT("lambda.decal.normalstrength"),
+	GDecalNormalStrength,
+	TEXT("NormalStrength parameter on new impact decals (0 = no normal perturbation)"));
+
 UMaterialInterface* ULambdaMaterialLibrary::GetDecalMaterial(const FString& SourceMaterialName, float& OutSizeUnits)
 {
 	Initialize();
@@ -581,7 +597,11 @@ UMaterialInterface* ULambdaMaterialLibrary::GetDecalMaterial(const FString& Sour
 			}
 		}
 
-		if (UTexture2D* Texture = TextureName.IsEmpty() ? nullptr : GetTexture(TextureName))
+		// decalmodulate_dx9.cpp disables sRGB read and write - "keep everything in gamma space" - because mod2x
+		// is a gamma-space blend where raw 128 is neutral. Read as sRGB, that neutral grey decodes to 0.216 and
+		// the whole tile darkens the wall; the material converts the gamma factor to linear itself.
+		const bool bRawAtlas = !SheetTexture.IsEmpty() && Subrect.bModulate;
+		if (UTexture2D* Texture = TextureName.IsEmpty() ? nullptr : GetTexture(TextureName, !bRawAtlas))
 		{
 			if (Subrect.Size.X > 0.0 && Texture->GetSizeX() > 0 && Texture->GetSizeY() > 0 && !SheetTexture.IsEmpty())
 			{
@@ -599,6 +619,8 @@ UMaterialInterface* ULambdaMaterialLibrary::GetDecalMaterial(const FString& Sour
 				MID->SetVectorParameterValue(TEXT("UVRect"), FLinearColor(UVRect.X, UVRect.Y, UVRect.Z, UVRect.W));
 				// DecalModulate atlases carry their shape as brightness; translucent ones carry it in alpha.
 				MID->SetScalarParameterValue(TEXT("Modulate"), Subrect.bModulate ? 1.0f : 0.0f);
+				MID->SetScalarParameterValue(TEXT("DecalDepth"), GDecalDepth);
+				MID->SetScalarParameterValue(TEXT("NormalStrength"), GDecalNormalStrength);
 				Result = MID;
 			}
 		}
