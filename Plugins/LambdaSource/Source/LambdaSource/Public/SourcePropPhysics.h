@@ -48,6 +48,11 @@ public:
 	const FString& GetClassName_Lambda() const { return Entity.ClassName; }
 	/** The largest side of the prop's bounds, in Source units (CBasePlayer::CanPickupObject's size limit). */
 	float GetSizeUnits() const { return SizeUnits; }
+	/**
+	 * physcollision->CollideGetExtent: how far the prop reaches from its origin in a direction, as it is turned
+	 * now. The grab controller uses this to work out how much room the prop needs to clear the player.
+	 */
+	float GetExtentAlong(const FVector& Direction) const;
 	UPrimitiveComponent* GetPhysicsBody() const;
 
 private:
@@ -96,6 +101,8 @@ private:
 	FSourceEntity Entity;
 	FString SurfaceProp;
 	float SizeUnits = 0.0f;
+	/** The prop's collision box in its own space, for GetExtentAlong. */
+	FVector HullExtentLocal = FVector::ZeroVector;
 	/** What the prop really weighs, kept while it is carried at REDUCED_CARRY_MASS. */
 	float CarriedMassKg = 0.0f;
 	/** Damping the prop had before it was picked up (Source raises it while carried and restores it after). */

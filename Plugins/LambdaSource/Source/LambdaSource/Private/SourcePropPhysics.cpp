@@ -196,6 +196,10 @@ void ASourcePropPhysics::InitializeFromEntity(const FSourceEntity& InEntity, ULa
 	const FVector3f HullMax = Model->GetModel()->GetHullMax();
 	SizeUnits = FMath::Max3(HullMax.X - HullMin.X, HullMax.Y - HullMin.Y, HullMax.Z - HullMin.Z);
 
+	const FVector HullA = FSourceCoords::ToUE(HullMin, Scale);
+	const FVector HullB = FSourceCoords::ToUE(HullMax, Scale);
+	HullExtentLocal = (FVector::Max(HullA, HullB) - FVector::Min(HullA, HullB)) * 0.5f;
+
 	PlaceClearOfWorld(HullMin, HullMax, Scale);
 
 	const FBoxSphereBounds LocalBounds = Body->CalcLocalBounds();
@@ -244,6 +248,14 @@ void ASourcePropPhysics::PlaceClearOfWorld(const FVector3f& HullMin, const FVect
 			*Entity.ClassName, *Entity.Get(TEXT("model")), (Lifted.Z - GetActorLocation().Z) / Scale);
 		SetActorLocation(Lifted, false, nullptr, ETeleportType::TeleportPhysics);
 	}
+}
+
+float ASourcePropPhysics::GetExtentAlong(const FVector& Direction) const
+{
+	// The support point of a box in a direction: how far each of its own axes carries it that way.
+	const FVector Local = GetActorQuat().UnrotateVector(Direction);
+	return FMath::Abs(Local.X) * HullExtentLocal.X + FMath::Abs(Local.Y) * HullExtentLocal.Y
+		+ FMath::Abs(Local.Z) * HullExtentLocal.Z;
 }
 
 float ASourcePropPhysics::GetMass() const

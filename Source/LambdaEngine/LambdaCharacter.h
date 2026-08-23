@@ -40,6 +40,8 @@ public:
 	virtual void VelocityPunch(const FVector& VelocityImpulse) override;
 
 	virtual void Tick(float DeltaSeconds) override;
+	virtual void NotifyHit(UPrimitiveComponent* MyComp, AActor* Other, UPrimitiveComponent* OtherComp, bool bSelfMoved,
+		FVector HitLocation, FVector HitNormal, FVector NormalImpulse, const FHitResult& Hit) override;
 
 	// ---- Weapons and ammo (CBasePlayer / CBaseCombatCharacter) ----
 
@@ -107,6 +109,15 @@ protected:
 	void TogglePropCarry();
 	/** CGrabController::UpdateObject: keeps the carried prop in front of the player. */
 	void UpdatePropCarry(float DeltaSeconds);
+	/**
+	 * The player's physics shadow pushing what he walks into. Source gives that shadow a push mass limit of 350 kg
+	 * and a push speed limit of 50 units/s, so walking into a crate shifts it at walking pace and no faster.
+	 */
+	void PushPhysicsObject(const FHitResult& Hit);
+
+	/** The 2D diagonal of the player's own bounds, which a carried prop has to clear. */
+	float PlayerHullRadiusCm() const;
+
 	/** Shutdown(): lets go of the carried prop and puts the weapon back. */
 	void DropCarriedProp(bool bThrown);
 	/** Throws the carried prop (player_throwforce, scaled by its mass). Returns false when nothing is carried. */
@@ -156,11 +167,14 @@ protected:
 	/** The prop the player is carrying (CPlayerPickupController's grab controller), and how it is held. */
 	TWeakObjectPtr<class ASourcePropPhysics> CarriedProp;
 	FRotator CarriedPropRelativeRotation = FRotator::ZeroRotator;
-	/** How much room the carried prop needs to clear the player, in cm. */
-	float CarriedPropRadiusCm = 0.0f;
+
 	/** lambda.propcarry.auto state: seconds until the prop is grabbed, and until it is thrown. */
 	float AutoCarryGrabTimer = -1.0f;
 	float AutoCarryThrowTimer = -1.0f;
+	float AutoCarryLookPitch = 0.0f;
+	/** lambda.walk.auto state. */
+	float AutoWalkSeconds = 0.0f;
+	float AutoWalkDelay = 0.0f;
 	float DecalTestScreenshotTimer = 0.0f;
 	bool bAutoFireAimHead = false;
 	/** m_Local.m_vecPunchAngle / m_vecPunchAngleVel (pitch, yaw, roll degrees). */
