@@ -23,6 +23,13 @@ struct LAMBDASOURCE_API FSourceMatrix3x4
 	FVector3f GetForward() const { return FVector3f(M[0][0], M[1][0], M[2][0]); }
 	FVector3f GetLeft() const { return FVector3f(M[0][1], M[1][1], M[2][1]); }
 	FVector3f GetUp() const { return FVector3f(M[0][2], M[1][2], M[2][2]); }
+
+	/**
+	 * As a UE transform in the model's space (cm, UE axes): the y -> -y mirror applied on both sides, so
+	 * X = forward, Y = -left, Z = up. The inverse round-trips.
+	 */
+	FTransform ToUETransform(float Scale) const;
+	static FSourceMatrix3x4 FromUETransform(const FTransform& T, float Scale);
 };
 
 /** mstudiobone_t: the bind pose plus the compression scales the RLE animation data is expressed in. */
@@ -75,16 +82,48 @@ struct LAMBDASOURCE_API FSourceStudioEvent
 	FString Options;
 };
 
+/** mstudioautolayer_t: a sequence blended in over part of the parent's cycle (how studiomdl builds gestures). */
+struct LAMBDASOURCE_API FSourceStudioAutoLayer
+{
+	int32 Sequence = INDEX_NONE;
+	int32 Pose = INDEX_NONE;
+	int32 Flags = 0;		// STUDIO_AL_*
+	float Start = 0.0f;
+	float Peak = 0.0f;
+	float Tail = 0.0f;
+	float End = 0.0f;
+};
+
 /** mstudioseqdesc_t. Only the single-blend case is decoded; blends need pose parameters we do not drive. */
 struct LAMBDASOURCE_API FSourceStudioSequence
 {
 	FString Label;
 	FString ActivityName;	// e.g. "ACT_VM_PRIMARYATTACK"; empty when the sequence has no activity
-	int32 Flags = 0;
+	int32 Flags = 0;		// STUDIO_LOOPING, STUDIO_DELTA, STUDIO_POST, ...
 	int32 ActivityWeight = 0;
 	int32 NumBlends = 0;
 	int32 AnimDescIndex = INDEX_NONE;
 	TArray<FSourceStudioEvent> Events;
+	TArray<FSourceStudioAutoLayer> AutoLayers;
+	/** Per-bone blend weights (the $weightlist); empty means 1 everywhere. */
+	TArray<float> BoneWeights;
+};
+
+/** mstudiobbox_t: a hitbox - an oriented box on a bone with a hit group (HITGROUP_HEAD, _CHEST, ...). */
+struct LAMBDASOURCE_API FSourceStudioHitbox
+{
+	int32 Bone = INDEX_NONE;
+	int32 Group = 0;
+	FVector3f Min = FVector3f::ZeroVector;	// bone space, Source units
+	FVector3f Max = FVector3f::ZeroVector;
+	FString Name;
+};
+
+/** A pose as per-bone local rotations and positions (Source's q[] / pos[] arrays), before the hierarchy is applied. */
+struct LAMBDASOURCE_API FSourceLocalPose
+{
+	TArray<FQuat4f> Quat;
+	TArray<FVector3f> Pos;
 };
 
 /** mstudioattachment_t: a named frame parented to a bone ("muzzle", "shell_eject", ...). */
@@ -167,6 +206,30 @@ public:
 	/** Fills OutBoneToModel with the bind pose (what a model with no sequences renders as). */
 	void EvaluateBindPose(TArray<FSourceMatrix3x4>& OutBoneToModel) const;
 
+	// ---- Layered posing (bone_setup.cpp): a base sequence plus gestures accumulated on top ----
+
+	/** InitPose: every bone at its bind pose. */
+	void InitLocalPose(FSourceLocalPose& Pose) const;
+	/**
+	 * AccumulatePose: blends (or, for delta sequences, adds) one sequence at a cycle into Pose with a weight,
+	 * including the sequence's autolayers - which is how a flinch gesture lands on top of a walk.
+	 */
+	bool AccumulateSequence(FSourceLocalPose& Pose, int32 SequenceIndex, float Cycle, float Weight) const;
+	/** Local rotations/positions -> bone-to-model matrices through the hierarchy. */
+	void BuildBoneToModel(const FSourceLocalPose& Pose, TArray<FSourceMatrix3x4>& OutBoneToModel) const;
+
+	// ---- Hitboxes (the default hitbox set) ----
+	const TArray<FSourceStudioHitbox>& GetHitboxes() const { return Hitboxes; }
+
+	// ---- Bodygroups: which model each body part shows (SetBodygroup) ----
+	int32 GetNumBodyParts() const { return BodyPartNames.Num(); }
+	const FString& GetBodyPartName(int32 BodyPart) const { return BodyPartNames[BodyPart]; }
+	int32 FindBodyPart(const FString& Name) const;
+	int32 GetBodyPartNumModels(int32 BodyPart) const { return BodyPartModelCounts.IsValidIndex(BodyPart) ? BodyPartModelCounts[BodyPart] : 0; }
+	int32 GetBodygroup(int32 BodyPart) const { return BodygroupValues.IsValidIndex(BodyPart) ? BodygroupValues[BodyPart] : 0; }
+	/** Rebuilds Sections for the new choice; the owner must push the sections to its mesh again. */
+	bool SetBodygroup(int32 BodyPart, int32 Value);
+
 	/** Skins Sections in place from a bone set produced by EvaluateSequence. */
 	void ApplyPose(const TArray<FSourceMatrix3x4>& BoneToModel);
 
@@ -185,6 +248,16 @@ private:
 	void ReadBones(const TArray<uint8>& Mdl);
 	void ReadSequences(const TArray<uint8>& Mdl);
 	void ReadAttachments(const TArray<uint8>& Mdl);
+	void ReadHitboxes(const TArray<uint8>& Mdl);
+	/** Builds Sections/SkinVertices from the .mdl/.vvd/.vtx for the current bodygroup choices. */
+	void BuildSections();
+
+	/** CalcPoseSingle: one sequence's own animation (no layers) as local bone transforms. */
+	bool CalcPoseSingle(int32 SequenceIndex, float Cycle, FSourceLocalPose& Out) const;
+	/** AddSequenceLayers: the sequence's autolayers accumulated into Pose. */
+	void AddSequenceLayers(FSourceLocalPose& Pose, int32 SequenceIndex, float Cycle, float Weight) const;
+	/** SlerpBones: blends (or adds, for delta sequences) Layer into Pose by Weight and the sequence's bone weights. */
+	void SlerpBones(FSourceLocalPose& Pose, const FSourceStudioSequence& Seq, const FSourceLocalPose& Layer, float Weight) const;
 
 	FString ModelName;
 	int32 Version = 0;
@@ -201,6 +274,13 @@ private:
 
 	/** The .mdl is kept so animation data can be decoded on demand rather than unpacked for every frame up front. */
 	TArray<uint8> MdlData;
+	TArray<uint8> VvdData;
+	TArray<uint8> VtxData;
+	FString VtxPath;
+	TArray<FSourceStudioHitbox> Hitboxes;
+	TArray<FString> BodyPartNames;
+	TArray<int32> BodyPartModelCounts;
+	TArray<int32> BodygroupValues;
 
 	/**
 	 * The external animation file (studiohdr_t::szanimblocknameindex, "models/x.ani"). studiomdl moves most of

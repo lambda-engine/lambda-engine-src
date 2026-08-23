@@ -41,6 +41,12 @@ namespace
 		constexpr int32 SEQ_OFF_LABELINDEX = 4, SEQ_OFF_ACTIVITYNAMEINDEX = 8, SEQ_OFF_FLAGS = 12;
 		constexpr int32 SEQ_OFF_ACTWEIGHT = 20, SEQ_OFF_NUMEVENTS = 24, SEQ_OFF_EVENTINDEX = 28;
 		constexpr int32 SEQ_OFF_NUMBLENDS = 56, SEQ_OFF_ANIMINDEXINDEX = 60;
+		constexpr int32 SEQ_OFF_NUMAUTOLAYERS = 148, SEQ_OFF_AUTOLAYERINDEX = 152, SEQ_OFF_WEIGHTLISTINDEX = 156;
+		constexpr int32 SIZE_AUTOLAYER = 24;	// mstudioautolayer_t: short iSequence, short iPose, int flags, float start, peak, tail, end
+
+		constexpr int32 OFF_NUMHITBOXSETS = 172, OFF_HITBOXSETINDEX = 176;
+		constexpr int32 SIZE_HITBOXSET = 12;	// mstudiohitboxset_t: sznameindex, numhitboxes, hitboxindex
+		constexpr int32 SIZE_BBOX = 68;			// mstudiobbox_t: bone, group, bbmin, bbmax, szhitboxnameindex, unused[8]
 
 		// mstudioevent_t: cycle, event, type, options[64], szeventindex - 4+4+4+64+4 = 80 bytes.
 		constexpr int32 SIZE_EVENT = 80;
@@ -72,7 +78,20 @@ namespace
 		constexpr int32 SIZE_QUAT48 = 6;
 		constexpr int32 SIZE_QUAT64 = 8;
 		constexpr int32 SIZE_VALUEPTR = 6;		// short offset[3]
+	}
 
+	/** studio.h sequence / animation / autolayer flags (prefixed: <winnt.h> defines DELTA). */
+	namespace STUDIO
+	{
+		constexpr int32 SEQ_DELTA = 0x0004;		// this sequence "adds" to whatever is under it
+		constexpr int32 SEQ_POST = 0x0010;		// ...and is applied after (QuaternionMA) rather than before
+		constexpr int32 ANIM_ALLZEROS = 0x0020;
+		constexpr int32 AL_POST = 0x0010;
+		constexpr int32 AL_SPLINE = 0x0040;
+		constexpr int32 AL_XFADE = 0x0080;
+		constexpr int32 AL_NOBLEND = 0x0200;
+		constexpr int32 AL_LOCAL = 0x1000;
+		constexpr int32 AL_POSE = 0x4000;
 	}
 
 	namespace VVD
@@ -348,6 +367,36 @@ FVector3f FSourceMatrix3x4::TransformVector(const FVector3f& V) const
 		M[2][0] * V.X + M[2][1] * V.Y + M[2][2] * V.Z);
 }
 
+FTransform FSourceMatrix3x4::ToUETransform(float Scale) const
+{
+	const FVector X = FSourceCoords::ToUEDirection(GetForward());
+	const FVector Y = -FSourceCoords::ToUEDirection(GetLeft());
+	const FVector Z = FSourceCoords::ToUEDirection(GetUp());
+	const FVector Origin = FSourceCoords::ToUE(GetOrigin(), Scale);
+	return FTransform(FMatrix(X, Y, Z, Origin));
+}
+
+FSourceMatrix3x4 FSourceMatrix3x4::FromUETransform(const FTransform& T, float Scale)
+{
+	const FMatrix M = T.ToMatrixNoScale();
+	const FVector X = M.GetUnitAxis(EAxis::X);
+	const FVector Y = M.GetUnitAxis(EAxis::Y);
+	const FVector Z = M.GetUnitAxis(EAxis::Z);
+	const FVector3f F((float)X.X, (float)-X.Y, (float)X.Z);
+	const FVector3f L((float)-Y.X, (float)Y.Y, (float)-Y.Z);
+	const FVector3f U((float)Z.X, (float)-Z.Y, (float)Z.Z);
+	const FVector3f O = FSourceCoords::ToSource(T.GetLocation(), Scale);
+	FSourceMatrix3x4 Out;
+	for (int32 r = 0; r < 3; ++r)
+	{
+		Out.M[r][0] = F[r];
+		Out.M[r][1] = L[r];
+		Out.M[r][2] = U[r];
+		Out.M[r][3] = O[r];
+	}
+	return Out;
+}
+
 FSourceMatrix3x4 FSourceMatrix3x4::Concat(const FSourceMatrix3x4& Other) const
 {
 	// ConcatTransforms: out = this * Other.
@@ -403,6 +452,12 @@ bool FSourceMDLFile::Load(const FString& RelativeModelPath, float Scale, FString
 	AnimBlocks.Reset();
 	AnimBlockName.Reset();
 	SurfaceProp.Reset();
+	VvdData.Reset();
+	VtxData.Reset();
+	Hitboxes.Reset();
+	BodyPartNames.Reset();
+	BodyPartModelCounts.Reset();
+	BodygroupValues.Reset();
 	UnitScale = Scale;
 
 	auto Fail = [&](const FString& Msg)
@@ -427,8 +482,8 @@ bool FSourceMDLFile::Load(const FString& RelativeModelPath, float Scale, FString
 	{
 		return Fail(FString::Printf(TEXT("Vertex data not found: %s.vvd"), *BasePath));
 	}
-	FString VtxPath;
-	if (!ReadVtx(BasePath, Vtx, VtxPath))
+	FString VtxPathUsed;
+	if (!ReadVtx(BasePath, Vtx, VtxPathUsed))
 	{
 		return Fail(FString::Printf(TEXT("No .vtx found for %s"), *BasePath));
 	}
@@ -477,6 +532,49 @@ bool FSourceMDLFile::Load(const FString& RelativeModelPath, float Scale, FString
 			UE_LOG(LogLambdaSource, Warning, TEXT("Model '%s': animation file '%s' not found; sequences in external blocks will show the bind pose"),
 				*BasePath, *AnimBlockName);
 		}
+	}
+
+	MdlData = MoveTemp(Mdl);
+	VvdData = MoveTemp(Vvd);
+	VtxData = MoveTemp(Vtx);
+	VtxPath = VtxPathUsed;
+	ReadHitboxes(MdlData);
+
+	// Body parts and their model counts; every bodygroup starts at model 0 (Source's default body).
+	{
+		const int32 NumBodyPartsMdl = ReadInt(MdlData, MDL::OFF_NUMBODYPARTS);
+		const int32 BodyPartIndexMdl = ReadInt(MdlData, MDL::OFF_BODYPARTINDEX);
+		for (int32 bp = 0; bp < NumBodyPartsMdl; ++bp)
+		{
+			const int64 MdlBp = BodyPartIndexMdl + (int64)bp * MDL::SIZE_BODYPART;
+			BodyPartNames.Add(ReadCString(MdlData, MdlBp + ReadInt(MdlData, MdlBp)));
+			BodyPartModelCounts.Add(ReadInt(MdlData, MdlBp + 4));
+			BodygroupValues.Add(0);
+		}
+	}
+	BuildSections();
+	bLoaded = true;
+	UE_LOG(LogLambdaSource, Log, TEXT("Model '%s' (v%d): %d bones, %d sequences, %d attachments, %d sections, %d tris [%s]"),
+		*ModelName, Version, Bones.Num(), Sequences.Num(), Attachments.Num(), Sections.Num(), GetNumTriangles(), *VtxPath);
+	for (const FSourceMeshSection& Section : Sections)
+	{
+		UE_LOG(LogLambdaSource, Verbose, TEXT("  section '%s': %d verts, %d tris"),
+			*Section.MaterialName, Section.Vertices.Num(), Section.Triangles.Num() / 3);
+	}
+	return true;
+}
+
+void FSourceMDLFile::BuildSections()
+{
+	Sections.Reset();
+	SkinVertices.Reset();
+	const TArray<uint8>& Mdl = MdlData;
+	const TArray<uint8>& Vvd = VvdData;
+	const TArray<uint8>& Vtx = VtxData;
+	const float Scale = UnitScale;
+	if (Mdl.Num() == 0 || Vvd.Num() == 0 || Vtx.Num() == 0)
+	{
+		return;
 	}
 
 	// ---- Materials: cdmaterials path + texture name ----
@@ -609,6 +707,11 @@ bool FSourceMDLFile::Load(const FString& RelativeModelPath, float Scale, FString
 		const int32 NumModels = FMath::Min(VtxNumModels, MdlNumModels);
 		for (int32 m = 0; m < NumModels; ++m)
 		{
+			// SetBodygroup: only the chosen model of each body part is built (Source's default body is 0 for all).
+			if (m != GetBodygroup(bp))
+			{
+				continue;
+			}
 			const int64 VtxModel = VtxBp + VtxModelOffset + (int64)m * VTX::SIZE_MODEL;
 			const int32 VtxNumLods = ReadInt(Vtx, VtxModel);
 			const int32 VtxLodOffset = ReadInt(Vtx, VtxModel + 4);
@@ -744,16 +847,59 @@ bool FSourceMDLFile::Load(const FString& RelativeModelPath, float Scale, FString
 		}
 	}
 
-	MdlData = MoveTemp(Mdl);
-	bLoaded = true;
-	UE_LOG(LogLambdaSource, Log, TEXT("Model '%s' (v%d): %d bones, %d sequences, %d attachments, %d sections, %d tris [%s]"),
-		*ModelName, Version, Bones.Num(), Sequences.Num(), Attachments.Num(), Sections.Num(), GetNumTriangles(), *VtxPath);
-	for (const FSourceMeshSection& Section : Sections)
+}
+
+bool FSourceMDLFile::SetBodygroup(int32 BodyPart, int32 Value)
+{
+	if (!BodygroupValues.IsValidIndex(BodyPart))
 	{
-		UE_LOG(LogLambdaSource, Verbose, TEXT("  section '%s': %d verts, %d tris"),
-			*Section.MaterialName, Section.Vertices.Num(), Section.Triangles.Num() / 3);
+		return false;
 	}
+	Value = FMath::Clamp(Value, 0, FMath::Max(0, BodyPartModelCounts[BodyPart] - 1));
+	if (BodygroupValues[BodyPart] == Value)
+	{
+		return true;
+	}
+	BodygroupValues[BodyPart] = Value;
+	BuildSections();
 	return true;
+}
+
+int32 FSourceMDLFile::FindBodyPart(const FString& Name) const
+{
+	for (int32 i = 0; i < BodyPartNames.Num(); ++i)
+	{
+		if (BodyPartNames[i].Equals(Name, ESearchCase::IgnoreCase))
+		{
+			return i;
+		}
+	}
+	return INDEX_NONE;
+}
+
+void FSourceMDLFile::ReadHitboxes(const TArray<uint8>& Mdl)
+{
+	// The first hitbox set is the default one (models with several switch them for gameplay states).
+	const int32 NumSets = ReadInt(Mdl, MDL::OFF_NUMHITBOXSETS);
+	const int32 SetIndex = ReadInt(Mdl, MDL::OFF_HITBOXSETINDEX);
+	if (NumSets <= 0)
+	{
+		return;
+	}
+	const int64 Set = SetIndex;
+	const int32 NumHitboxes = ReadInt(Mdl, Set + 4);
+	const int32 HitboxIndex = ReadInt(Mdl, Set + 8);
+	for (int32 h = 0; h < NumHitboxes; ++h)
+	{
+		const int64 Off = Set + HitboxIndex + (int64)h * MDL::SIZE_BBOX;
+		FSourceStudioHitbox& Box = Hitboxes.AddDefaulted_GetRef();
+		Box.Bone = ReadInt(Mdl, Off);
+		Box.Group = ReadInt(Mdl, Off + 4);
+		Box.Min = ReadVec3(Mdl, Off + 8);
+		Box.Max = ReadVec3(Mdl, Off + 20);
+		const int32 NameIndex = ReadInt(Mdl, Off + 32);
+		Box.Name = NameIndex != 0 ? ReadCString(Mdl, Off + NameIndex) : FString();
+	}
 }
 
 // ---- Bones, sequences, attachments ----
@@ -844,6 +990,30 @@ void FSourceMDLFile::ReadSequences(const TArray<uint8>& Mdl)
 		{
 			const int32 Resolved = ReadI16(Mdl, Off + AnimIndexIndex);
 			Seq.AnimDescIndex = AnimDescs.IsValidIndex(Resolved) ? Resolved : INDEX_NONE;
+		}
+
+		// Autolayers (gestures are built from these) and the per-bone weight list.
+		const int32 NumAutoLayers = ReadInt(Mdl, Off + MDL::SEQ_OFF_NUMAUTOLAYERS);
+		const int32 AutoLayerIndex = ReadInt(Mdl, Off + MDL::SEQ_OFF_AUTOLAYERINDEX);
+		for (int32 al = 0; al < NumAutoLayers && AutoLayerIndex != 0; ++al)
+		{
+			const int64 ALOff = Off + AutoLayerIndex + (int64)al * MDL::SIZE_AUTOLAYER;
+			FSourceStudioAutoLayer& Layer = Seq.AutoLayers.AddDefaulted_GetRef();
+			Layer.Sequence = ReadI16(Mdl, ALOff);
+			Layer.Pose = ReadI16(Mdl, ALOff + 2);
+			Layer.Flags = ReadInt(Mdl, ALOff + 4);
+			Layer.Start = ReadFloat(Mdl, ALOff + 8);
+			Layer.Peak = ReadFloat(Mdl, ALOff + 12);
+			Layer.Tail = ReadFloat(Mdl, ALOff + 16);
+			Layer.End = ReadFloat(Mdl, ALOff + 20);
+		}
+		const int32 WeightListIndex = ReadInt(Mdl, Off + MDL::SEQ_OFF_WEIGHTLISTINDEX);
+		if (WeightListIndex != 0)
+		{
+			for (int32 bn = 0; bn < Bones.Num(); ++bn)
+			{
+				Seq.BoneWeights.Add(ReadFloat(Mdl, Off + WeightListIndex + (int64)bn * 4));
+			}
 		}
 
 		const int32 NumEvents = ReadInt(Mdl, Off + MDL::SEQ_OFF_NUMEVENTS);
@@ -969,31 +1139,99 @@ void FSourceMDLFile::EvaluateBindPose(TArray<FSourceMatrix3x4>& OutBoneToModel) 
 	}
 }
 
-bool FSourceMDLFile::EvaluateSequence(int32 SequenceIndex, float Cycle, TArray<FSourceMatrix3x4>& OutBoneToModel) const
+namespace
+{
+	// mathlib quaternion helpers, in Source's conventions (bone_setup.cpp uses these for layer blending).
+
+	/** QuaternionAlign: flips q if it is on the far side of p, so blends take the short way round. */
+	FQuat4f QuaternionAlign(const FQuat4f& P, const FQuat4f& Q)
+	{
+		return ((P | Q) < 0.0f) ? FQuat4f(-Q.X, -Q.Y, -Q.Z, -Q.W) : Q;
+	}
+
+	/** QuaternionMult(p, q): p * q, q aligned to p first. */
+	FQuat4f QuaternionMult(const FQuat4f& P, const FQuat4f& Q)
+	{
+		return P * QuaternionAlign(P, Q);
+	}
+
+	/** QuaternionScale(p, t): the rotation p scaled to a fraction t of its angle. */
+	FQuat4f QuaternionScale(const FQuat4f& P, float T)
+	{
+		float Sinom = FMath::Sqrt(P.X * P.X + P.Y * P.Y + P.Z * P.Z);
+		Sinom = FMath::Min(Sinom, 1.0f);
+		const float Sinsom = FMath::Sin(FMath::Asin(Sinom) * T);
+		const float Scale = Sinsom / (Sinom + FLT_EPSILON);
+		float R = 1.0f - Sinsom * Sinsom;
+		R = FMath::Sqrt(FMath::Max(R, 0.0f));
+		return FQuat4f(P.X * Scale, P.Y * Scale, P.Z * Scale, P.W < 0.0f ? -R : R);
+	}
+
+	/** QuaternionMA(p, s, q): p * (q scaled by s). */
+	FQuat4f QuaternionMA(const FQuat4f& P, float S, const FQuat4f& Q)
+	{
+		return QuaternionMult(P, QuaternionScale(Q, S)).GetNormalized();
+	}
+
+	/** QuaternionSM(s, p, q): (p scaled by s) * q. */
+	FQuat4f QuaternionSM(float S, const FQuat4f& P, const FQuat4f& Q)
+	{
+		return QuaternionMult(QuaternionScale(P, S), Q).GetNormalized();
+	}
+
+	float SimpleSpline(float Value)
+	{
+		const float ValueSquared = Value * Value;
+		return 3.0f * ValueSquared - 2.0f * ValueSquared * Value;
+	}
+}
+
+void FSourceMDLFile::InitLocalPose(FSourceLocalPose& Pose) const
+{
+	Pose.Quat.SetNum(Bones.Num());
+	Pose.Pos.SetNum(Bones.Num());
+	for (int32 i = 0; i < Bones.Num(); ++i)
+	{
+		Pose.Quat[i] = Bones[i].Quat;
+		Pose.Pos[i] = Bones[i].Pos;
+	}
+}
+
+void FSourceMDLFile::BuildBoneToModel(const FSourceLocalPose& Pose, TArray<FSourceMatrix3x4>& OutBoneToModel) const
+{
+	// studiomdl orders the table so a parent always precedes its children.
+	OutBoneToModel.SetNum(Bones.Num());
+	for (int32 i = 0; i < Bones.Num(); ++i)
+	{
+		const FSourceMatrix3x4 Local = FSourceMatrix3x4::FromQuatPos(Pose.Quat[i], Pose.Pos[i]);
+		OutBoneToModel[i] = (Bones[i].Parent >= 0 && Bones[i].Parent < i)
+			? OutBoneToModel[Bones[i].Parent].Concat(Local)
+			: Local;
+	}
+}
+
+bool FSourceMDLFile::CalcPoseSingle(int32 SequenceIndex, float Cycle, FSourceLocalPose& Out) const
 {
 	if (!Sequences.IsValidIndex(SequenceIndex) || Bones.Num() == 0)
 	{
-		EvaluateBindPose(OutBoneToModel);
 		return false;
 	}
 	const FSourceStudioSequence& Seq = Sequences[SequenceIndex];
 	if (!AnimDescs.IsValidIndex(Seq.AnimDescIndex))
 	{
-		EvaluateBindPose(OutBoneToModel);
 		return false;
 	}
 	const FSourceStudioAnimDesc& Anim = AnimDescs[Seq.AnimDescIndex];
 
-	// InitPose: every bone starts at its bind pose. studiomdl omits bones the animation never moves, and those
-	// must keep the bind pose rather than collapse to the origin.
-	TArray<FQuat4f> LocalQuat;
-	TArray<FVector3f> LocalPos;
-	LocalQuat.SetNum(Bones.Num());
-	LocalPos.SetNum(Bones.Num());
+	// CalcAnimation: bones the animation never moves keep the bind pose - or, for a delta animation, no change
+	// at all (identity rotation, zero offset), since the whole thing is added to whatever is underneath.
+	const bool bDelta = (Anim.Flags & STUDIO::SEQ_DELTA) != 0;
+	Out.Quat.SetNum(Bones.Num());
+	Out.Pos.SetNum(Bones.Num());
 	for (int32 i = 0; i < Bones.Num(); ++i)
 	{
-		LocalQuat[i] = Bones[i].Quat;
-		LocalPos[i] = Bones[i].Pos;
+		Out.Quat[i] = bDelta ? FQuat4f::Identity : Bones[i].Quat;
+		Out.Pos[i] = bDelta ? FVector3f::ZeroVector : Bones[i].Pos;
 	}
 
 	// Studio_CalcFrame: the cycle spans [0, numframes - 1]. We sample the nearest frame rather than blending
@@ -1020,8 +1258,7 @@ bool FSourceMDLFile::EvaluateSequence(int32 SequenceIndex, float Cycle, TArray<F
 		}
 		if (!Anim.Sections.IsValidIndex(Section))
 		{
-			EvaluateBindPose(OutBoneToModel);
-			return false;
+			return true;
 		}
 		Block = Anim.Sections[Section].Key;
 		Index = Anim.Sections[Section].Value;
@@ -1042,8 +1279,7 @@ bool FSourceMDLFile::EvaluateSequence(int32 SequenceIndex, float Cycle, TArray<F
 	}
 	if (!Src || Block < 0 || P <= 0 || P >= Src->Num())
 	{
-		EvaluateBindPose(OutBoneToModel);
-		return false;
+		return true;	// STUDIO_ALLZEROS and friends: no data, the init pose stands
 	}
 
 	for (int32 Guard = 0; Guard <= Bones.Num(); ++Guard)
@@ -1114,8 +1350,8 @@ bool FSourceMDLFile::EvaluateSequence(int32 SequenceIndex, float Cycle, TArray<F
 			Pos = (Flags & STUDIOANIM::FLAG_DELTA) ? FVector3f::ZeroVector : Bone.Pos;
 		}
 
-		LocalQuat[BoneIdx] = Q;
-		LocalPos[BoneIdx] = Pos;
+		Out.Quat[BoneIdx] = Q;
+		Out.Pos[BoneIdx] = Pos;
 
 		if (NextOffset == 0)
 		{
@@ -1124,15 +1360,120 @@ bool FSourceMDLFile::EvaluateSequence(int32 SequenceIndex, float Cycle, TArray<F
 		P += NextOffset;
 	}
 
-	// Local transforms -> bone-to-model. studiomdl orders the table so a parent always precedes its children.
-	OutBoneToModel.SetNum(Bones.Num());
+	return true;
+}
+
+void FSourceMDLFile::SlerpBones(FSourceLocalPose& Pose, const FSourceStudioSequence& Seq, const FSourceLocalPose& Layer, float Weight) const
+{
+	const bool bDelta = (Seq.Flags & STUDIO::SEQ_DELTA) != 0;
+	const bool bPost = (Seq.Flags & STUDIO::SEQ_POST) != 0;
 	for (int32 i = 0; i < Bones.Num(); ++i)
 	{
-		const FSourceMatrix3x4 Local = FSourceMatrix3x4::FromQuatPos(LocalQuat[i], LocalPos[i]);
-		OutBoneToModel[i] = (Bones[i].Parent >= 0 && Bones[i].Parent < i)
-			? OutBoneToModel[Bones[i].Parent].Concat(Local)
-			: Local;
+		float S = Weight * (Seq.BoneWeights.IsValidIndex(i) ? Seq.BoneWeights[i] : 1.0f);
+		if (S <= 0.0f)
+		{
+			continue;
+		}
+		S = FMath::Min(S, 1.0f);
+		if (bDelta)
+		{
+			// delta sequence: q1 = q1 * q2^s (POST) or q2^s * q1; pos1 += pos2 * s
+			Pose.Quat[i] = bPost ? QuaternionMA(Pose.Quat[i], S, Layer.Quat[i]) : QuaternionSM(S, Layer.Quat[i], Pose.Quat[i]);
+			Pose.Pos[i] += Layer.Pos[i] * S;
+		}
+		else if (S >= 1.0f)
+		{
+			Pose.Quat[i] = Layer.Quat[i];
+			Pose.Pos[i] = Layer.Pos[i];
+		}
+		else
+		{
+			Pose.Quat[i] = FQuat4f::Slerp(Pose.Quat[i], QuaternionAlign(Pose.Quat[i], Layer.Quat[i]), S);
+			Pose.Pos[i] = FMath::Lerp(Pose.Pos[i], Layer.Pos[i], S);
+		}
 	}
+}
+
+void FSourceMDLFile::AddSequenceLayers(FSourceLocalPose& Pose, int32 SequenceIndex, float Cycle, float Weight) const
+{
+	const FSourceStudioSequence& Seq = Sequences[SequenceIndex];
+	for (const FSourceStudioAutoLayer& Layer : Seq.AutoLayers)
+	{
+		if (Layer.Flags & STUDIO::AL_LOCAL)
+		{
+			continue;
+		}
+		if (Layer.Flags & STUDIO::AL_POSE)
+		{
+			continue;	// driven by a pose parameter, which we do not have
+		}
+		float LayerCycle = Cycle;
+		float LayerWeight = Weight;
+		if (Layer.Start != Layer.End)
+		{
+			float S = 1.0f;
+			const float Index = Cycle;
+			if (Index < Layer.Start || Index >= Layer.End)
+			{
+				continue;
+			}
+			if (Index < Layer.Peak && Layer.Start != Layer.Peak)
+			{
+				S = (Index - Layer.Start) / (Layer.Peak - Layer.Start);
+			}
+			else if (Index > Layer.Tail && Layer.End != Layer.Tail)
+			{
+				S = (Layer.End - Index) / (Layer.End - Layer.Tail);
+			}
+			if (Layer.Flags & STUDIO::AL_SPLINE)
+			{
+				S = SimpleSpline(S);
+			}
+			if ((Layer.Flags & STUDIO::AL_XFADE) && Index > Layer.Tail)
+			{
+				LayerWeight = (S * Weight) / ((1.0f - Weight) + S * Weight);
+			}
+			else
+			{
+				LayerWeight = Weight * S;
+			}
+			LayerCycle = (Cycle - Layer.Start) / (Layer.End - Layer.Start);
+		}
+		if (Layer.Flags & STUDIO::AL_NOBLEND)
+		{
+			LayerWeight = 1.0f;
+		}
+		AccumulateSequence(Pose, Layer.Sequence, LayerCycle, LayerWeight);
+	}
+}
+
+bool FSourceMDLFile::AccumulateSequence(FSourceLocalPose& Pose, int32 SequenceIndex, float Cycle, float Weight) const
+{
+	// AccumulatePose: the sequence's own pose, its layers on top of that, then blended into what is there.
+	if (Weight <= 0.0f || Pose.Quat.Num() != Bones.Num())
+	{
+		return false;
+	}
+	FSourceLocalPose Single;
+	if (!CalcPoseSingle(SequenceIndex, Cycle, Single))
+	{
+		return false;
+	}
+	AddSequenceLayers(Single, SequenceIndex, Cycle, Weight);
+	SlerpBones(Pose, Sequences[SequenceIndex], Single, Weight);
+	return true;
+}
+
+bool FSourceMDLFile::EvaluateSequence(int32 SequenceIndex, float Cycle, TArray<FSourceMatrix3x4>& OutBoneToModel) const
+{
+	FSourceLocalPose Pose;
+	InitLocalPose(Pose);
+	if (Bones.Num() == 0 || !AccumulateSequence(Pose, SequenceIndex, Cycle, 1.0f))
+	{
+		EvaluateBindPose(OutBoneToModel);
+		return false;
+	}
+	BuildBoneToModel(Pose, OutBoneToModel);
 	return true;
 }
 

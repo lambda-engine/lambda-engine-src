@@ -33,6 +33,14 @@ namespace SourceImpact
 	LAMBDASOURCE_API void PlayImpact(const FHitResult& Hit, ULambdaMaterialLibrary* Materials, UObject* SoundOuter,
 		const FVector& ShotDirection, float Damage);
 
+	/**
+	 * A bullet's trace. Source's bullets hit NPCs through their hitboxes (TraceToStudio), not their hulls: when the
+	 * line hits an NPC with hitboxes it is tested against them - a miss passes through and the trace goes on.
+	 * OutHitGroup is the hit group of the hitbox struck (HITGROUP_GENERIC for the world).
+	 */
+	LAMBDASOURCE_API bool TraceBullet(UWorld* World, const FVector& Start, const FVector& End, FCollisionQueryParams Params,
+		FHitResult& OutHit, int32& OutHitGroup);
+
 	/** Stamps one decal material at a hit (random roll, DecalSizeVariance), attached to what was hit. */
 	LAMBDASOURCE_API void SpawnDecal(const FHitResult& Hit, ULambdaMaterialLibrary* Materials, const FString& DecalName);
 

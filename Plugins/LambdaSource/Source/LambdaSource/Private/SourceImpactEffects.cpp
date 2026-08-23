@@ -10,6 +10,7 @@
 #include "SourceParticleEffect.h"
 #include "SourceNPCBase.h"
 #include "SourceRagdoll.h"
+#include "SourceStudioModelComponent.h"
 #include "Components/DecalComponent.h"
 #include "Engine/HitResult.h"
 #include "Kismet/GameplayStatics.h"
@@ -26,6 +27,7 @@ namespace
 		case ESourceBloodColor::Yellow: return FLinearColor(195 / 255.0f, 195 / 255.0f, 0.0f);
 		case ESourceBloodColor::Green:  return FLinearColor(195 / 255.0f, 195 / 255.0f, 0.0f);
 		case ESourceBloodColor::Mech:   return FLinearColor(20 / 255.0f, 20 / 255.0f, 20 / 255.0f);
+		case ESourceBloodColor::Zombie: return FLinearColor(72 / 255.0f, 0.0f, 0.0f);	// blood_impact_zombie_01 is a red spray
 		default:                        return FLinearColor(1.0f, 0.0f, 1.0f);	// "a ridiculous default color"
 		}
 	}
@@ -70,6 +72,40 @@ namespace SourceImpact
 
 namespace SourceImpact
 {
+
+bool TraceBullet(UWorld* World, const FVector& Start, const FVector& End, FCollisionQueryParams Params, FHitResult& OutHit, int32& OutHitGroup)
+{
+	OutHitGroup = SourceHitGroup::HITGROUP_GENERIC;
+	if (!World)
+	{
+		return false;
+	}
+	for (int32 Pass = 0; Pass < 8; ++Pass)
+	{
+		if (!World->LineTraceSingleByChannel(OutHit, Start, End, ECC_Visibility, Params))
+		{
+			return false;
+		}
+		ASourceNPCBase* NPC = Cast<ASourceNPCBase>(OutHit.GetActor());
+		if (NPC && NPC->HasHitboxes())
+		{
+			FSourceHitboxHit Box;
+			if (NPC->TraceHitboxes(Start, End, Box))
+			{
+				OutHit.ImpactPoint = Box.Point;
+				OutHit.Location = Box.Point;
+				OutHit.Distance = Box.Distance;
+				OutHitGroup = Box.Group;
+				return true;
+			}
+			// the hull was in the way but no hitbox was: the bullet passes this NPC by
+			Params.AddIgnoredActor(NPC);
+			continue;
+		}
+		return true;
+	}
+	return false;
+}
 
 void SpawnBlood(UWorld* World, ULambdaMaterialLibrary* Materials, const FVector& Origin, const FVector& Normal, ESourceBloodColor Color)
 {

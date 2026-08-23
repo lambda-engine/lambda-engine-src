@@ -286,7 +286,8 @@ void ALambdaWeapon::FireBullet(float Damage, const FVector& Spread)
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(LambdaFireBullet), /*bTraceComplex=*/ true, WeaponOwner);
 	// The face index is what resolves the impact point back to a material, and from there to a $surfaceprop.
 	Params.bReturnFaceIndex = true;
-	if (World->LineTraceSingleByChannel(Hit, EyeLocation, End, ECC_Visibility, Params))
+	int32 HitGroup = SourceHitGroup::HITGROUP_GENERIC;
+	if (SourceImpact::TraceBullet(World, EyeLocation, End, Params, Hit, HitGroup))
 	{
 		UE_LOG(LogLambda, Verbose, TEXT("bullet hit %s at %s (damage %g)"),
 			*GetNameSafe(Hit.GetActor()), *Hit.ImpactPoint.ToString(), Damage);
@@ -304,7 +305,7 @@ void ALambdaWeapon::FireBullet(float Damage, const FVector& Spread)
 				ImpulseInPerSec = Ammo->DamageForce;
 			}
 			const FVector Force = Dir * ImpulseInPerSec * 2.54f;	// kg*cm/s
-			FSourceDamageEvent DamageEvent(Damage, Hit, Dir, UDamageType::StaticClass(), Force);
+			FSourceDamageEvent DamageEvent(Damage, Hit, Dir, UDamageType::StaticClass(), Force, SourceDamageType::DMG_BULLET, HitGroup);
 			HitActor->TakeDamage(Damage, DamageEvent, WeaponOwner->GetController(), WeaponOwner);
 		}
 	}

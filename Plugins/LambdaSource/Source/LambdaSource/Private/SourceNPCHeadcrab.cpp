@@ -470,8 +470,13 @@ void ASourceNPCHeadcrab::Landed(const FHitResult& Hit)
 	bMidJump = false;
 }
 
-void ASourceNPCHeadcrab::OnTakeDamage_Alive(float Damage, AActor* Attacker)
+void ASourceNPCHeadcrab::OnTakeDamage_Alive(float Damage, AActor* Attacker, const FSourceDamageEvent& Info)
 {
+	Super::OnTakeDamage_Alive(Damage, Attacker, Info);
+	if (Health <= 0.0f)
+	{
+		return;
+	}
 	PainSound();
 	// Being hurt by someone we had not noticed is how a headcrab usually wakes up (COND_LIGHT_DAMAGE -> combat).
 	if (!Enemy.IsValid() && Attacker && Attacker == GetPlayerPawn())

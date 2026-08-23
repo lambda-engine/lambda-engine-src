@@ -83,7 +83,7 @@ ALambdaCharacter::ALambdaCharacter()
 	FirstPersonCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FirstPersonCamera"));
 	FirstPersonCamera->SetupAttachment(GetCapsuleComponent());
 	FirstPersonCamera->SetRelativeLocation(FVector(0.0f, 0.0f, EyeHeightCm - HalfHeightCm));
-	FirstPersonCamera->bUsePawnControlRotation = true;
+	FirstPersonCamera->bUsePawnControlRotation = false;	// set from the control rotation plus the punch angle each tick
 	FirstPersonCamera->FieldOfView = 90.0f;
 	// Source's viewmodel_fov: the view model is drawn at its own, narrower field of view.
 	FirstPersonCamera->bEnableFirstPersonFieldOfView = true;
@@ -412,6 +412,13 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 		ActiveWeapon->ItemPostFrame();
 	}
 
+	// CalcPlayerView: the punch angle rides on top of the view angles and springs back (DecayPunchAngle).
+	DecayPunchAngle(DeltaSeconds);
+	if (FirstPersonCamera)
+	{
+		FirstPersonCamera->SetWorldRotation(GetControlRotation() + FRotator(PunchAngle.X, PunchAngle.Y, PunchAngle.Z));
+	}
+
 	UpdateMuzzleFlash();
 
 	// Scripted-launch aids (lambda.npc_create.auto / lambda.decaltest.auto): -ExecCmds applies its cvars *after*
@@ -443,6 +450,7 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 				AutoFireShotsLeft = Parts.Num() > 0 ? FCString::Atoi(*Parts[0]) : 1;
 				AutoFireInterval = Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : 0.6f;
 				AutoFireTimer = -(Parts.Num() > 2 ? FCString::Atof(*Parts[2]) : 2.0f);
+				bAutoFireAimHead = Parts.Num() > 3 && Parts[3].Equals(TEXT("head"), ESearchCase::IgnoreCase);
 			}
 		}
 	}
@@ -476,6 +484,10 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 				FVector Aim = AutoFireTarget->GetActorLocation();
 				if (const ASourceNPCBase* NPC = Cast<ASourceNPCBase>(AutoFireTarget.Get()))
 				{
+					if (bAutoFireAimHead)
+					{
+						Aim = NPC->EyePosition();
+					}
 					if (const ASourceRagdoll* Ragdoll = NPC->GetRagdoll())
 					{
 						Aim = Ragdoll->GetAimPoint();
@@ -955,6 +967,43 @@ void ALambdaCharacter::UpdateMuzzleFlash()
 		// Source's elight decays its radius to zero over the 0.05 s (el->decay = radius / 0.05); over three frames
 		// that is invisible, and pushing a new radius every frame trips UE's "GPU Scene Lights is stale" ensure
 		// (a ~1 s stack walk on the first shot in development builds), so the light simply holds and goes out.
+	}
+}
+
+void ALambdaCharacter::ViewPunch(const FRotator& AngleOffset)
+{
+	// CBasePlayer::ViewPunch: m_Local.m_vecPunchAngleVel += angleOffset * 20
+	PunchAngleVel += FVector(AngleOffset.Pitch, AngleOffset.Yaw, AngleOffset.Roll) * 20.0f;
+}
+
+void ALambdaCharacter::VelocityPunch(const FVector& VelocityImpulse)
+{
+	// CBaseCombatCharacter::VelocityPunch: SetGroundEntity(NULL) + ApplyAbsVelocityImpulse
+	LaunchCharacter(VelocityImpulse, false, false);
+}
+
+void ALambdaCharacter::DecayPunchAngle(float DeltaSeconds)
+{
+	// CBasePlayer::DecayPunchAngle, PUNCH_DAMPING 9 and PUNCH_SPRING_CONSTANT 65
+	if (PunchAngle.SizeSquared() > 0.001f || PunchAngleVel.SizeSquared() > 0.001f)
+	{
+		PunchAngle += PunchAngleVel * DeltaSeconds;
+		float Damping = 1.0f - (9.0f * DeltaSeconds);
+		if (Damping < 0.0f) { Damping = 0.0f; }
+		PunchAngleVel *= Damping;
+		// torsional spring
+		float SpringForceMagnitude = 65.0f * DeltaSeconds;
+		SpringForceMagnitude = FMath::Clamp(SpringForceMagnitude, 0.0f, 2.0f);
+		PunchAngleVel -= PunchAngle * SpringForceMagnitude;
+		// don't wrap around
+		PunchAngle.X = FMath::Clamp(PunchAngle.X, -89.0f, 89.0f);
+		PunchAngle.Y = FMath::Clamp(PunchAngle.Y, -179.0f, 179.0f);
+		PunchAngle.Z = FMath::Clamp(PunchAngle.Z, -89.0f, 89.0f);
+	}
+	else
+	{
+		PunchAngle = FVector::ZeroVector;
+		PunchAngleVel = FVector::ZeroVector;
 	}
 }
 

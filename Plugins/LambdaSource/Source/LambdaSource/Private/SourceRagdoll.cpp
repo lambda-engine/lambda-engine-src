@@ -12,40 +12,6 @@
 
 namespace
 {
-	/**
-	 * A Source bone matrix (column vectors, Source axes, units) as a UE transform in model space: the mirror
-	 * y -> -y applied on both sides, so X = forward, Y = -left, Z = up.
-	 */
-	FTransform SourceBoneToUE(const FSourceMatrix3x4& M, float Scale)
-	{
-		const FVector X = FSourceCoords::ToUEDirection(M.GetForward());
-		const FVector Y = -FSourceCoords::ToUEDirection(M.GetLeft());
-		const FVector Z = FSourceCoords::ToUEDirection(M.GetUp());
-		const FVector Origin = FSourceCoords::ToUE(M.GetOrigin(), Scale);
-		return FTransform(FMatrix(X, Y, Z, Origin));
-	}
-
-	FSourceMatrix3x4 UEToSourceBone(const FTransform& T, float Scale)
-	{
-		const FMatrix M = T.ToMatrixNoScale();
-		const FVector X = M.GetUnitAxis(EAxis::X);
-		const FVector Y = M.GetUnitAxis(EAxis::Y);
-		const FVector Z = M.GetUnitAxis(EAxis::Z);
-		const FVector3f F((float)X.X, (float)-X.Y, (float)X.Z);
-		const FVector3f L((float)-Y.X, (float)Y.Y, (float)-Y.Z);
-		const FVector3f U((float)Z.X, (float)-Z.Y, (float)Z.Z);
-		const FVector3f O = FSourceCoords::ToSource(T.GetLocation(), Scale);
-		FSourceMatrix3x4 Out;
-		for (int32 r = 0; r < 3; ++r)
-		{
-			Out.M[r][0] = F[r];
-			Out.M[r][1] = L[r];
-			Out.M[r][2] = U[r];
-			Out.M[r][3] = O[r];
-		}
-		return Out;
-	}
-
 	// Joint friction is not a thing UE's constraint has; Source's per-axis "xfriction" is a torque that barely
 	// registers on a headcrab, and the bodies carry their own rotdamping.
 	void SetAngularLimit(UPhysicsConstraintComponent* Joint, int32 Axis, float Min, float Max)
@@ -116,7 +82,7 @@ bool ASourceRagdoll::Build(USourceStudioModelComponent* ModelComponent, const FS
 	BoneBody.Init(INDEX_NONE, Bones.Num());
 	for (int32 b = 0; b < Bones.Num(); ++b)
 	{
-		DeathPose[b] = SourceBoneToUE(Pose[b], Scale);
+		DeathPose[b] = Pose[b].ToUETransform(Scale);
 	}
 
 	// RagdollAddSolid: one physics object per solid, placed on its bone's current matrix.
@@ -367,7 +333,7 @@ void ASourceRagdoll::UpdatePose()
 		{
 			BoneModel[b] = DeathPose[b];
 		}
-		Pose[b] = UEToSourceBone(BoneModel[b], Scale);
+		Pose[b] = FSourceMatrix3x4::FromUETransform(BoneModel[b], Scale);
 	}
 	ModelComponent->SetExternalPose(Pose);
 }

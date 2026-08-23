@@ -13,6 +13,16 @@ class ULambdaMaterialLibrary;
  */
 DECLARE_MULTICAST_DELEGATE_ThreeParams(FSourceAnimationEvent, int32 /*EventId*/, const FString& /*Name*/, const FString& /*Options*/);
 
+/** What a ray found in a model's hitboxes. */
+struct FSourceHitboxHit
+{
+	int32 Hitbox = INDEX_NONE;
+	int32 Bone = INDEX_NONE;
+	int32 Group = 0;			// HITGROUP_*
+	FVector Point = FVector::ZeroVector;	// world
+	float Distance = 0.0f;		// along the ray, cm
+};
+
 /**
  * Renders and animates a Source studio model (.mdl) at runtime.
  *
@@ -61,6 +71,26 @@ public:
 	/** World-space transform of a named attachment ("muzzle", "shell_eject"), from the current pose. */
 	bool GetAttachmentWorld(const FString& Name, FVector& OutLocation, FVector& OutForward) const;
 
+	/** World transform of a bone in the pose on screen. */
+	FTransform GetBoneWorldTransform(int32 Bone) const;
+
+	// ---- Gestures (CBaseAnimatingOverlay::AddGesture): layered sequences played over the current one ----
+
+	/** RestartGesture: plays the activity's sequence as a layer on top of the current sequence, restarting it if already playing. */
+	bool PlayGesture(const FString& ActivityName);
+	bool IsPlayingGesture(const FString& ActivityName) const;
+	/** Duration of the sequence a gesture activity would play, seconds (0 if none). */
+	float GetGestureDuration(const FString& ActivityName) const;
+
+	// ---- Bodygroups ----
+	/** SetBodygroup: rebuilds the mesh with that model of the body part. */
+	bool SetBodygroup(int32 BodyPart, int32 Value);
+
+	// ---- Hitboxes ----
+	bool HasHitboxes() const;
+	/** Tests a world-space ray against the posed hitboxes (what Source's bullets hit); nearest wins. */
+	bool TraceHitboxes(const FVector& Start, const FVector& End, FSourceHitboxHit& OutHit) const;
+
 	/** Bone-to-model transforms of the pose on screen, Source space. */
 	const TArray<FSourceMatrix3x4>& GetBoneToModel() const { return BoneToModel; }
 
@@ -77,6 +107,16 @@ public:
 private:
 	/** Re-skins the mesh from the current pose and pushes it to the render thread. */
 	void RefreshPose();
+	/** Evaluates the current sequence plus gesture layers into BoneToModel and refreshes. */
+	void ComposePose();
+
+	struct FGestureLayer
+	{
+		int32 Sequence = INDEX_NONE;
+		FString Activity;
+		float Cycle = 0.0f;
+	};
+	TArray<FGestureLayer> Gestures;
 
 	TSharedPtr<FSourceMDLFile> Model;
 	FString ModelPath;

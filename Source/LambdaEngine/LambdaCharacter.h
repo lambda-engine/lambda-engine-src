@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
+#include "SourcePlayerPunch.h"
 #include "LambdaCharacter.generated.h"
 
 class UCameraComponent;
@@ -20,7 +21,7 @@ struct FInputActionValue;
  * Input is built in code (Enhanced Input) so the project needs no input assets.
  */
 UCLASS()
-class LAMBDAENGINE_API ALambdaCharacter : public ACharacter
+class LAMBDAENGINE_API ALambdaCharacter : public ACharacter, public ISourcePlayerPunch
 {
 	GENERATED_BODY()
 
@@ -32,6 +33,10 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Lambda")
 	UCameraComponent* GetFirstPersonCamera() const { return FirstPersonCamera; }
+
+	// ISourcePlayerPunch: CBasePlayer::ViewPunch (a sprung kick of the view, DecayPunchAngle) and VelocityPunch.
+	virtual void ViewPunch(const FRotator& AngleOffset) override;
+	virtual void VelocityPunch(const FVector& VelocityImpulse) override;
 
 	virtual void Tick(float DeltaSeconds) override;
 
@@ -136,6 +141,11 @@ protected:
 	bool AutoFirePulse = false;
 	TWeakObjectPtr<AActor> AutoFireTarget;
 	float DecalTestScreenshotTimer = 0.0f;
+	bool bAutoFireAimHead = false;
+	/** m_Local.m_vecPunchAngle / m_vecPunchAngleVel (pitch, yaw, roll degrees). */
+	FVector PunchAngle = FVector::ZeroVector;
+	FVector PunchAngleVel = FVector::ZeroVector;
+	void DecayPunchAngle(float DeltaSeconds);
 
 	/** Frames the flash is held visible regardless of its die time, so a sub-frame lifetime still renders once. */
 	int32 MuzzleFlashHoldFrames = 0;

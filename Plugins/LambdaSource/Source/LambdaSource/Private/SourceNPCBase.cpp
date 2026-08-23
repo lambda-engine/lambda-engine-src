@@ -4,6 +4,7 @@
 #include "LambdaSourceModule.h"
 #include "LambdaSourceSettings.h"
 #include "SourceBSPWorldActor.h"
+#include "SourceAmmoDef.h"
 #include "SourceCoordinates.h"
 #include "SourceDamage.h"
 #include "SourcePHYFile.h"
@@ -210,6 +211,18 @@ bool ASourceNPCBase::SetActivity(const FString& ActivityName)
 		return false;
 	}
 	CurrentActivity = ActivityName;
+
+	// CAI_Motor moves at the sequence's ground speed (GetSequenceGroundSpeed -> GetIdealSpeed): a zombie's walk
+	// animation carries 45 units/s of root motion, so that is how fast it walks. Sequences without motion (idle,
+	// attacks) leave the last speed alone; movement is stopped separately.
+	const float GroundSpeedUnits = Model->GetSequenceGroundSpeed();
+	if (GroundSpeedUnits > 0.0f)
+	{
+		if (UCharacterMovementComponent* Move = GetCharacterMovement())
+		{
+			Move->MaxWalkSpeed = GroundSpeedUnits * ULambdaSourceSettings::Get().UnitScale;
+		}
+	}
 	return true;
 }
 
@@ -298,6 +311,11 @@ void ASourceNPCBase::Tick(float DeltaSeconds)
 	{
 		AddMovementInput(MoveDirection, 1.0f);
 	}
+	// If it's been a while since we did a full flinch, forget that we flinched so we'll flinch fully again
+	if (bFlinchedMemory && GetWorld()->GetTimeSeconds() > NextFlinchTime)
+	{
+		bFlinchedMemory = false;
+	}
 
 	ThinkAccumulator += DeltaSeconds;
 	while (ThinkAccumulator >= ThinkInterval)
@@ -335,31 +353,194 @@ float ASourceNPCBase::TakeDamage(float DamageAmount, const FDamageEvent& DamageE
 	{
 		return 0.0f;
 	}
-	Health -= DamageAmount;
 	AActor* Attacker = EventInstigator ? EventInstigator->GetPawn() : DamageCauser;
 
-	LastDamageForce = FVector::ZeroVector;
-	LastDamagePosition = GetActorLocation();
+	// The CTakeDamageInfo: ours carries force, position, type and hit group; a plain point event just the point.
+	FSourceDamageEvent Info;
+	Info.Damage = DamageAmount;
+	Info.DamagePosition = GetActorLocation();
 	if (DamageEvent.IsOfType(FSourceDamageEvent::ClassID))
 	{
-		const FSourceDamageEvent& Source = static_cast<const FSourceDamageEvent&>(DamageEvent);
-		LastDamageForce = Source.DamageForce;
-		LastDamagePosition = Source.DamagePosition;
+		Info = static_cast<const FSourceDamageEvent&>(DamageEvent);
+		Info.Damage = DamageAmount;
 	}
 	else if (DamageEvent.IsOfType(FPointDamageEvent::ClassID))
 	{
-		LastDamagePosition = static_cast<const FPointDamageEvent&>(DamageEvent).HitInfo.ImpactPoint;
+		const FPointDamageEvent& Point = static_cast<const FPointDamageEvent&>(DamageEvent);
+		Info.HitInfo = Point.HitInfo;
+		Info.ShotDirection = Point.ShotDirection;
+		Info.DamagePosition = Point.HitInfo.ImpactPoint;
 	}
-	LastDamageForce = CalcDamageForceVector(DamageAmount, LastDamageForce, Attacker);
-	if (Health <= 0.0f)
+
+	// CAI_BaseNPC::TraceAttack: the hit group scales the damage (head shots hurt), then the NPC's own hook.
+	LastHitGroup = Info.HitGroup;
+	float Damage = DamageAmount * GetHitgroupDamageMultiplier(Info.HitGroup, Info);
+	TraceAttack(Info);
+
+	LastDamageForce = CalcDamageForceVector(Damage, Info.DamageForce, Attacker);
+	LastDamagePosition = Info.DamagePosition;
+
+	// CBaseCombatCharacter::OnTakeDamage: OnTakeDamage_Alive applies it (and derived classes scale it first), then
+	// Event_Killed if that was the end - in that order, so a zombie releases its headcrab before it ragdolls.
+	const float HealthBefore = Health;
+	OnTakeDamage_Alive(Damage, Attacker, Info);
+	UE_LOG(LogLambdaSource, Verbose, TEXT("%s took %.1f (x%.1f for hitgroup %d, type %d): health %.1f -> %.1f"),
+		*Entity.ClassName, DamageAmount, GetHitgroupDamageMultiplier(Info.HitGroup, Info), Info.HitGroup, Info.DamageType, HealthBefore, Health);
+	if (Health <= 0.0f && NPCState != ESourceNPCState::Dead)
 	{
 		Event_Killed(Attacker);
 	}
+	return Damage;
+}
+
+void ASourceNPCBase::OnTakeDamage_Alive(float Damage, AActor* Attacker, const FSourceDamageEvent& Info)
+{
+	Health -= Damage;
+	if (Health > 0.0f)
+	{
+		// CAI_BaseNPC::CheckFlinches: heavy damage takes a full-body flinch when the model has one, else a gesture.
+		if (IsHeavyDamage(Damage, Info) && HaveSequenceForActivity(GetFlinchActivity(true, false)) && CanFlinch())
+		{
+			SetActivity(GetFlinchActivity(true, false));
+			NextFlinchTime = GetWorld()->GetTimeSeconds() + FMath::FRandRange(0.5f, 1.0f);
+		}
+		else
+		{
+			PlayFlinchGesture();
+		}
+	}
+}
+
+float ASourceNPCBase::GetHitgroupDamageMultiplier(int32 HitGroup, const FSourceDamageEvent& Info) const
+{
+	FSourceAmmoDef& Skill = FSourceAmmoDef::Get();
+	switch (HitGroup)
+	{
+	case SourceHitGroup::HITGROUP_GENERIC: return 1.0f;
+	case SourceHitGroup::HITGROUP_HEAD: return Skill.GetSkillValue(TEXT("sk_npc_head"), 3.0f);
+	case SourceHitGroup::HITGROUP_CHEST: return Skill.GetSkillValue(TEXT("sk_npc_chest"), 1.0f);
+	case SourceHitGroup::HITGROUP_STOMACH: return Skill.GetSkillValue(TEXT("sk_npc_stomach"), 1.0f);
+	case SourceHitGroup::HITGROUP_LEFTARM:
+	case SourceHitGroup::HITGROUP_RIGHTARM: return Skill.GetSkillValue(TEXT("sk_npc_arm"), 1.0f);
+	case SourceHitGroup::HITGROUP_LEFTLEG:
+	case SourceHitGroup::HITGROUP_RIGHTLEG: return Skill.GetSkillValue(TEXT("sk_npc_leg"), 1.0f);
+	default: return 1.0f;
+	}
+}
+
+FString ASourceNPCBase::GetFlinchActivity(bool bHeavyDamage, bool bGesture) const
+{
+	// CAI_BaseNPC::GetFlinchActivity
+	FString Flinch;
+	switch (LastHitGroup)
+	{
+	case SourceHitGroup::HITGROUP_HEAD: Flinch = bGesture ? TEXT("ACT_GESTURE_FLINCH_HEAD") : TEXT("ACT_FLINCH_HEAD"); break;
+	case SourceHitGroup::HITGROUP_STOMACH: Flinch = bGesture ? TEXT("ACT_GESTURE_FLINCH_STOMACH") : TEXT("ACT_FLINCH_STOMACH"); break;
+	case SourceHitGroup::HITGROUP_LEFTARM: Flinch = bGesture ? TEXT("ACT_GESTURE_FLINCH_LEFTARM") : TEXT("ACT_FLINCH_LEFTARM"); break;
+	case SourceHitGroup::HITGROUP_RIGHTARM: Flinch = bGesture ? TEXT("ACT_GESTURE_FLINCH_RIGHTARM") : TEXT("ACT_FLINCH_RIGHTARM"); break;
+	case SourceHitGroup::HITGROUP_LEFTLEG: Flinch = bGesture ? TEXT("ACT_GESTURE_FLINCH_LEFTLEG") : TEXT("ACT_FLINCH_LEFTLEG"); break;
+	case SourceHitGroup::HITGROUP_RIGHTLEG: Flinch = bGesture ? TEXT("ACT_GESTURE_FLINCH_RIGHTLEG") : TEXT("ACT_FLINCH_RIGHTLEG"); break;
+	case SourceHitGroup::HITGROUP_CHEST: Flinch = bGesture ? TEXT("ACT_GESTURE_FLINCH_CHEST") : TEXT("ACT_FLINCH_CHEST"); break;
+	default:
+		Flinch = bHeavyDamage ? (bGesture ? TEXT("ACT_GESTURE_BIG_FLINCH") : TEXT("ACT_BIG_FLINCH"))
+			: (bGesture ? TEXT("ACT_GESTURE_SMALL_FLINCH") : TEXT("ACT_SMALL_FLINCH"));
+		break;
+	}
+	if (!HaveSequenceForActivity(Flinch))
+	{
+		if (bHeavyDamage)
+		{
+			Flinch = bGesture ? TEXT("ACT_GESTURE_BIG_FLINCH") : TEXT("ACT_BIG_FLINCH");
+			if (!HaveSequenceForActivity(Flinch))
+			{
+				Flinch = bGesture ? TEXT("ACT_GESTURE_SMALL_FLINCH") : TEXT("ACT_SMALL_FLINCH");
+			}
+		}
+		else
+		{
+			Flinch = bGesture ? TEXT("ACT_GESTURE_SMALL_FLINCH") : TEXT("ACT_SMALL_FLINCH");
+		}
+	}
+	return Flinch;
+}
+
+bool ASourceNPCBase::CanFlinch() const
+{
+	return GetWorld() && NextFlinchTime < GetWorld()->GetTimeSeconds();
+}
+
+void ASourceNPCBase::PlayFlinchGesture()
+{
+	// CAI_BaseNPC::PlayFlinchGesture
+	if (!CanFlinch() || !Model)
+	{
+		return;
+	}
+	float FlNextFlinch = FMath::FRandRange(0.5f, 1.0f);
+	FString Flinch;
+	// If I haven't flinched for a while, play the big flinch gesture
+	if (!bFlinchedMemory)
+	{
+		Flinch = GetFlinchActivity(true, true);
+		if (HaveSequenceForActivity(Flinch))
+		{
+			Model->PlayGesture(Flinch);
+		}
+		else
+		{
+			Flinch.Reset();
+		}
+		bFlinchedMemory = true;
+	}
 	else
 	{
-		OnTakeDamage_Alive(DamageAmount, Attacker);
+		Flinch = GetFlinchActivity(false, true);
+		if (HaveSequenceForActivity(Flinch))
+		{
+			Model->PlayGesture(Flinch);
+		}
+		else
+		{
+			Flinch.Reset();
+		}
 	}
-	return DamageAmount;
+	if (!Flinch.IsEmpty())
+	{
+		// Get the duration of the flinch and delay the next one by that (plus a bit more)
+		FlNextFlinch += Model->GetGestureDuration(Flinch);
+		NextFlinchTime = GetWorld()->GetTimeSeconds() + FlNextFlinch;
+	}
+}
+
+bool ASourceNPCBase::HasHitboxes() const
+{
+	return Model && Model->HasHitboxes();
+}
+
+bool ASourceNPCBase::TraceHitboxes(const FVector& Start, const FVector& End, FSourceHitboxHit& OutHit) const
+{
+	return Model && Model->TraceHitboxes(Start, End, OutHit);
+}
+
+void ASourceNPCBase::BecomeRagGib(const FVector& ForceImpulse, const FVector& ForcePosition, float Lifetime)
+{
+	NPCState = ESourceNPCState::Dead;
+	if (UCharacterMovementComponent* Move = GetCharacterMovement())
+	{
+		Move->StopMovementImmediately();
+		Move->DisableMovement();
+	}
+	CorpseLifetime = Lifetime;
+	SetLifeSpan(Lifetime);
+	if (BecomeRagdoll(ForceImpulse, ForcePosition))
+	{
+		GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	}
+	else
+	{
+		GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+		GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+	}
 }
 
 void ASourceNPCBase::Event_Killed(AActor* Attacker)

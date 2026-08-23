@@ -29,7 +29,7 @@ protected:
 	virtual void Spawn() override;
 	virtual void NPCThink() override;
 	virtual void HandleAnimEvent(int32 EventId, const FString& EventName, const FString& Options) override;
-	virtual void OnTakeDamage_Alive(float Damage, AActor* Attacker) override;
+	virtual void OnTakeDamage_Alive(float Damage, AActor* Attacker, const FSourceDamageEvent& Info) override;
 
 	virtual void IdleSound() override { EmitSound(TEXT("NPC_HeadCrab.Idle")); }
 	virtual void AlertSound() override { EmitSound(TEXT("NPC_HeadCrab.Alert")); }

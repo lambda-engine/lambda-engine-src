@@ -1,6 +1,7 @@
 #include "SourceBSPWorldActor.h"
 #include "SourceImpactEffects.h"
 #include "SourceNPCHeadcrab.h"
+#include "SourceNPCZombie.h"
 #include "LambdaFileSystem.h"
 #include "LambdaMaterialLibrary.h"
 #include "LambdaSourceModule.h"
@@ -248,6 +249,10 @@ TSubclassOf<ASourceNPCBase> ASourceBSPWorldActor::NPCClassForName(const FString&
 	if (ClassName.Equals(TEXT("npc_headcrab"), ESearchCase::IgnoreCase))
 	{
 		return ASourceNPCHeadcrab::StaticClass();
+	}
+	if (ClassName.Equals(TEXT("npc_zombie"), ESearchCase::IgnoreCase))
+	{
+		return ASourceNPCZombie::StaticClass();
 	}
 	return nullptr;
 }

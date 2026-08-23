@@ -3,7 +3,10 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
 #include "SourceBSPFile.h"
+#include "SourceDamage.h"
 #include "SourceNPCBase.generated.h"
+
+struct FSourceHitboxHit;
 
 class USourceStudioModelComponent;
 class ULambdaMaterialLibrary;
@@ -18,7 +21,8 @@ enum class ESourceBloodColor : uint8
 	Red,
 	Yellow,
 	Green,
-	Mech
+	Mech,
+	Zombie		// BLOOD_COLOR_ZOMBIE (HL2_EPISODIC): red spray, non-red decals
 };
 
 /** NPC_STATE_* from ai_npcstate.h, the subset a combat NPC moves through. */
@@ -67,6 +71,21 @@ public:
 	ESourceBloodColor GetBloodColor() const { return BloodColor; }
 	/** The ragdoll this NPC became on death, if any. */
 	ASourceRagdoll* GetRagdoll() const { return Ragdoll.Get(); }
+	ASourceBSPWorldActor* GetWorldActor() const { return WorldActor.Get(); }
+	USourceStudioModelComponent* GetModelComponent() const { return Model; }
+
+	/** Bullets hit hitboxes, not the hull (TraceToStudio); false when the model has no hitboxes. */
+	bool HasHitboxes() const;
+	bool TraceHitboxes(const FVector& Start, const FVector& End, FSourceHitboxHit& OutHit) const;
+	/** CAI_BaseNPC::GetHitgroupDamageMultiplier: sk_npc_head etc. from skill.cfg. */
+	virtual float GetHitgroupDamageMultiplier(int32 HitGroup, const FSourceDamageEvent& Info) const;
+	int32 GetLastHitGroup() const { return LastHitGroup; }
+
+	/**
+	 * CreateRagGib: the NPC dies on the spot without a sound and becomes a ragdoll with this impulse, gone after
+	 * Lifetime seconds (how a zombie's headcrab comes off dead).
+	 */
+	void BecomeRagGib(const FVector& ForceImpulse, const FVector& ForcePosition, float Lifetime);
 	bool IsAlive() const { return NPCState != ESourceNPCState::Dead; }
 
 	// ---- CAI_BaseNPC-style helpers, all in UE space unless named "Units" ----
@@ -115,8 +134,19 @@ protected:
 	virtual void NPCThink() {}
 	/** CBaseAnimating::HandleAnimEvent for this model's sequence events. */
 	virtual void HandleAnimEvent(int32 EventId, const FString& EventName, const FString& Options);
-	/** CBaseCombatCharacter::OnTakeDamage_Alive: damage already applied to Health; return false to ignore it. */
-	virtual void OnTakeDamage_Alive(float Damage, AActor* Attacker) {}
+	/** CAI_BaseNPC::TraceAttack hook, called with the hit group before the damage lands (a zombie notes head shots here). */
+	virtual void TraceAttack(const FSourceDamageEvent& Info) {}
+	/**
+	 * CBaseCombatCharacter::OnTakeDamage_Alive: the base applies Damage to Health and flinches; overrides scale the
+	 * damage first and call Super, exactly as the Source classes chain.
+	 */
+	virtual void OnTakeDamage_Alive(float Damage, AActor* Attacker, const FSourceDamageEvent& Info);
+	/** CAI_BaseNPC::IsHeavyDamage: more than 20 points. */
+	virtual bool IsHeavyDamage(float Damage, const FSourceDamageEvent& Info) const { return Damage > 20.0f; }
+	/** CAI_BaseNPC::PlayFlinchGesture / GetFlinchActivity / CanFlinch. */
+	void PlayFlinchGesture();
+	FString GetFlinchActivity(bool bHeavyDamage, bool bGesture) const;
+	bool CanFlinch() const;
 	/** CBaseCombatCharacter::Event_Killed. */
 	virtual void Event_Killed(AActor* Attacker);
 	/**
@@ -160,6 +190,9 @@ protected:
 	FVector LastDamageForce = FVector::ZeroVector;		// kg*cm/s
 	FVector LastDamagePosition = FVector::ZeroVector;
 	TWeakObjectPtr<ASourceRagdoll> Ragdoll;
+	int32 LastHitGroup = 0;				// m_LastHitGroup
+	float NextFlinchTime = 0.0f;		// m_flNextFlinchTime
+	bool bFlinchedMemory = false;		// bits_MEMORY_FLINCHED
 
 	/** m_flFieldOfView: cosine of the half-angle; 0.5 is 120 degrees. */
 	float FieldOfView = 0.5f;
