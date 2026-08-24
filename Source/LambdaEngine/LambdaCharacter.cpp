@@ -566,9 +566,10 @@ void ALambdaCharacter::UpdatePropCarry(float DeltaSeconds)
 		return;
 	}
 	UWorld* World = GetWorld();
-	// "pPlayer->GetGroundEntity() == pEntity": standing on the thing you are holding drops it.
+	// "pPlayer->GetGroundEntity() == pEntity": standing on the thing you are holding drops it. A prop taken out
+	// of the player's hands by something stronger (the barnacle) is let go of the same way.
 	const FHitResult& Floor = GetCharacterMovement()->CurrentFloor.HitResult;
-	if (!World || Floor.GetActor() == Prop)
+	if (!World || Floor.GetActor() == Prop || Prop->IsCarryRevoked())
 	{
 		DropCarriedProp(false);
 		return;

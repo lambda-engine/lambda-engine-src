@@ -110,6 +110,109 @@ bool TraceBullet(UWorld* World, const FVector& Start, const FVector& End, FColli
 	return false;
 }
 
+void SpawnBloodSpray(UWorld* World, ULambdaMaterialLibrary* Materials, const FVector& Origin,
+	const FVector& Normal, ESourceBloodColor Color, float AmountUnits)
+{
+	// FX_BloodSpray (game/client/fx_blood.cpp). "scale" is the amount in Source units; the barnacle's death
+	// throws 8.
+	if (!World || Color == ESourceBloodColor::DontBleed)
+	{
+		return;
+	}
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+	const float SprayScale = FMath::Max(AmountUnits, 1.0f);
+	const FLinearColor BaseColor = BloodColorRGB(Color);
+
+	// The basis the spray fans out in.
+	const FVector N = Normal.GetSafeNormal();
+	FVector Right = (N - FVector::UpVector).IsNearlyZero() ? FVector::UpVector : FVector::CrossProduct(N, FVector::UpVector);
+	if (Right.IsNearlyZero())
+	{
+		Right = FVector::UpVector;
+	}
+	Right.Normalize();
+	const FVector Up = FVector::CrossProduct(Right, N).GetSafeNormal();
+
+	auto Ramp = [&BaseColor](float Min, float Max)
+	{
+		const float ColorRamp = FMath::FRandRange(Min, Max);
+		return FLinearColor(FMath::Min(1.0f, BaseColor.R * ColorRamp), FMath::Min(1.0f, BaseColor.G * ColorRamp),
+			FMath::Min(1.0f, BaseColor.B * ColorRamp));
+	};
+
+	// ---- drops: "long stringy drops of blood", then shorter droplets, under partial gravity ----
+	if (ASourceParticleEffect* Drops = ASourceParticleEffect::Create(World, Origin, Materials))
+	{
+		Drops->SetGravity(600.0f * Scale);
+		const int32 DropMat = Drops->AddMaterial(TEXT("effects/blood_drop"));
+
+		for (int32 i = 0; i < 14; ++i)
+		{
+			FSourceSimpleParticle Particle;
+			Particle.MaterialIndex = DropMat;
+			// "Originate from within a circle 'scale' inches in diameter."
+			Particle.Position = Origin + Right * FMath::FRandRange(-0.5f, 0.5f) * SprayScale * Scale
+				+ Up * FMath::FRandRange(-0.5f, 0.5f) * SprayScale * Scale;
+			const FVector OffDir = N + RandomVector(-0.3f, 0.3f);
+			Particle.Velocity = OffDir * FMath::FRandRange(4.0f * SprayScale, 40.0f * SprayScale) * Scale;
+			Particle.Velocity.Z += FMath::FRandRange(4.0f, 16.0f) * SprayScale * Scale;
+			Particle.DieTime = FMath::FRandRange(0.5f, 1.0f);
+			Particle.Color = BaseColor;
+			Particle.StartSize = FMath::FRandRange(0.25f, 0.375f) * SprayScale * Scale;
+			Particle.EndSize = Particle.StartSize;
+			Particle.StartAlpha = 1.0f;
+			Particle.EndAlpha = 0.0f;
+			Particle.Roll = FMath::DegreesToRadians(FMath::RandRange(0, 360));
+			Drops->AddParticle(Particle);
+		}
+		for (int32 i = 0; i < 24; ++i)
+		{
+			FSourceSimpleParticle Particle;
+			Particle.MaterialIndex = DropMat;
+			Particle.Position = Origin + Right * FMath::FRandRange(-0.5f, 0.5f) * SprayScale * Scale
+				+ Up * FMath::FRandRange(-0.5f, 0.5f) * SprayScale * Scale;
+			FVector OffDir = N + RandomVector(-1.0f, 1.0f);
+			OffDir.Z += FMath::FRandRange(0.0f, 1.0f);
+			Particle.Velocity = OffDir * FMath::FRandRange(2.0f * SprayScale, 25.0f * SprayScale) * Scale;
+			Particle.Velocity.Z += FMath::FRandRange(4.0f, 16.0f) * SprayScale * Scale;
+			Particle.DieTime = FMath::FRandRange(0.5f, 1.0f);
+			Particle.Color = BaseColor;
+			Particle.StartSize = FMath::FRandRange(0.25f, 0.375f) * SprayScale * Scale;
+			Particle.EndSize = Particle.StartSize;
+			Particle.StartAlpha = 1.0f;
+			Particle.EndAlpha = 0.0f;
+			Particle.Roll = FMath::DegreesToRadians(FMath::RandRange(0, 360));
+			Drops->AddParticle(Particle);
+		}
+	}
+
+	// ---- gore: "tight blossom of blood at the center", no gravity ----
+	if (ASourceParticleEffect* Gore = ASourceParticleEffect::Create(World, Origin, Materials))
+	{
+		Gore->SetGravity(0.0f);
+		const int32 GoreMat = Gore->AddMaterial(TEXT("effects/blood_gore"));
+		for (int32 i = 0; i < 6; ++i)
+		{
+			FSourceSimpleParticle Particle;
+			Particle.MaterialIndex = GoreMat;
+			Particle.Position = Origin + 0.5f * SprayScale * Scale * N
+				+ Right * FMath::FRandRange(-0.5f, 0.5f) * SprayScale * Scale
+				+ Up * FMath::FRandRange(-0.5f, 0.5f) * SprayScale * Scale;
+			Particle.Velocity = RandomVector(-0.2f, 0.2f) * Scale + N * FMath::RandRange(10, 100) * Scale;
+			Particle.DieTime = 0.3f;
+			Particle.Color = Ramp(0.75f, 1.25f);
+			Particle.StartSize = FMath::FRandRange(SprayScale * 0.25f, SprayScale) * Scale;
+			Particle.EndSize = Particle.StartSize * 2.0f;
+			Particle.StartAlpha = FMath::FRandRange(0.78f, 1.0f);
+			Particle.EndAlpha = 0.0f;
+			Particle.Roll = FMath::DegreesToRadians(FMath::RandRange(0, 360));
+			Gore->AddParticle(Particle);
+		}
+	}
+
+	UE_LOG(LogLambdaSource, Verbose, TEXT("BloodSpray at %s amount %.0f colour %d"), *Origin.ToString(), AmountUnits, (int32)Color);
+}
+
 void SpawnBlood(UWorld* World, ULambdaMaterialLibrary* Materials, const FVector& Origin, const FVector& Normal, ESourceBloodColor Color)
 {
 	// FX_BloodBulletImpact (game/client/fx_blood.cpp). Source scales the colour by the world light at the point;

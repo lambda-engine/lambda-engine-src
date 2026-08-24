@@ -95,6 +95,13 @@ public:
 
 	/** True while a player is carrying this prop. */
 	bool IsHeld() const { return Carrier.IsValid(); }
+	/**
+	 * Something stronger than the player took this prop (the barnacle's tongue). The carrier is let go of here,
+	 * and the flag tells him to stop driving it on his next frame.
+	 */
+	void RevokeCarry();
+	bool IsCarryRevoked() const { return bCarryRevoked; }
+
 	/** SF_PHYSPROP_PREVENT_PICKUP: the mapper marked this prop as one the player may not pick up. */
 	bool IsPickupPrevented() const { return bPickupPrevented; }
 	/** AttachEntity: the prop stops falling on its own and follows the carrier. */
@@ -139,6 +146,7 @@ private:
 	float CarryErrorTime = 0.0f;
 	float CarryError = 0.0f;
 	bool bPickupPrevented = false;
+	bool bCarryRevoked = false;
 	FSourceEntity Entity;
 	FString SurfaceProp;
 	float SizeUnits = 0.0f;

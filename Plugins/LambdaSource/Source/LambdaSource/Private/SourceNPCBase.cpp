@@ -676,6 +676,24 @@ void ASourceNPCBase::Event_Killed(AActor* Attacker)
 	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
 }
 
+ASourceRagdoll* ASourceNPCBase::BecomeRagdollSilent()
+{
+	if (NPCState == ESourceNPCState::Dead)
+	{
+		return Ragdoll.Get();
+	}
+	NPCState = ESourceNPCState::Dead;
+	if (UCharacterMovementComponent* Move = GetCharacterMovement())
+	{
+		Move->StopMovementImmediately();
+		Move->DisableMovement();
+	}
+	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	// No force: the tongue holds it up, it does not get thrown anywhere.
+	BecomeRagdoll(FVector::ZeroVector, GetActorLocation());
+	return Ragdoll.Get();
+}
+
 bool ASourceNPCBase::BecomeRagdoll(const FVector& ForceImpulse, const FVector& ForcePosition)
 {
 	if (!Model || !Model->HasModel() || Ragdoll.IsValid())

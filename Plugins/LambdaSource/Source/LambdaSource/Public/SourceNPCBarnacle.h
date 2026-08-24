@@ -10,6 +10,7 @@ enum class EBarnaclePhase : uint8
 	Idle,			// tongue down, waiting for something to touch it
 	Lifting,		// hauling the victim up towards the mouth
 	Biting,			// victim at the mouth, being bitten
+	Swallowing,		// the corpse is being drawn up into the mouth
 	Digesting,		// meal swallowed, bloated and burping
 	Dead,
 };
@@ -59,6 +60,10 @@ private:
 	void LiftPrey();
 	/** BitePrey: the bite lands. */
 	void BitePrey();
+	/** SwallowPrey: the corpse travels up into the mouth and is gone. */
+	void SwallowPrey();
+	/** Where the tongue is holding its victim: the corpse's middle, a prop's centre, a victim's eyes. */
+	FVector GetHeldPoint() const;
 	/** LostPrey: let go of whatever is on the tongue. */
 	void LostPrey();
 	/** SpitPrey: an inedible mouthful is flung away. */
@@ -70,6 +75,10 @@ private:
 
 	EBarnaclePhase Phase = EBarnaclePhase::Idle;
 	TWeakObjectPtr<AActor> Victim;
+	/** A grabbed NPC is ragdolled at once and the corpse is what the tongue actually carries. */
+	TWeakObjectPtr<class ASourceRagdoll> VictimRagdoll;
+	/** The dead NPC whose model the ragdoll poses; it goes down the gullet with the corpse. */
+	TWeakObjectPtr<AActor> VictimBody;
 
 	/** m_flAltitude: how far below the root the tongue tip hangs, Source units. */
 	float AltitudeUnits = 0.0f;

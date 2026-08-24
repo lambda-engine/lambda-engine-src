@@ -47,6 +47,13 @@ public:
 	FVector GetCentreOfMass() const;
 	/** The heaviest body's location - something a scripted shot can actually hit. */
 	FVector GetAimPoint() const;
+	/**
+	 * A corpse on the barnacle's tongue: gravity comes off every piece and the whole thing is driven as one, the
+	 * way vphysics moves a ragdoll attached to the tongue tip.
+	 */
+	void SetHeldByTongue(bool bHeld);
+	void SetHangVelocity(const FVector& VelocityCm);
+
 	/** The .phy solids' surfaceprop ("alienflesh"), for impact sounds on the corpse. */
 	const FString& GetSurfaceProp() const { return SurfaceProp; }
 

@@ -640,6 +640,7 @@ void ASourcePropPhysics::StartCarry(APawn* Player)
 		return;
 	}
 	Carrier = Player;
+	bCarryRevoked = false;
 	// AttachEntity: gravity stops acting on the held object and its damping goes up, so it hangs steadily in
 	// front of the player instead of swinging, and its mass is reduced while it is being carried.
 	Body->SetEnableGravity(false);
@@ -652,6 +653,15 @@ void ASourcePropPhysics::StartCarry(APawn* Player)
 	// A held prop should not shove the player who is holding it.
 	Body->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
 	Body->WakeAllRigidBodies();
+}
+
+void ASourcePropPhysics::RevokeCarry()
+{
+	if (IsHeld())
+	{
+		StopCarry(false);
+	}
+	bCarryRevoked = true;
 }
 
 void ASourcePropPhysics::StopCarry(bool bThrown)

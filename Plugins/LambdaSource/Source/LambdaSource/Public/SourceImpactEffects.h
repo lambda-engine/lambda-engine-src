@@ -48,6 +48,14 @@ namespace SourceImpact
 	LAMBDASOURCE_API void SpawnBlood(UWorld* World, ULambdaMaterialLibrary* Materials, const FVector& Origin,
 		const FVector& Normal, ESourceBloodColor Color);
 
+	/**
+	 * UTIL_BloodSpray -> FX_BloodSpray: the big spray, the one a death throws out - stringy drops under gravity
+	 * and a tight blossom of gore at the middle, both sized by Source's "amount" (its scale, in units).
+	 * Not ported: the mist cloud (FX_BLOODSPRAY_CLOUD) and the trail stretching on the drops.
+	 */
+	LAMBDASOURCE_API void SpawnBloodSpray(UWorld* World, ULambdaMaterialLibrary* Materials, const FVector& Origin,
+		const FVector& Normal, ESourceBloodColor Color, float AmountUnits);
+
 	/** CBaseEntity::TraceBleed: blood decals on the world behind the wound, along the shot. */
 	LAMBDASOURCE_API void TraceBleed(UWorld* World, ULambdaMaterialLibrary* Materials, const FHitResult& Wound,
 		const FVector& ShotDirection, float Damage, ESourceBloodColor Color, const TArray<const AActor*>& Ignore);

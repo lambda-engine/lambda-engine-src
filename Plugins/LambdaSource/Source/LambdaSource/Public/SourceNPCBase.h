@@ -89,6 +89,12 @@ public:
 	 * Lifetime seconds (how a zombie's headcrab comes off dead).
 	 */
 	void BecomeRagGib(const FVector& ForceImpulse, const FVector& ForcePosition, float Lifetime);
+	/**
+	 * The barnacle's tongue has it: the body is handed to physics where it hangs, with no death sound and no
+	 * death animation - CNPC_Barnacle::AttachTongueToTarget ragdolls its victim the moment it grabs it and hides
+	 * the NPC behind the ragdoll. Returns the corpse, or null if the model has no collision to ragdoll with.
+	 */
+	class ASourceRagdoll* BecomeRagdollSilent();
 	bool IsAlive() const { return NPCState != ESourceNPCState::Dead; }
 
 	// ---- CAI_BaseNPC-style helpers, all in UE space unless named "Units" ----

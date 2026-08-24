@@ -235,6 +235,30 @@ void ASourceRagdoll::Tick(float DeltaSeconds)
 	UpdatePose();
 }
 
+void ASourceRagdoll::SetHeldByTongue(bool bHeld)
+{
+	for (const TObjectPtr<UProceduralMeshComponent>& Body : Bodies)
+	{
+		if (Body)
+		{
+			Body->SetEnableGravity(!bHeld);
+			Body->WakeAllRigidBodies();
+		}
+	}
+}
+
+void ASourceRagdoll::SetHangVelocity(const FVector& VelocityCm)
+{
+	// Every piece is given the same velocity, so the corpse travels as a unit and its joints keep it hanging.
+	for (const TObjectPtr<UProceduralMeshComponent>& Body : Bodies)
+	{
+		if (Body && Body->IsSimulatingPhysics())
+		{
+			Body->SetPhysicsLinearVelocity(VelocityCm);
+		}
+	}
+}
+
 FVector ASourceRagdoll::GetCentreOfMass() const
 {
 	FVector Sum = FVector::ZeroVector;
