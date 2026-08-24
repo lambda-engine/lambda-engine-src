@@ -17,6 +17,10 @@ USourceStudioModelComponent::USourceStudioModelComponent(const FObjectInitialize
 	SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	SetCastShadow(false);
 
+	// Models are shot at and have to show it. A skinned component does not take decals by default, and
+	// SpawnDecalAttached quietly returns nothing for a component that refuses them.
+	bReceivesDecals = true;
+
 }
 
 void USourceStudioModelComponent::ApplySkeletalMesh()
@@ -31,6 +35,10 @@ void USourceStudioModelComponent::ApplySkeletalMesh()
 	if (Mesh)
 	{
 		SetSkinnedAssetAndUpdate(Mesh, /*bReinitPose=*/ true);
+		// Re-stated after the asset is on: models are shot at and have to show it, and a skinned component
+		// does not take decals of its own accord - SpawnDecalAttached quietly returns nothing for one that
+		// refuses them, which is what swallowed every bullet mark on an NPC.
+		SetReceivesDecals(true);
 	}
 }
 

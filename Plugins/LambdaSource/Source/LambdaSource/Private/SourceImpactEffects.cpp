@@ -12,6 +12,7 @@
 #include "SourcePropPhysics.h"
 #include "SourceRagdoll.h"
 #include "SourceStudioModelComponent.h"
+#include "SourceMDLFile.h"
 #include "Components/DecalComponent.h"
 #include "Engine/HitResult.h"
 #include "Kismet/GameplayStatics.h"
@@ -59,9 +60,20 @@ namespace SourceImpact
 		const float SizeCm = FMath::Max(0.5f, SizeUnits + FMath::FRandRange(-Variance, Variance)) * Settings.UnitScale;
 		FRotator Rotation = (-Hit.ImpactNormal).Rotation();
 		Rotation.Roll = FMath::FRandRange(0.0f, 360.0f);
+		// Attached to whatever was hit, and to the bone if it was a model: a decal on a creature has to travel
+		// with the part of it that was shot.
 		UDecalComponent* Decal = UGameplayStatics::SpawnDecalAttached(DecalMaterial,
-			FVector(SizeCm, SizeCm * 0.5f, SizeCm * 0.5f), Hit.GetComponent(), NAME_None,
+			FVector(SizeCm, SizeCm * 0.5f, SizeCm * 0.5f), Hit.GetComponent(), Hit.BoneName,
 			Hit.ImpactPoint, Rotation, EAttachLocation::KeepWorldPosition, Settings.DecalLifetime);
+		if (!Decal)
+		{
+			UPrimitiveComponent* Target = Hit.GetComponent();
+			// Worth saying out loud: a component that does not take decals makes SpawnDecalAttached return
+			// nothing at all, with no complaint of its own.
+			UE_LOG(LogLambdaSource, Verbose, TEXT("SpawnDecal '%s': refused by '%s' (receivesDecals %d, bone '%s')"),
+				*DecalName, *GetNameSafe(Target), Target ? (Target->bReceivesDecals ? 1 : 0) : -1,
+				*Hit.BoneName.ToString());
+		}
 		if (Decal)
 		{
 			Decal->SetFadeScreenSize(0.0f);
@@ -99,6 +111,19 @@ bool TraceBullet(UWorld* World, const FVector& Start, const FVector& End, FColli
 				OutHit.Location = Box.Point;
 				OutHit.Distance = Box.Distance;
 				OutHitGroup = Box.Group;
+				// Which bone was hit, so anything left behind on the model - a decal - can be hung off that bone
+				// and move with it instead of sitting in the air where the creature used to be.
+				if (const USourceStudioModelComponent* ModelComponent = NPC->GetModelComponent())
+				{
+					if (const FSourceMDLFile* Mdl = ModelComponent->GetModel())
+					{
+						if (Mdl->GetBones().IsValidIndex(Box.Bone))
+						{
+							OutHit.BoneName = FName(*Mdl->GetBones()[Box.Bone].Name);
+							OutHit.Component = const_cast<USourceStudioModelComponent*>(ModelComponent);
+						}
+					}
+				}
 				return true;
 			}
 			// the hull was in the way but no hitbox was: the bullet passes this NPC by
@@ -436,15 +461,16 @@ void PlayImpact(const FHitResult& Hit, ULambdaMaterialLibrary* Materials, UObjec
 		}
 		TraceBleed(World, Materials, Hit, ShotDirection, Damage, Color, Ignore);
 	}
-	else
-	{
-		// ---- Decal ----
-		FSourceDecalScript& Decals = FSourceDecalScript::Get();
-		Decals.Initialize();
-		// UDecalComponent projects along its +X axis, so SpawnDecalAt faces it down the surface normal with a random
-		// roll (Source's) and Source 2's DecalSizeVariance, attached to what was hit so it rides along with doors.
-		SpawnDecal(Hit, Materials, Decals.GetImpactDecalMaterial(Info.GameMaterial));
-	}
+
+	// ---- Decal ----
+	// Impact() in fx_impact.cpp marks whatever it hit - AddDecal on the entity - and the game material decides
+	// what the mark is, so flesh is marked with flesh and a wall with a bullet hole. A creature gets both: the
+	// blood above is thrown into the air and off onto the walls, this is what stays on the creature.
+	FSourceDecalScript& Decals = FSourceDecalScript::Get();
+	Decals.Initialize();
+	// UDecalComponent projects along its +X axis, so SpawnDecalAt faces it down the surface normal with a random
+	// roll (Source's) and Source 2's DecalSizeVariance, attached to what was hit so it rides along with doors.
+	SpawnDecal(Hit, Materials, Decals.GetImpactDecalMaterial(Info.GameMaterial));
 
 	// ---- Sound ----
 	if (!Info.BulletImpactSound.IsEmpty() && SoundOuter)
