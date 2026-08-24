@@ -1,4 +1,6 @@
 #include "LambdaGameMode.h"
+#include "LambdaMainMenu.h"
+#include "Engine/GameInstance.h"
 #include "LambdaCharacter.h"
 #include "LambdaHUD.h"
 #include "LambdaEngine.h"
@@ -41,10 +43,8 @@ FString ALambdaGameMode::ResolveRequestedMapName(const FString& Options)
 			}
 		}
 	}
-	if (Name.IsEmpty())
-	{
-		Name = ULambdaSourceSettings::Get().DefaultMap;
-	}
+	// Deliberately no fall back to DefaultMap: with nothing asked for, the game opens its menu, and DefaultMap
+	// is what New Game starts there.
 	Name.TrimStartAndEndInline();
 	return Name;
 }
@@ -72,8 +72,26 @@ void ALambdaGameMode::EnsureMapLoaded()
 	const FString SourceMap = ResolveRequestedMapName(OptionsString);
 	if (SourceMap.IsEmpty())
 	{
-		UE_LOG(LogLambda, Warning, TEXT("No Source map requested (use -map=<name>, ?map=<name> or set DefaultMap in Project Settings > Lambda Source)"));
+		// Nothing was asked for, so the game starts where Source starts: at the menu. DefaultMap is what New
+		// Game will load from there.
+		UE_LOG(LogLambda, Log, TEXT("No map requested - opening the main menu"));
+		if (UGameInstance* Instance = World->GetGameInstance())
+		{
+			if (ULambdaMainMenu* Menu = Instance->GetSubsystem<ULambdaMainMenu>())
+			{
+				Menu->Show();
+			}
+		}
 		return;
+	}
+
+	// A map was asked for, so whatever the menu was doing is over.
+	if (UGameInstance* Instance = World->GetGameInstance())
+	{
+		if (ULambdaMainMenu* Menu = Instance->GetSubsystem<ULambdaMainMenu>())
+		{
+			Menu->Hide();
+		}
 	}
 
 	FActorSpawnParameters Params;

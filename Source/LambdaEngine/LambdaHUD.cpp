@@ -8,6 +8,9 @@
 #include "LambdaMaterialLibrary.h"
 #include "LambdaFileSystem.h"
 #include "LambdaEngine.h"
+#include "LambdaConsole.h"
+#include "LambdaMainMenu.h"
+#include "Engine/GameInstance.h"
 #include "Engine/FontFace.h"
 
 ALambdaHUD::ALambdaHUD()
@@ -152,6 +155,100 @@ FString ALambdaHUD::AmmoIconName(const FString& AmmoType)
 	};
 	const FString* Found = Icons.Find(AmmoType.ToLower());
 	return FString::Printf(TEXT("vgui/hud/%s"), Found ? **Found : TEXT("ammo_9mm"));
+}
+
+void ALambdaHUD::DrawMainMenu(ULambdaMainMenu* Menu, float W, float H)
+{
+	if (!Menu || !Menu->IsActive() || !HudFont)
+	{
+		return;
+	}
+	// No 3D behind it yet, so it sits on black.
+	DrawRect(FLinearColor(0.02f, 0.02f, 0.02f, 1.0f), 0.0f, 0.0f, W, H);
+
+	const float Scale = H / 480.0f;
+
+	// The game's name, where Source puts the logo.
+	const float TitleHeight = 44.0f * Scale;
+	float Unused = 0.0f, FontHeight = 0.0f;
+	GetTextSize(TEXT("Wg"), Unused, FontHeight, HudFont, 1.0f);
+	const float TitleScale = FontHeight > 0.0f ? TitleHeight / FontHeight : 1.0f;
+	DrawText(TEXT("LAMBDA ENGINE"), ULambdaMainMenu::TitleColour(), 32.0f * Scale, 48.0f * Scale, HudFont, TitleScale);
+
+	// The items, down the bottom left, the way the old menu reads.
+	const float ItemHeight = 22.0f * Scale;
+	const float ItemScale = FontHeight > 0.0f ? (ItemHeight * 0.8f) / FontHeight : 1.0f;
+	TArray<FLambdaMenuItem>& Items = Menu->GetMutableItems();
+	float Y = H - 40.0f * Scale - Items.Num() * ItemHeight;
+
+	for (int32 i = 0; i < Items.Num(); ++i)
+	{
+		const bool bSelected = (i == Menu->GetSelected());
+		const float X = 32.0f * Scale;
+
+		float TextW = 0.0f, TextH = 0.0f;
+		GetTextSize(Items[i].Label, TextW, TextH, HudFont, ItemScale);
+
+		// Remember where it went, so a click lands on what was drawn.
+		Items[i].Bounds = FBox2D(FVector2D(X, Y), FVector2D(X + FMath::Max(TextW, 120.0f * Scale), Y + TextH));
+
+		if (bSelected)
+		{
+			// Source marks the one you are on with a bar down its left.
+			DrawRect(ULambdaMainMenu::SelectedColour(), X - 10.0f * Scale, Y, 3.0f * Scale, TextH);
+		}
+		DrawText(Items[i].Label, bSelected ? ULambdaMainMenu::SelectedColour() : ULambdaMainMenu::ItemColour(),
+			X, Y, HudFont, ItemScale);
+		Y += ItemHeight;
+	}
+}
+
+void ALambdaHUD::DrawConsole(ULambdaConsole* Console, float W, float H)
+{
+	if (!Console || !Console->IsOpen() || !HudFont)
+	{
+		return;
+	}
+	// It covers the top half of the screen, as Source's does, and everything under it carries on.
+	const float PanelH = FMath::Min(H * 0.55f, 520.0f);
+	DrawRect(ULambdaConsole::BackgroundColour(), 0.0f, 0.0f, W, PanelH);
+	// A line under it to separate it from the game.
+	DrawRect(FLinearColor(0.0f, 0.0f, 0.0f, 0.9f), 0.0f, PanelH, W, 2.0f);
+
+	float Unused = 0.0f, LineHeight = 0.0f;
+	GetTextSize(TEXT("Wg"), Unused, LineHeight, HudFont, 1.0f);
+	LineHeight = FMath::Max(LineHeight, 12.0f);
+
+	const float Margin = 8.0f;
+	const float EntryY = PanelH - LineHeight - Margin;
+
+	// The line being typed sits at the bottom of the panel behind a "]", with a caret that blinks.
+	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	const bool bCaret = FMath::Fmod(Now, 1.0f) < 0.5f;
+	const FString Entry = FString::Printf(TEXT("] %s%s"), *Console->GetInput(), bCaret ? TEXT("_") : TEXT(""));
+	DrawText(Entry, ULambdaConsole::EchoColour(), Margin, EntryY, HudFont, 1.0f);
+
+	// What it has said, newest at the bottom, oldest scrolling off the top.
+	const TArray<FLambdaConsoleLine>& Lines = Console->GetLines();
+	const int32 Last = Lines.Num() - 1 - Console->GetScrollBack();
+	float Y = EntryY - LineHeight - 4.0f;
+	for (int32 i = Last; i >= 0 && Y > Margin - LineHeight; --i)
+	{
+		if (Lines.IsValidIndex(i))
+		{
+			DrawText(Lines[i].Text, Lines[i].Color, Margin, Y, HudFont, 1.0f);
+		}
+		Y -= LineHeight;
+	}
+
+	// Say so when the view is scrolled back, or it looks like the console has stopped saying anything.
+	if (Console->GetScrollBack() > 0)
+	{
+		const FString Note = FString::Printf(TEXT("-- scrolled back %d lines --"), Console->GetScrollBack());
+		float NoteW = 0.0f, NoteH = 0.0f;
+		GetTextSize(Note, NoteW, NoteH, HudFont, 1.0f);
+		DrawText(Note, ULambdaConsole::WarningColour(), W - NoteW - Margin, EntryY, HudFont, 1.0f);
+	}
 }
 
 void ALambdaHUD::DrawCrosshair(float CenterX, float CenterY)
@@ -299,9 +396,24 @@ void ALambdaHUD::DrawHUD()
 		DrawText(FpsText, FpsColour, W - TextW - 12.0f, 8.0f, HudFont, 1.0f);
 	}
 
+	// The console sits over everything, and is drawn whether or not there is a player behind it - it has to work
+	// on the menu too.
+	UGameInstance* Instance = GetGameInstance();
+	ULambdaConsole* Console = Instance ? Instance->GetSubsystem<ULambdaConsole>() : nullptr;
+	ULambdaMainMenu* Menu = Instance ? Instance->GetSubsystem<ULambdaMainMenu>() : nullptr;
+
+	// On the menu there is no game to draw a HUD over.
+	if (Menu && Menu->IsActive())
+	{
+		DrawMainMenu(Menu, W, H);
+		DrawConsole(Console, W, H);
+		return;
+	}
+
 	ALambdaCharacter* Player = Cast<ALambdaCharacter>(GetOwningPawn());
 	if (!Player)
 	{
+		DrawConsole(Console, W, H);
 		return;
 	}
 	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
@@ -351,6 +463,8 @@ void ALambdaHUD::DrawHUD()
 		DrawHudIcon(TEXT("vgui/hud/hud_hev_overlay"), ArmourRight + 2.0f * S, RowY + 8.0f * S, 14.0f * S,
 			Armour > 0 ? HudColour : HudColourDim);
 	}
+
+	DrawConsole(Console, W, H);
 
 	DrawDamageIndicator(Player, W, H, Now);
 	DrawWeaponSelection(Player, W, Now);

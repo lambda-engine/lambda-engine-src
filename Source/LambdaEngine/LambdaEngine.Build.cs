@@ -20,6 +20,6 @@ public class LambdaEngine : ModuleRules
 		});
 
 		// SlateCore: the runtime font face the HUD builds from the scheme's own .ttf (FFontFaceData/FFontData).
-		PrivateDependencyModuleNames.AddRange(new string[] { "SlateCore" });
+		PrivateDependencyModuleNames.AddRange(new string[] { "SlateCore", "Slate" });
 	}
 }
