@@ -118,13 +118,14 @@ bool FSourceVTFFile::Load(TArray<uint8>&& InData, FString* OutError)
 				LowResDataOffset = ResData;
 			}
 		}
-		if (ImageDataOffset < 0)
-		{
-			return Fail(TEXT("VTF 7.3+ file has no image resource entry"));
-		}
 	}
-	else
+
+	if (ImageDataOffset < 0)
 	{
+		// Either an older file, or a 7.3+ one that never wrote a resource dictionary. Tools do produce the
+		// latter - a 7.4 header with numResources 0 - and the data is then laid out the way it always was:
+		// the header, the low-res thumbnail, then the mip chain. Reading it that way costs nothing and is
+		// checked against the file's length below, so a genuinely broken file still fails.
 		int64 LowResBytes = 0;
 		if ((int32)Header.LowResImageFormat >= 0 && Header.LowResWidth > 0 && Header.LowResHeight > 0)
 		{
