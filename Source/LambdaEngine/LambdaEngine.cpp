@@ -1,5 +1,6 @@
 #include "LambdaEngine.h"
 #include "LambdaFileSystem.h"
+#include "Misc/CommandLine.h"
 #include "Engine/World.h"
 #include "GameMapsSettings.h"
 #include "HAL/IConsoleManager.h"
@@ -17,9 +18,59 @@
 
 DEFINE_LOG_CATEGORY(LogLambda);
 
+namespace
+{
+	/**
+	 * Source-style launcher arguments. "LambdaEngine.exe +map mymap" runs mymap.bsp - but the bare "+map" token
+	 * must never reach the engine's own parsing: UGameInstance::GetMapOverrideName takes the first token that does
+	 * not start with '-' as a UE map override, would read the override as a map called "+map", fail to browse to
+	 * it and exit. The game module loads before StartGameInstance runs, so the tokens are rewritten here into the
+	 * -sourcemap= switch the rest of the game already understands.
+	 */
+	void TranslateSourceLauncherArgs()
+	{
+		const FString CmdLine = FCommandLine::Get();
+
+		// Find "+map" standing alone as a token.
+		int32 TokenStart = INDEX_NONE;
+		for (int32 i = 0; i + 4 <= CmdLine.Len(); ++i)
+		{
+			if ((i == 0 || FChar::IsWhitespace(CmdLine[i - 1]))
+				&& FCString::Strnicmp(*CmdLine + i, TEXT("+map"), 4) == 0
+				&& (i + 4 == CmdLine.Len() || FChar::IsWhitespace(CmdLine[i + 4])))
+			{
+				TokenStart = i;
+				break;
+			}
+		}
+		if (TokenStart == INDEX_NONE)
+		{
+			return;
+		}
+
+		// The map name is the next token; it is taken out of the command line along with "+map" itself, or the
+		// engine would seize the now-leading bare name as its own map override.
+		int32 End = TokenStart + 4;
+		while (End < CmdLine.Len() && FChar::IsWhitespace(CmdLine[End])) { ++End; }
+		const int32 ValueStart = End;
+		while (End < CmdLine.Len() && !FChar::IsWhitespace(CmdLine[End])) { ++End; }
+		FString MapName = CmdLine.Mid(ValueStart, End - ValueStart);
+		MapName = MapName.TrimQuotes();
+
+		FString NewCmdLine = CmdLine.Left(TokenStart) + CmdLine.Mid(End);
+		if (!MapName.IsEmpty())
+		{
+			NewCmdLine += FString::Printf(TEXT(" -sourcemap=%s"), *MapName);
+		}
+		FCommandLine::Set(*NewCmdLine);
+		UE_LOG(LogLambda, Log, TEXT("+map %s -> -sourcemap=%s"), *MapName, *MapName);
+	}
+}
+
 void FLambdaEngineModule::StartupModule()
 {
 	UE_LOG(LogLambda, Log, TEXT("LambdaEngine game module started"));
+	TranslateSourceLauncherArgs();
 }
 
 void FLambdaEngineModule::ShutdownModule()

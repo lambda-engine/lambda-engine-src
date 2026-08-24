@@ -10,6 +10,7 @@
 #include "SourceCoordinates.h"
 #include "SourceDamage.h"
 #include "SourcePHYFile.h"
+#include "SourcePropPhysics.h"
 #include "SourceRagdoll.h"
 #include "SourceStudioModelComponent.h"
 #include "Components/CapsuleComponent.h"
@@ -39,6 +40,9 @@ ASourceNPCBase::ASourceNPCBase(const FObjectInitializer& ObjectInitializer)
 		Move->GroundFriction = 8.0f;
 		Move->bCanWalkOffLedges = true;
 		Move->SetWalkableFloorAngle(45.0f);
+		// Unreal's own physics interaction shoves objects with a force of its own choosing; an NPC's shadow pushes
+		// what it walks into at its own pace and no harder, through ShadowPush - same as the player.
+		Move->bEnablePhysicsInteraction = false;
 	}
 	// Only a player controller may possess this; there is no AIController behind it.
 	AutoPossessAI = EAutoPossessAI::Disabled;
@@ -322,6 +326,13 @@ const FString& ASourceNPCBase::GetSurfaceProp() const
 bool ASourceNPCBase::ShouldPlayIdleSound() const
 {
 	return (NPCState == ESourceNPCState::Idle || NPCState == ESourceNPCState::Alert) && FMath::RandRange(0, 99) == 0;
+}
+
+void ASourceNPCBase::NotifyHit(UPrimitiveComponent* MyComp, AActor* Other, UPrimitiveComponent* OtherComp, bool bSelfMoved,
+	FVector HitLocation, FVector HitNormal, FVector NormalImpulse, const FHitResult& Hit)
+{
+	Super::NotifyHit(MyComp, Other, OtherComp, bSelfMoved, HitLocation, HitNormal, NormalImpulse, Hit);
+	ASourcePropPhysics::ShadowPush(Hit.GetComponent(), Hit, GetVelocity(), *GetClassName());
 }
 
 void ASourceNPCBase::Tick(float DeltaSeconds)

@@ -26,6 +26,21 @@ FString ALambdaGameMode::ResolveRequestedMapName(const FString& Options)
 		FParse::Value(FCommandLine::Get(), TEXT("sourcemap="), Name);
 		Name.TrimQuotesInline();
 	}
+	// "+map <name>", the way Source's launcher takes it: LambdaEngine.exe +map mymap runs mymap.bsp.
+	if (Name.IsEmpty())
+	{
+		const TCHAR* Cmd = FCommandLine::Get();
+		FString Token;
+		while (FParse::Token(Cmd, Token, false))
+		{
+			if (Token.Equals(TEXT("+map"), ESearchCase::IgnoreCase))
+			{
+				FParse::Token(Cmd, Name, false);
+				Name.TrimQuotesInline();
+				break;
+			}
+		}
+	}
 	if (Name.IsEmpty())
 	{
 		Name = ULambdaSourceSettings::Get().DefaultMap;

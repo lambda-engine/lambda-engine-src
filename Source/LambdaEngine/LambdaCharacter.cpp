@@ -68,11 +68,6 @@ static FAutoConsoleVariableRef CVarSetPosAuto(
 	TEXT("\"<x> <y> <z> [yaw] [pitch]\": move the player to that Source-space position 2s after spawn"));
 
 // lambda.prop_create.auto "<model> [distance_cm]" drops a physics prop in front of the player after spawn.
-// CBasePlayer::SetupVPhysicsShadow: the player's physics shadow weighs 85 kg and its controller is given a push
-// mass limit of 350 kg and a push speed limit of 50 units/s.
-constexpr float PLAYER_PUSH_MASS_LIMIT_KG = 350.0f;
-constexpr float PLAYER_PUSH_SPEED_LIMIT_UNITS = 50.0f;
-
 static FString GPropCreateAuto;
 static FAutoConsoleVariableRef CVarPropCreateAuto(
 	TEXT("lambda.prop_create.auto"),
@@ -557,18 +552,14 @@ void ALambdaCharacter::UpdatePropCarry(float DeltaSeconds)
 	const float RadiusCm = PlayerHullRadiusCm() + Prop->GetExtentAlong(-Forward);
 	const float DistanceCm = 24.0f * Scale + RadiusCm * 2.0f;
 
-	// The hold point is pulled in when it would be inside the world - up against a wall the prop comes back
-	// towards the player rather than pushing through it. MASK_SOLID_BRUSHONLY: only the level counts here, so
-	// standing near another prop does not yank what you are holding into your face.
-	FHitResult Wall;
+	// Source pulls the hold point in to radius/2 when its view trace hits the world at close range. That rule is
+	// not used here: with the view aimed under the horizon it names a spot between the eye and the floor that a
+	// crate cannot possibly occupy, and physics answered by squeezing the crate up past the player's head. The
+	// prop-shaped sweep below does the same job properly - it stops the hold point at the farthest place along
+	// the view ray the prop actually fits.
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(LambdaCarryClear), false, this);
 	Params.AddIgnoredActor(Prop);
 	FVector Target = Eye + Forward * (DistanceCm - RadiusCm);
-	if (World->LineTraceSingleByObjectType(Wall, Eye, Eye + Forward * DistanceCm,
-		FCollisionObjectQueryParams(ECC_WorldStatic), Params) && (Wall.Time < 0.5f))
-	{
-		Target = Eye + Forward * (RadiusCm * 0.5f);
-	}
 
 	// Source then pushes the hold point radially away from the player's own column, so that a held object cannot
 	// end up inside him. A prop being carried here already ignores the player, so it has no such work to do - and
@@ -624,40 +615,12 @@ void ALambdaCharacter::NotifyHit(UPrimitiveComponent* MyComp, AActor* Other, UPr
 
 void ALambdaCharacter::PushPhysicsObject(const FHitResult& Hit)
 {
-	UPrimitiveComponent* Body = Hit.GetComponent();
-	if (!Body || !Body->IsSimulatingPhysics())
-	{
-		return;
-	}
 	// The prop in the player's hands is driven by the grab controller; walking into it must not shove it as well.
 	if (CarriedProp.IsValid() && Hit.GetActor() == CarriedProp.Get())
 	{
 		return;
 	}
-	// SetPushMassLimit( 350 ): the player cannot shift anything heavier than that, he is stopped by it instead.
-	if (Body->GetMass() > PLAYER_PUSH_MASS_LIMIT_KG)
-	{
-		return;
-	}
-
-	// SetPushSpeedLimit( 50 ): the shadow pushes what it runs into, but never faster than 50 units/s - a walked-into
-	// crate slides, it does not fly off. Only the part of the player's motion going into the object counts.
-	const float Scale = ULambdaSourceSettings::Get().UnitScale;
-	const FVector Into = (-Hit.ImpactNormal).GetSafeNormal();
-	const float PlayerSpeed = FVector::DotProduct(GetVelocity(), Into);
-	if (PlayerSpeed <= 0.0f)
-	{
-		return;
-	}
-	const FVector Current = Body->GetPhysicsLinearVelocity();
-	const float CurrentSpeed = FVector::DotProduct(Current, Into);
-	const float Wanted = FMath::Min(PlayerSpeed, PLAYER_PUSH_SPEED_LIMIT_UNITS * Scale);
-	if (Wanted > CurrentSpeed)
-	{
-		Body->SetPhysicsLinearVelocity(Current + Into * (Wanted - CurrentSpeed));
-		UE_LOG(LogLambda, Verbose, TEXT("push %s (%.1f kg): player %.0f u/s -> object %.0f u/s"),
-			*GetNameSafe(Hit.GetActor()), Body->GetMass(), PlayerSpeed / Scale, Wanted / Scale);
-	}
+	ASourcePropPhysics::ShadowPush(Hit.GetComponent(), Hit, GetVelocity(), TEXT("player"));
 }
 
 void ALambdaCharacter::DropCarriedProp(bool bThrown)
@@ -800,13 +763,6 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 		if (AutoCommandTimer >= 2.0f)
 		{
 			bAutoCommandsRun = true;
-			if (!GNPCCreateAuto.IsEmpty())
-			{
-				// "<classname> [distance_cm]"
-				TArray<FString> Parts;
-				GNPCCreateAuto.ParseIntoArrayWS(Parts);
-				AutoFireTarget = NPCCreate(Parts[0], Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : 5000.0f);
-			}
 			if (!GDecalTestAuto.IsEmpty())
 			{
 				TArray<FString> Parts;
@@ -835,6 +791,13 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 					}
 					UE_LOG(LogLambda, Display, TEXT("setpos %s"), *GetActorLocation().ToString());
 				}
+			}
+			if (!GNPCCreateAuto.IsEmpty())
+			{
+				// "<classname> [distance_cm]"
+				TArray<FString> Parts;
+				GNPCCreateAuto.ParseIntoArrayWS(Parts);
+				AutoFireTarget = NPCCreate(Parts[0], Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : 5000.0f);
 			}
 			if (!GPropCreateAuto.IsEmpty())
 			{

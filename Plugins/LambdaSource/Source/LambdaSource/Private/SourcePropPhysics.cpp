@@ -49,6 +49,9 @@ namespace
 	/** CBreakableProp::Break gives the propdata chunks a random fade time in this range. */
 	constexpr float CHUNK_FADE_MIN = 5.0f;
 	constexpr float CHUNK_FADE_MAX = 10.0f;
+	/** CBasePlayer::SetupVPhysicsShadow: SetPushMassLimit( 350 ), SetPushSpeedLimit( 50 ). */
+	constexpr float SHADOW_PUSH_MASS_LIMIT_KG = 350.0f;
+	constexpr float SHADOW_PUSH_SPEED_LIMIT_UNITS = 50.0f;
 	/** m_shadow.maxSpeed / DEFAULT_MAX_ANGULAR: how fast the controller may drag a held object about. */
 	constexpr float SHADOW_MAX_SPEED_UNITS = 1000.0f;
 	constexpr float SHADOW_MAX_ANGULAR_DEGREES = 360.0f * 10.0f;
@@ -56,6 +59,39 @@ namespace
 	/** CBaseEntity::IsInWorld: MAX_COORD_INTEGER, and the speed past which the engine gives up on an object. */
 	constexpr float MAX_COORD_UNITS = 16384.0f;
 	constexpr float MAX_SPEED_UNITS = 2000.0f;
+}
+
+void ASourcePropPhysics::ShadowPush(UPrimitiveComponent* Body, const FHitResult& Hit, const FVector& PusherVelocity,
+	const TCHAR* PusherName)
+{
+	if (!Body || !Body->IsSimulatingPhysics())
+	{
+		return;
+	}
+	// SetPushMassLimit: anything heavier stops the pusher instead of moving.
+	if (Body->GetMass() > SHADOW_PUSH_MASS_LIMIT_KG)
+	{
+		return;
+	}
+
+	// SetPushSpeedLimit: the shadow pushes what it runs into, but never faster than 50 units/s - a walked-into
+	// crate slides, it does not fly off. Only the part of the pusher's motion going into the object counts.
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+	const FVector Into = (-Hit.ImpactNormal).GetSafeNormal();
+	const float PusherSpeed = FVector::DotProduct(PusherVelocity, Into);
+	if (PusherSpeed <= 0.0f)
+	{
+		return;
+	}
+	const FVector Current = Body->GetPhysicsLinearVelocity();
+	const float CurrentSpeed = FVector::DotProduct(Current, Into);
+	const float Wanted = FMath::Min(PusherSpeed, SHADOW_PUSH_SPEED_LIMIT_UNITS * Scale);
+	if (Wanted > CurrentSpeed)
+	{
+		Body->SetPhysicsLinearVelocity(Current + Into * (Wanted - CurrentSpeed));
+		UE_LOG(LogLambdaSource, VeryVerbose, TEXT("push %s (%.1f kg): %s %.0f u/s -> object %.0f u/s"),
+			*GetNameSafe(Hit.GetActor()), Body->GetMass(), PusherName, PusherSpeed / Scale, Wanted / Scale);
+	}
 }
 
 bool ASourcePropPhysics::IsPropClass(const FString& ClassName)

@@ -39,6 +39,14 @@ public:
 
 	static bool IsPropClass(const FString& ClassName);
 
+	/**
+	 * A character's physics shadow pushing what it walks into. Source gives the player's shadow controller a push
+	 * mass limit of 350 kg and a push speed limit of 50 units/s (CBasePlayer::SetupVPhysicsShadow), and an NPC's
+	 * shadow moves what stands in its way under the same discipline: at its own walking pace, never launched.
+	 */
+	static void ShadowPush(UPrimitiveComponent* Body, const FHitResult& Hit, const FVector& PusherVelocity,
+		const TCHAR* PusherName);
+
 	/** Builds one piece of a broken prop: BreakModelCreateSingle. */
 	void InitializeAsGib(const FString& ModelPath, ULambdaMaterialLibrary* Materials, const FTransform& Where,
 		const FVector& Velocity, const FVector& AngularVelocity, float FadeTime);
