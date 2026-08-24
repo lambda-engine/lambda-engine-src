@@ -135,6 +135,72 @@ float USourceStudioModelComponent::TransitionWeight(const FTransitionLayer& Laye
 	return 3.0f * S * S - 2.0f * S * S * S;	// SimpleSpline
 }
 
+void USourceStudioModelComponent::AdvanceCycleOnly(float DeltaTime)
+{
+	// FrameAdvance without the pose: the animation keeps its place in game time so that a model skipped for a
+	// few frames comes back where it should be, not where it was. Animation events still fire - they drive
+	// footsteps and attacks, which have to happen whether or not anyone is looking.
+	if (CurrentSequence == INDEX_NONE)
+	{
+		return;
+	}
+	const float Duration = Model->GetSequenceDuration(CurrentSequence);
+	if (Duration <= 0.0f)
+	{
+		return;
+	}
+	const float PrevCycle = Cycle;
+	Cycle += (DeltaTime * PlaybackRate) / Duration;
+	if (Cycle >= 1.0f)
+	{
+		if (bSequenceLooping)
+		{
+			Cycle = FMath::Fmod(Cycle, 1.0f);
+		}
+		else
+		{
+			Cycle = 1.0f;
+			bSequenceFinished = true;
+		}
+	}
+	if (OnAnimationEvent.IsBound())
+	{
+		TArray<const FSourceStudioEvent*> Events;
+		Model->CollectEvents(CurrentSequence, PrevCycle, Cycle, bSequenceLooping, Events);
+		for (const FSourceStudioEvent* Event : Events)
+		{
+			OnAnimationEvent.Broadcast(Event->Event, Event->Name, Event->Options);
+		}
+	}
+}
+
+bool USourceStudioModelComponent::ShouldComposePoseThisFrame()
+{
+	// Animation LOD. Posing a model means composing its bones, skinning every vertex on the CPU and handing the
+	// whole vertex buffer to the renderer; on the HL:A models, twenty to thirty thousand triangles each, that is
+	// most of a frame. A model on screen earns that every frame. One that is not - behind the player, in another
+	// room, or only casting a shadow into view - gets it ten times a second instead, which is more than enough
+	// for a shadow to stay honest and for anything asking where its bones are, at a tenth of the cost.
+	//
+	// The test is deliberately not IsVisible(), which only reports that the component was not switched off: an
+	// NPC standing behind the player is "visible" by that measure and was paying full price every frame.
+	// GetLastRenderTimeOnScreen, not WasRecentlyRendered: the latter counts a model rendered into a shadow pass
+	// as rendered, and an NPC behind the player casting a shadow into view still answers yes to it - which is
+	// why gating on it saved almost nothing here. What matters is whether the model itself was on screen.
+	const UWorld* World = GetWorld();
+	const float Now = World ? World->GetTimeSeconds() : 0.0f;
+	if (Now - GetLastRenderTimeOnScreen() < 0.15f)
+	{
+		return true;
+	}
+	if (Now - LastPoseTime < 0.1f)
+	{
+		return false;
+	}
+	LastPoseTime = Now;
+	return true;
+}
+
 void USourceStudioModelComponent::ComposePose()
 {
 	SCOPE_CYCLE_COUNTER(STAT_LambdaComposePose);
@@ -355,6 +421,12 @@ void USourceStudioModelComponent::TickComponent(float DeltaTime, ELevelTick Tick
 	{
 		return;
 	}
+	if (!ShouldComposePoseThisFrame())
+	{
+		// The cycle still advances - the animation keeps its place in game time, it is only the pose that waits.
+		AdvanceCycleOnly(DeltaTime);
+		return;
+	}
 
 	// The transition layers keep playing (CSequenceTransitioner::UpdateCurrent) and expire once faded out.
 	bool bGesturesChanged = false;
@@ -461,6 +533,7 @@ void USourceStudioModelComponent::RefreshPose()
 	{
 		return;
 	}
+
 	{
 		SCOPE_CYCLE_COUNTER(STAT_LambdaApplyPose);
 		Model->ApplyPose(BoneToModel);

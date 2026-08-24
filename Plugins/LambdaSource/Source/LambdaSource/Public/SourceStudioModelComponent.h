@@ -122,6 +122,11 @@ private:
 	void RefreshPose();
 	/** Evaluates the current sequence, the sequences fading out behind it and the gesture layers, then refreshes. */
 	void ComposePose();
+	/** Animation LOD: whether this model has earned a new pose this frame (see the definition). */
+	bool ShouldComposePoseThisFrame();
+	/** Moves the animation on in game time without composing anything. */
+	void AdvanceCycleOnly(float DeltaTime);
+	float LastPoseTime = 0.0f;
 
 	struct FGestureLayer
 	{
