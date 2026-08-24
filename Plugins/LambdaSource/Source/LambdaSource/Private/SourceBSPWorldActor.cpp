@@ -14,6 +14,7 @@
 #include "SourceBrushEntity.h"
 #include "SourceFuncDoorRotating.h"
 #include "SourceFuncButton.h"
+#include "SourcePointTemplate.h"
 #include "SourceEntity.h"
 #include "SourceGeometryBuilder.h"
 #include "Components/DirectionalLightComponent.h"
@@ -190,7 +191,98 @@ void ASourceBSPWorldActor::SpawnEntities()
 		return;
 	}
 
+	// MapEntity_ParseAllEntities does the templates before anything else: a point_template takes the keyvalues of
+	// the entities it names, and those entities are then removed, so they are never in the map to begin with.
+	TArray<ASourcePointTemplate*> PointTemplates;
 	for (const FSourceEntity& Entity : BSP->Entities)
+	{
+		if (!Entity.ClassName.Equals(TEXT("point_template"), ESearchCase::IgnoreCase))
+		{
+			continue;
+		}
+		FActorSpawnParameters Params;
+		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		Params.ObjectFlags |= RF_Transient;
+		if (ASourcePointTemplate* Template = World->SpawnActor<ASourcePointTemplate>(
+			ASourcePointTemplate::StaticClass(), FTransform::Identity, Params))
+		{
+			Template->InitializeEntity(Entity, this);
+			RegisterEntity(Template);
+			SpawnedActors.Add(Template);
+			PointTemplates.Add(Template);
+		}
+	}
+
+	// StartBuildingTemplates + AddTemplate: hand each template the entities it names, and take them out of the map.
+	TSet<int32> TemplatedEntities;
+	for (ASourcePointTemplate* Template : PointTemplates)
+	{
+		int32 Found = 0;
+		for (int32 Index = 0; Index < BSP->Entities.Num(); ++Index)
+		{
+			const FSourceEntity& Candidate = BSP->Entities[Index];
+			if (Candidate.ClassName.Equals(TEXT("point_template"), ESearchCase::IgnoreCase))
+			{
+				continue;
+			}
+			const FString Name = Candidate.Get(TEXT("targetname"));
+			if (Name.IsEmpty() || !Template->OwnsEntityNamed(Name))
+			{
+				continue;
+			}
+			Template->AddTemplate(Candidate);
+			++Found;
+			if (Template->ShouldRemoveTemplateEntities())
+			{
+				TemplatedEntities.Add(Index);
+			}
+		}
+		if (Found == 0)
+		{
+			UE_LOG(LogLambdaSource, Warning,
+				TEXT("point_template '%s' names entities that are not in the map"), *Template->GetTargetName());
+		}
+		else
+		{
+			UE_LOG(LogLambdaSource, Log, TEXT("point_template '%s' holds %d entities%s"),
+				*Template->GetTargetName(), Found,
+				Template->ShouldRemoveTemplateEntities() ? TEXT(" (removed from the map)") : TEXT(""));
+		}
+	}
+
+	for (int32 EntityIndex = 0; EntityIndex < BSP->Entities.Num(); ++EntityIndex)
+	{
+		if (TemplatedEntities.Contains(EntityIndex))
+		{
+			continue;
+		}
+		const FSourceEntity& Entity = BSP->Entities[EntityIndex];
+		if (Entity.ClassName.Equals(TEXT("point_template"), ESearchCase::IgnoreCase))
+		{
+			continue;	// built above
+		}
+		SpawnEntityFromKeyValues(Entity);
+	}
+
+	const ULambdaSourceSettings& Settings = ULambdaSourceSettings::Get();
+	if (!bSpawnedSkyLight && Settings.AmbientFillIntensity > 0.0f)
+	{
+		SpawnAmbientFill(Settings.AmbientFillColor, Settings.AmbientFillIntensity);
+	}
+}
+
+/**
+ * MapEntity_ParseEntity: turn one entity's keyvalues into a live actor. The map load runs every entity through
+ * here, and so does point_template when it stamps out a copy - which is the point of it being separate: a
+ * templated entity is spawned by exactly the same path as one written into the map.
+ */
+AActor* ASourceBSPWorldActor::SpawnEntityFromKeyValues(const FSourceEntity& Entity)
+{
+	UWorld* World = GetWorld();
+	if (!World || !BSP.IsValid())
+	{
+		return nullptr;
+	}
 	{
 		const FString& Class = Entity.ClassName;
 
@@ -207,7 +299,7 @@ void ASourceBSPWorldActor::SpawnEntities()
 			{
 				UE_LOG(LogLambdaSource, Warning, TEXT("Entity '%s' references missing brush model '%s'"), *Class, *ModelRef);
 			}
-			continue;
+			return nullptr;
 		}
 
 		if (Class.Equals(TEXT("info_player_start"), ESearchCase::IgnoreCase) ||
@@ -236,7 +328,7 @@ void ASourceBSPWorldActor::SpawnEntities()
 		}
 		else if (TSubclassOf<ASourceNPCBase> NPCClass = NPCClassForName(Class))
 		{
-			SpawnNPC(Entity, NPCClass);
+			return SpawnNPC(Entity, NPCClass);
 		}
 		else if (ASourceItem::IsItemClass(Class))
 		{
@@ -251,12 +343,7 @@ void ASourceBSPWorldActor::SpawnEntities()
 			UnhandledEntityCounts.FindOrAdd(Class)++;
 		}
 	}
-
-	const ULambdaSourceSettings& Settings = ULambdaSourceSettings::Get();
-	if (!bSpawnedSkyLight && Settings.AmbientFillIntensity > 0.0f)
-	{
-		SpawnAmbientFill(Settings.AmbientFillColor, Settings.AmbientFillIntensity);
-	}
+	return nullptr;
 }
 
 TSubclassOf<ASourceNPCBase> ASourceBSPWorldActor::NPCClassForName(const FString& ClassName)

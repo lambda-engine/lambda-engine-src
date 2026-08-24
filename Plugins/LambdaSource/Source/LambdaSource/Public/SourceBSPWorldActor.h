@@ -88,6 +88,9 @@ public:
 	 * it there. Returns null for classnames without an NPC implementation.
 	 */
 	AActor* CreateNPC(const FString& ClassName, const FVector& FeetLocation, float YawDegrees);
+
+	/** Spawns one entity from its keyvalues; point_template uses this to stamp out its copies. */
+	AActor* SpawnEntityFromKeyValues(const FSourceEntity& Entity);
 	/** prop_physics_create: drops a physics prop of that model at a spot. */
 	AActor* CreateProp(const FString& ModelPath, const FVector& Location, float YawDegrees);
 	TArray<const FSourceEntity*> FindEntities(const FString& ClassName) const;
