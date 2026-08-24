@@ -112,15 +112,11 @@ static FAutoConsoleVariableRef CVarFireAuto(
 	TEXT("\"<shots> [interval_s] [start_delay_s]\": fire the active weapon that many times from Tick, screenshot each"));
 
 /**
- * Whether the view model is drawn through UE's first-person primitive path (the one that keeps a gun from
- * pushing into a wall, as Source's compressed depth range does).
- *
- * Off by default: that path does not draw the view model now that it is a skinned mesh. It worked while the view
- * model was procedural geometry, and everything about the component says it should still work - visible, render
- * state built, bounds around the camera - but the renderer never draws it, so the shader side of first-person
- * rendering appears not to cover the GPU skin vertex factory. Left switchable to re-check.
+ * Whether the view model is drawn through UE's first-person primitive path - the one that keeps the gun from
+ * pushing into a wall the player stands against, as Source's compressed depth range does. On; the switch is
+ * kept because it was worth having while chasing an invisible view model.
  */
-static bool GLambdaViewModelFirstPerson = false;
+static bool GLambdaViewModelFirstPerson = true;
 static FAutoConsoleVariableRef CVarLambdaViewModelFirstPerson(
 	TEXT("lambda.viewmodel.firstperson"),
 	GLambdaViewModelFirstPerson,
