@@ -1,4 +1,6 @@
 #include "SourceNPCBase.h"
+#include "LambdaStats.h"
+#include "LambdaStats.h"
 #include "LambdaMaterialLibrary.h"
 #include "LambdaSoundLibrary.h"
 #include "SourceSoundScript.h"
@@ -337,6 +339,7 @@ void ASourceNPCBase::NotifyHit(UPrimitiveComponent* MyComp, AActor* Other, UPrim
 
 void ASourceNPCBase::Tick(float DeltaSeconds)
 {
+	SCOPE_CYCLE_COUNTER(STAT_LambdaNPCThink);
 	Super::Tick(DeltaSeconds);
 	if (bDyingWithAnim && NPCState == ESourceNPCState::Dead)
 	{

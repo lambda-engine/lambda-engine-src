@@ -174,7 +174,7 @@ void SourceGeometry::BuildModel(const FSourceBSPFile& Map, int32 ModelIndex, flo
 }
 
 void SourceGeometry::ApplyToComponent(UProceduralMeshComponent* Mesh, TArray<FSourceMeshSection>& Sections,
-	ULambdaMaterialLibrary* MaterialLibrary)
+	ULambdaMaterialLibrary* MaterialLibrary, bool bCreateCollision)
 {
 	if (!Mesh)
 	{
@@ -192,7 +192,7 @@ void SourceGeometry::ApplyToComponent(UProceduralMeshComponent* Mesh, TArray<FSo
 	{
 		FSourceMeshSection& Section = Sections[SectionIndex];
 		Mesh->CreateMeshSection_LinearColor(SectionIndex, Section.Vertices, Section.Triangles, Section.Normals,
-			Section.UV0, Section.Colors, Section.Tangents, /*bCreateCollision=*/ true);
+			Section.UV0, Section.Colors, Section.Tangents, bCreateCollision);
 		if (!Section.bVisible)
 		{
 			Mesh->SetMeshSectionVisible(SectionIndex, false);

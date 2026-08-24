@@ -1,4 +1,5 @@
 #include "SourceStudioModelComponent.h"
+#include "LambdaStats.h"
 #include "LambdaMaterialLibrary.h"
 #include "LambdaSourceModule.h"
 #include "LambdaSourceSettings.h"
@@ -33,7 +34,7 @@ bool USourceStudioModelComponent::SetModel(const FString& RelativeModelPath, ULa
 	ModelPath = RelativeModelPath;
 	MaterialLibrary = Materials;
 
-	SourceGeometry::ApplyToComponent(this, Model->Sections, MaterialLibrary);
+	SourceGeometry::ApplyToComponent(this, Model->Sections, MaterialLibrary, /*bCreateCollision=*/ false);
 
 	// Show the bind pose until something asks for a sequence, so a model with no animation still renders.
 	Model->EvaluateBindPose(BoneToModel);
@@ -136,6 +137,7 @@ float USourceStudioModelComponent::TransitionWeight(const FTransitionLayer& Laye
 
 void USourceStudioModelComponent::ComposePose()
 {
+	SCOPE_CYCLE_COUNTER(STAT_LambdaComposePose);
 	if (!HasModel())
 	{
 		return;
@@ -251,7 +253,7 @@ bool USourceStudioModelComponent::SetBodygroup(int32 BodyPart, int32 Value)
 		return false;
 	}
 	ClearAllMeshSections();
-	SourceGeometry::ApplyToComponent(this, Model->Sections, MaterialLibrary);
+	SourceGeometry::ApplyToComponent(this, Model->Sections, MaterialLibrary, /*bCreateCollision=*/ false);
 	RefreshPose();
 	return true;
 }
@@ -347,6 +349,7 @@ float USourceStudioModelComponent::GetSequenceGroundSpeed() const
 void USourceStudioModelComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+	SCOPE_CYCLE_COUNTER(STAT_LambdaStudioTick);
 
 	if (!HasModel() || !IsVisible() || bExternalPose)
 	{
@@ -458,13 +461,22 @@ void USourceStudioModelComponent::RefreshPose()
 	{
 		return;
 	}
-	Model->ApplyPose(BoneToModel);
+	{
+		SCOPE_CYCLE_COUNTER(STAT_LambdaApplyPose);
+		Model->ApplyPose(BoneToModel);
+	}
+	SCOPE_CYCLE_COUNTER(STAT_LambdaMeshUpload);
 
-	// Only positions and normals change; the index buffer, UVs and colours are untouched.
+	// Only positions and normals change; the index buffer, UVs and colours are untouched. UpdateMeshSection
+	// skips any attribute whose array does not match the vertex count, so the unchanged ones are left empty
+	// rather than copied through every frame.
+	static const TArray<FVector2D> NoUVs;
+	static const TArray<FLinearColor> NoColors;
+	static const TArray<FProcMeshTangent> NoTangents;
 	for (int32 i = 0; i < Model->Sections.Num(); ++i)
 	{
 		const FSourceMeshSection& Section = Model->Sections[i];
-		UpdateMeshSection_LinearColor(i, Section.Vertices, Section.Normals, Section.UV0, Section.Colors, Section.Tangents);
+		UpdateMeshSection_LinearColor(i, Section.Vertices, Section.Normals, NoUVs, NoColors, NoTangents);
 	}
 }
 

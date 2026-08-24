@@ -66,7 +66,13 @@ namespace SourceGeometry
 	LAMBDASOURCE_API void BuildModel(const FSourceBSPFile& Map, int32 ModelIndex, float Scale,
 		TArray<FSourceMeshSection>& OutSections, FSourceGeometryStats& OutStats);
 
-	/** Pushes sections into a procedural mesh component, assigning materials and hiding collision-only sections. */
+	/**
+	 * Pushes sections into a procedural mesh component, assigning materials and hiding collision-only sections.
+	 * bCreateCollision builds collision geometry for the sections: right for world brushes, wrong for an animated
+	 * model - a section that carries collision is re-cooked by UProceduralMeshComponent::UpdateMeshSection on
+	 * EVERY pose update, which costs far more than the drawing does. Models collide by capsule and are shot at
+	 * through their hitboxes, so their mesh needs none.
+	 */
 	LAMBDASOURCE_API void ApplyToComponent(UProceduralMeshComponent* Mesh, TArray<FSourceMeshSection>& Sections,
-		ULambdaMaterialLibrary* MaterialLibrary);
+		ULambdaMaterialLibrary* MaterialLibrary, bool bCreateCollision = true);
 }
