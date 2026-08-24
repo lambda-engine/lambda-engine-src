@@ -121,6 +121,10 @@ def ensure_master_material():
     if material is None:
         raise RuntimeError(f'Could not create {full_path}')
 
+    # A material is only allowed on a skeletal mesh if it says so: models are GPU-skinned now, and without this
+    # the renderer swaps in the default material and the model turns grey.
+    material.set_editor_property('used_with_skeletal_mesh', True)
+
     mel = unreal.MaterialEditingLibrary
 
     tex_param = mel.create_material_expression(material, unreal.MaterialExpressionTextureSampleParameter2D, -500, 0)
@@ -759,6 +763,9 @@ def build_model_material(name, translucent=False, masked=False):
         raise RuntimeError(f'Could not create {full_path}')
 
     material.set_editor_property('material_domain', unreal.MaterialDomain.MD_SURFACE)
+    # A material is only allowed on a skeletal mesh if it says so: models are GPU-skinned now, and without this
+    # the renderer swaps in the default material and the model turns grey.
+    material.set_editor_property('used_with_skeletal_mesh', True)
     material.set_editor_property('shading_model', unreal.MaterialShadingModel.MSM_DEFAULT_LIT)
     # masked is "$alphatest 1": the base texture's alpha is cut at 0.5, the way Source clips it - an open
     # plastic crate's lattice is holes, not glass.

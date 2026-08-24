@@ -1,7 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "ProceduralMeshComponent.h"
+#include "Components/PoseableMeshComponent.h"
 #include "SourceMDLFile.h"
 #include "SourceStudioModelComponent.generated.h"
 
@@ -32,7 +32,15 @@ struct FSourceHitboxHit
  * a modder drops a .mdl in and it animates, with no editor import step.
  */
 UCLASS(ClassGroup = (Lambda), meta = (BlueprintSpawnableComponent))
-class LAMBDASOURCE_API USourceStudioModelComponent : public UProceduralMeshComponent
+/**
+ * A Source studio model in the world.
+ *
+ * The geometry is a USkeletalMesh built from the .mdl once and shared by every instance of it, and the GPU does
+ * the skinning: this component's job each frame is to work out where the bones are and write them down. It was
+ * a procedural mesh skinned on the CPU, which meant every instance owned a private copy of the vertices and
+ * rebuilt them all every frame - twenty to thirty thousand triangles a model, most of a frame for three of them.
+ */
+class LAMBDASOURCE_API USourceStudioModelComponent : public UPoseableMeshComponent
 {
 	GENERATED_BODY()
 
@@ -120,6 +128,16 @@ public:
 private:
 	/** Re-skins the mesh from the current pose and pushes it to the render thread. */
 	void RefreshPose();
+	/**
+	 * Bounds that follow the pose. A skinned component with no physics asset reports the mesh's bind-pose bounds
+	 * whatever the model is doing, and Source models animate a long way from their bind pose - a view model most
+	 * of all - so the renderer was culling them against a box that no longer had anything in it.
+	 */
+	virtual FBoxSphereBounds CalcBounds(const FTransform& LocalToWorld) const override;
+	/** Builds or fetches the shared skeletal mesh for the model's current bodygroups and puts it on. */
+	void ApplySkeletalMesh();
+	/** Identifies which bodygroup selection the current mesh was built for. */
+	FString BodygroupKey = TEXT("default");
 	/** Evaluates the current sequence, the sequences fading out behind it and the gesture layers, then refreshes. */
 	void ComposePose();
 	/** Animation LOD: whether this model has earned a new pose this frame (see the definition). */

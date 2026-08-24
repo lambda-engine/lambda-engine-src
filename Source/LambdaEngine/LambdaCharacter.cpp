@@ -111,6 +111,21 @@ static FAutoConsoleVariableRef CVarFireAuto(
 	GFireAuto,
 	TEXT("\"<shots> [interval_s] [start_delay_s]\": fire the active weapon that many times from Tick, screenshot each"));
 
+/**
+ * Whether the view model is drawn through UE's first-person primitive path (the one that keeps a gun from
+ * pushing into a wall, as Source's compressed depth range does).
+ *
+ * Off by default: that path does not draw the view model now that it is a skinned mesh. It worked while the view
+ * model was procedural geometry, and everything about the component says it should still work - visible, render
+ * state built, bounds around the camera - but the renderer never draws it, so the shader side of first-person
+ * rendering appears not to cover the GPU skin vertex factory. Left switchable to re-check.
+ */
+static bool GLambdaViewModelFirstPerson = false;
+static FAutoConsoleVariableRef CVarLambdaViewModelFirstPerson(
+	TEXT("lambda.viewmodel.firstperson"),
+	GLambdaViewModelFirstPerson,
+	TEXT("Draw the view model through UE's first-person primitive path"));
+
 ALambdaCharacter::ALambdaCharacter()
 {
 	PrimaryActorTick.bCanEverTick = true;
@@ -149,7 +164,7 @@ ALambdaCharacter::ALambdaCharacter()
 	// Source draws the view model in its own pass with a compressed depth range so it can never intersect the
 	// world; UE's first-person primitive path is the same idea, and it is what stops the gun pushing into a wall
 	// the player stands against.
-	ViewModelMesh->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::FirstPerson);
+
 
 	MuzzleFlashMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("MuzzleFlash"));
 	MuzzleFlashMesh->SetupAttachment(FirstPersonCamera);
@@ -1234,6 +1249,11 @@ bool ALambdaCharacter::SetViewModel(const FString& ModelPath)
 	// Source draws the view model as an entity standing at the player's eye with the player's view angles; the
 	// model's own animation places the hands and weapon relative to that. So the component sits on the camera with
 	// no offset of its own, and the settings below are only the equivalent of viewmodel_offset_x/y/z.
+	// Applied here rather than in the constructor so it follows the model: the primitive type is part of how
+	// this component is drawn, and it has to be re-stated after the mesh changes.
+	ViewModelMesh->SetFirstPersonPrimitiveType(
+		GLambdaViewModelFirstPerson ? EFirstPersonPrimitiveType::FirstPerson : EFirstPersonPrimitiveType::None);
+
 	const ULambdaSourceSettings& Settings = ULambdaSourceSettings::Get();
 	ViewModelMesh->SetRelativeScale3D(FVector(Settings.ViewModelScale));
 	ViewModelMesh->SetRelativeRotation(Settings.ViewModelRotation);

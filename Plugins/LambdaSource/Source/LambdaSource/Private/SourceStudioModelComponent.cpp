@@ -4,6 +4,7 @@
 #include "LambdaSourceModule.h"
 #include "LambdaSourceSettings.h"
 #include "SourceGeometryBuilder.h"
+#include "SourceSkeletalMesh.h"
 #include "SourceCoordinates.h"
 
 USourceStudioModelComponent::USourceStudioModelComponent(const FObjectInitializer& ObjectInitializer)
@@ -15,7 +16,22 @@ USourceStudioModelComponent::USourceStudioModelComponent(const FObjectInitialize
 	// A view model is drawn, never collided with; collision would also make every re-skin re-cook the mesh.
 	SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	SetCastShadow(false);
-	bUseComplexAsSimpleCollision = false;
+
+}
+
+void USourceStudioModelComponent::ApplySkeletalMesh()
+{
+	if (!HasModel())
+	{
+		return;
+	}
+	// One mesh per model and bodygroup selection, shared by every instance: it carries no pose, so there is
+	// nothing per-instance about it.
+	USkeletalMesh* Mesh = FSourceSkeletalMesh::GetOrBuild(ModelPath, *Model, MaterialLibrary, BodygroupKey);
+	if (Mesh)
+	{
+		SetSkinnedAssetAndUpdate(Mesh, /*bReinitPose=*/ true);
+	}
 }
 
 bool USourceStudioModelComponent::SetModel(const FString& RelativeModelPath, ULambdaMaterialLibrary* Materials)
@@ -34,7 +50,7 @@ bool USourceStudioModelComponent::SetModel(const FString& RelativeModelPath, ULa
 	ModelPath = RelativeModelPath;
 	MaterialLibrary = Materials;
 
-	SourceGeometry::ApplyToComponent(this, Model->Sections, MaterialLibrary, /*bCreateCollision=*/ false);
+	ApplySkeletalMesh();
 
 	// Show the bind pose until something asks for a sequence, so a model with no animation still renders.
 	Model->EvaluateBindPose(BoneToModel);
@@ -49,7 +65,7 @@ bool USourceStudioModelComponent::SetModel(const FString& RelativeModelPath, ULa
 
 void USourceStudioModelComponent::ClearModel()
 {
-	ClearAllMeshSections();
+	SetSkinnedAssetAndUpdate(nullptr, true);
 	Model.Reset();
 	ModelPath.Reset();
 	BoneToModel.Reset();
@@ -318,8 +334,8 @@ bool USourceStudioModelComponent::SetBodygroup(int32 BodyPart, int32 Value)
 	{
 		return false;
 	}
-	ClearAllMeshSections();
-	SourceGeometry::ApplyToComponent(this, Model->Sections, MaterialLibrary, /*bCreateCollision=*/ false);
+	BodygroupKey = FString::Printf(TEXT("%s.%d=%d"), *BodygroupKey, BodyPart, Value);
+	ApplySkeletalMesh();
 	RefreshPose();
 	return true;
 }
@@ -527,6 +543,26 @@ void USourceStudioModelComponent::SetExternalPose(const TArray<FSourceMatrix3x4>
 	RefreshPose();
 }
 
+FBoxSphereBounds USourceStudioModelComponent::CalcBounds(const FTransform& LocalToWorld) const
+{
+	if (!HasModel() || BoneToModel.Num() == 0)
+	{
+		return Super::CalcBounds(LocalToWorld);
+	}
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+
+	// Every bone the model currently has, padded by how far its skin can sit from a bone. Source gives that
+	// distance directly: the model's hull is what studiomdl measured the geometry to fit inside.
+	FBox Box(ForceInit);
+	for (const FSourceMatrix3x4& Bone : BoneToModel)
+	{
+		Box += Bone.ToUETransform(Scale).GetLocation();
+	}
+	const FVector3f HullSize = Model->GetHullMax() - Model->GetHullMin();
+	const float Padding = FMath::Max(HullSize.GetAbsMax() * 0.5f, 1.0f) * Scale;
+	return FBoxSphereBounds(Box.ExpandBy(Padding)).TransformBy(LocalToWorld);
+}
+
 void USourceStudioModelComponent::RefreshPose()
 {
 	if (!HasModel())
@@ -534,23 +570,32 @@ void USourceStudioModelComponent::RefreshPose()
 		return;
 	}
 
-	{
-		SCOPE_CYCLE_COUNTER(STAT_LambdaApplyPose);
-		Model->ApplyPose(BoneToModel);
-	}
 	SCOPE_CYCLE_COUNTER(STAT_LambdaMeshUpload);
 
-	// Only positions and normals change; the index buffer, UVs and colours are untouched. UpdateMeshSection
-	// skips any attribute whose array does not match the vertex count, so the unchanged ones are left empty
-	// rather than copied through every frame.
-	static const TArray<FVector2D> NoUVs;
-	static const TArray<FLinearColor> NoColors;
-	static const TArray<FProcMeshTangent> NoTangents;
-	for (int32 i = 0; i < Model->Sections.Num(); ++i)
+	// Hand the bones over and let the GPU move the vertices. BoneToModel is in model space, which is what the
+	// rest of the engine asks this component for (hitboxes, attachments); a posable mesh wants each bone
+	// relative to its parent, so that conversion happens here and nowhere else.
+	USkinnedAsset* Asset = GetSkinnedAsset();
+	if (!Asset)
 	{
-		const FSourceMeshSection& Section = Model->Sections[i];
-		UpdateMeshSection_LinearColor(i, Section.Vertices, Section.Normals, NoUVs, NoColors, NoTangents);
+		return;
 	}
+	const FReferenceSkeleton& RefSkeleton = Asset->GetRefSkeleton();
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+	const int32 NumBones = FMath::Min(BoneSpaceTransforms.Num(), BoneToModel.Num());
+	for (int32 i = 0; i < NumBones; ++i)
+	{
+		const FTransform ComponentSpace = BoneToModel[i].ToUETransform(Scale);
+		const int32 Parent = RefSkeleton.GetParentIndex(i);
+		BoneSpaceTransforms[i] = (Parent == INDEX_NONE || Parent >= BoneToModel.Num())
+			? ComponentSpace
+			: ComponentSpace * BoneToModel[Parent].ToUETransform(Scale).Inverse();
+		BoneSpaceTransforms[i].NormalizeRotation();
+	}
+	MarkRefreshTransformDirty();
+	// The bounds are built from the bones, so they are stale the moment the pose moves.
+	UpdateBounds();
+	MarkRenderTransformDirty();
 }
 
 bool USourceStudioModelComponent::GetAttachmentWorld(const FString& Name, FVector& OutLocation, FVector& OutForward) const

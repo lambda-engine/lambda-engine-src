@@ -220,6 +220,9 @@ public:
 	/** Fills OutBoneToModel with the bind pose (what a model with no sequences renders as). */
 	void EvaluateBindPose(TArray<FSourceMatrix3x4>& OutBoneToModel) const;
 
+	/** The reference-pose vertices and their bone influences, per section - what a skinned mesh is built from. */
+	const TArray<TArray<FSourceSkinVertex>>& GetSkinVertices() const { return SkinVertices; }
+
 	// ---- Layered posing (bone_setup.cpp): a base sequence plus gestures accumulated on top ----
 
 	/** InitPose: every bone at its bind pose. */
