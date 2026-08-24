@@ -33,4 +33,15 @@ protected:
 
 	/** cl_showfps-style counter, smoothed so it reads steadily. */
 	float SmoothedFrameTime = 0.0f;
+
+	/** hud_health: a brief brighten when hurt, a steady pulse when low (the HudAnimations "HealthLow" loop). */
+	float LastHealthSeen = -1.0f;
+	float DamageFlashEndTime = 0.0f;
+	/** hud_ammo: the panel brightens when the weapon changes. */
+	TWeakObjectPtr<class ALambdaWeapon> LastWeaponSeen;
+	float WeaponFlashEndTime = 0.0f;
+
+	void DrawDamageIndicator(class ALambdaCharacter* Player, float W, float H, float Now);
+	void DrawWeaponSelection(class ALambdaCharacter* Player, float W, float Now);
+	void DrawPickupHistory(class ALambdaCharacter* Player, float W, float H, float Now);
 };

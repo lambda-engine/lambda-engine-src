@@ -1,5 +1,6 @@
 #include "LambdaWeapon.h"
 #include "LambdaCharacter.h"
+#include "SourceNPCBase.h"
 #include "SourceStudioModelComponent.h"
 #include "LambdaEngine.h"
 #include "LambdaSoundLibrary.h"
@@ -73,6 +74,9 @@ void ALambdaWeapon::WeaponSound(ESourceWeaponSound Sound)
 	case ESourceWeaponSound::Reload:	Key = TEXT("reload"); break;
 	case ESourceWeaponSound::Special1:	Key = TEXT("special1"); break;
 	case ESourceWeaponSound::Special2:	Key = TEXT("special2"); break;
+	case ESourceWeaponSound::Melee_Miss:		Key = TEXT("melee_miss"); break;
+	case ESourceWeaponSound::Melee_Hit:			Key = TEXT("melee_hit"); break;
+	case ESourceWeaponSound::Melee_HitWorld:	Key = TEXT("melee_hit_world"); break;
 	default: break;
 	}
 
@@ -283,6 +287,108 @@ void ALambdaWeapon::PrimaryAttack()
 	for (int32 i = 0; i < Shots; ++i)
 	{
 		FireBullet(Damage, Spread);
+	}
+}
+
+void ALambdaWeaponCrowbar::InitializeFromScript(const FString& InClassName)
+{
+	Super::InitializeFromScript(InClassName);
+	DamagePerSwing = FSourceAmmoDef::Get().GetSkillValue(TEXT("sk_plr_dmg_crowbar"), 10.0f);
+}
+
+void ALambdaWeaponCrowbar::ItemPostFrame()
+{
+	// CBaseHLBludgeonWeapon::ItemPostFrame: swing while the attack is held, idle otherwise.
+	ALambdaCharacter* WeaponOwner = OwningCharacter.Get();
+	if (!WeaponOwner || IsHolstered())
+	{
+		return;
+	}
+	const float Now = GetCurrentTime();
+	if (bAttackHeld && Now >= NextPrimaryAttack)
+	{
+		Swing();
+		NextPrimaryAttack = Now + GetFireRate();
+		SetWeaponIdleTime(Now + 1.0f);
+	}
+	else if (HasWeaponIdleTimeElapsed())
+	{
+		WeaponIdle();
+	}
+	bAttackPressedThisFrame = false;
+}
+
+void ALambdaWeaponCrowbar::Swing()
+{
+	ALambdaCharacter* WeaponOwner = OwningCharacter.Get();
+	UWorld* World = GetWorld();
+	if (!WeaponOwner || !World)
+	{
+		return;
+	}
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+	constexpr float CROWBAR_RANGE = 75.0f;
+	constexpr float BLUDGEON_HULL_DIM = 16.0f;
+
+	FVector Start;
+	FRotator EyeRot;
+	WeaponOwner->GetActorEyesViewPoint(Start, EyeRot);
+	const FVector Dir = EyeRot.Vector();
+	const FVector End = Start + Dir * CROWBAR_RANGE * Scale;
+
+	// "Try a ray" - and unlike a bullet, a bludgeon hits an NPC's hull, not its hitboxes.
+	FHitResult Hit;
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(LambdaCrowbar), /*bTraceComplex=*/ true, WeaponOwner);
+	Params.bReturnFaceIndex = true;
+	bool bHit = World->LineTraceSingleByChannel(Hit, Start, End, ECC_Visibility, Params);
+
+	if (!bHit)
+	{
+		// Back off by the hull's "radius" and sweep the bludgeon hull, taking the target only if the player is
+		// sort of facing it (the 0.707 dot in Swing).
+		const FVector HullEnd = End - Dir * (1.732f * BLUDGEON_HULL_DIM * Scale);
+		FHitResult HullHit;
+		if (World->SweepSingleByChannel(HullHit, Start, HullEnd, FQuat::Identity, ECC_Visibility,
+			FCollisionShape::MakeBox(FVector(BLUDGEON_HULL_DIM * Scale)), Params) && HullHit.GetActor())
+		{
+			const FVector ToTarget = (HullHit.GetActor()->GetActorLocation() - Start).GetSafeNormal();
+			if (FVector::DotProduct(ToTarget, Dir) >= 0.70721f)
+			{
+				Hit = HullHit;
+				bHit = true;
+			}
+		}
+	}
+
+	// The swing whoosh plays either way; the animation says whether it landed.
+	WeaponSound(ESourceWeaponSound::Single);
+	SendWeaponAnim(bHit ? TEXT("ACT_VM_HITCENTER") : TEXT("ACT_VM_MISSCENTER"));
+
+	if (!bHit)
+	{
+		return;
+	}
+
+	// CBaseHLBludgeonWeapon::Hit: the view kick, the damage with a melee shove behind it, and the impact effect.
+	WeaponOwner->ViewPunch(FRotator(-FMath::FRandRange(1.0f, 2.0f), FMath::FRandRange(-2.0f, -1.0f), 0.0f));
+
+	if (AActor* HitActor = Hit.GetActor())
+	{
+		const bool bFlesh = Cast<ASourceNPCBase>(HitActor) != nullptr;
+		WeaponSound(bFlesh ? ESourceWeaponSound::Melee_Hit : ESourceWeaponSound::Melee_HitWorld);
+
+		// CalculateMeleeDamageForce: the blow shoves what it lands on along the swing.
+		const FVector Force = Dir * DamagePerSwing * 500.0f * Scale;	// kg*cm/s
+		FSourceDamageEvent DamageEvent(DamagePerSwing, Hit, Dir, UDamageType::StaticClass(), Force,
+			SourceDamageType::DMG_CLUB, SourceHitGroup::HITGROUP_GENERIC);
+		HitActor->TakeDamage(DamagePerSwing, DamageEvent, WeaponOwner->GetController(), WeaponOwner);
+	}
+
+	// UTIL_ImpactTrace on the world: decal, dust and the surface's own impact noise (skipped on flesh - the
+	// melee_hit sound carries that).
+	if (!Cast<ASourceNPCBase>(Hit.GetActor()))
+	{
+		SourceImpact::PlayImpact(Hit, WeaponOwner->GetWorldMaterialLibrary(), this, Dir, DamagePerSwing);
 	}
 }
 

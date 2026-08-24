@@ -17,7 +17,8 @@ enum class ESourceWeaponSound : uint8
 	Special2,
 	Reload,
 	Melee_Miss,
-	Melee_Hit
+	Melee_Hit,
+	Melee_HitWorld
 };
 
 /**
@@ -115,6 +116,29 @@ protected:
  * that file's; the clip size, ammo type and sounds come from scripts/weapon_pistol.txt; the damage comes from
  * sk_plr_dmg_pistol in cfg/skill.cfg.
  */
+/**
+ * weapon_crowbar - a port of CWeaponCrowbar / CBaseHLBludgeonWeapon (game/server/hl2/weapon_crowbar.cpp,
+ * basebludgeonweapon.cpp). One swing per CROWBAR_REFIRE: a ray out to CROWBAR_RANGE, then the bludgeon hull when
+ * the ray misses, dealing sk_plr_dmg_crowbar of DMG_CLUB with a melee shove behind it. Hits play the flesh or
+ * world impact sound and stamp the surface's decal; the view punches the way HL2's crowbar does.
+ */
+UCLASS()
+class LAMBDAENGINE_API ALambdaWeaponCrowbar : public ALambdaWeapon
+{
+	GENERATED_BODY()
+
+public:
+	virtual void InitializeFromScript(const FString& InClassName) override;
+	virtual void ItemPostFrame() override;
+
+protected:
+	/** CBaseHLBludgeonWeapon::Swing. */
+	void Swing();
+	virtual float GetFireRate() const override { return 0.4f; }	// CROWBAR_REFIRE
+
+	float DamagePerSwing = 10.0f;	// sk_plr_dmg_crowbar
+};
+
 UCLASS()
 class LAMBDAENGINE_API ALambdaWeaponPistol : public ALambdaWeapon
 {

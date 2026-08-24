@@ -22,6 +22,9 @@
 #include "SourceAmmoDef.h"
 #include "SourceCoordinates.h"
 #include "SourcePropPhysics.h"
+
+// Defined next to GiveAmmo; BumpWeapon above it wants it too.
+void ALambdaCharacterAddPickupHistory(TArray<ALambdaCharacter::FPickupEvent>& History, UWorld* World, const FString& Text);
 #include "SourceWeaponScript.h"
 #include "SourceMDLFile.h"
 #include "SourceGeometryBuilder.h"
@@ -82,6 +85,13 @@ static FAutoConsoleVariableRef CVarPitchSweepAuto(
 	TEXT("lambda.pitchsweep.auto"),
 	GPitchSweepAuto,
 	TEXT("\"<from> <to> <seconds> [delay_s]\": sweep the view pitch"));
+
+// lambda.slot.auto "<bucket> [delay_s]" selects that weapon slot and confirms it, as the number keys would.
+static FString GSlotAuto;
+static FAutoConsoleVariableRef CVarSlotAuto(
+	TEXT("lambda.slot.auto"),
+	GSlotAuto,
+	TEXT("\"<bucket> [delay_s]\": switch to the first weapon of that bucket"));
 
 static FString GWalkAuto;
 static FAutoConsoleVariableRef CVarWalkAuto(
@@ -218,6 +228,7 @@ void ALambdaCharacter::BeginPlay()
 
 	// The POC map has no weapon or ammo entities, so arm the player directly. Once item_ammo_* / weapon_* entities
 	// are implemented these come from the map instead.
+	GiveWeapon(TEXT("weapon_crowbar"));
 	GiveWeapon(TEXT("weapon_pistol"));
 	GiveAmmo(TEXT("Pistol"), 68);
 
@@ -297,6 +308,18 @@ void ALambdaCharacter::BuildInputAssets()
 	MappingContext->MapKey(AttackAction, EKeys::LeftMouseButton);
 	MappingContext->MapKey(ReloadAction, EKeys::R);
 	MappingContext->MapKey(QuitAction, EKeys::Escape);
+	static const FKey SlotKeys[5] = { EKeys::One, EKeys::Two, EKeys::Three, EKeys::Four, EKeys::Five };
+	for (int32 i = 0; i < 5; ++i)
+	{
+		SlotActions[i] = NewObject<UInputAction>(this);
+		MappingContext->MapKey(SlotActions[i], SlotKeys[i]);
+	}
+	LastInvAction = NewObject<UInputAction>(this);
+	MappingContext->MapKey(LastInvAction, EKeys::Q);
+	InvNextAction = NewObject<UInputAction>(this);
+	MappingContext->MapKey(InvNextAction, EKeys::MouseScrollDown);
+	InvPrevAction = NewObject<UInputAction>(this);
+	MappingContext->MapKey(InvPrevAction, EKeys::MouseScrollUp);
 }
 
 void ALambdaCharacter::AddMappingContextToPlayer()
@@ -338,6 +361,14 @@ void ALambdaCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 	EIC->BindAction(SprintAction, ETriggerEvent::Completed, this, &ALambdaCharacter::Input_SprintEnd);
 	EIC->BindAction(UseAction, ETriggerEvent::Started, this, &ALambdaCharacter::Input_Use);
 	EIC->BindAction(AttackAction, ETriggerEvent::Started, this, &ALambdaCharacter::Input_AttackStart);
+	EIC->BindAction(SlotActions[0], ETriggerEvent::Started, this, &ALambdaCharacter::Input_Slot1);
+	EIC->BindAction(SlotActions[1], ETriggerEvent::Started, this, &ALambdaCharacter::Input_Slot2);
+	EIC->BindAction(SlotActions[2], ETriggerEvent::Started, this, &ALambdaCharacter::Input_Slot3);
+	EIC->BindAction(SlotActions[3], ETriggerEvent::Started, this, &ALambdaCharacter::Input_Slot4);
+	EIC->BindAction(SlotActions[4], ETriggerEvent::Started, this, &ALambdaCharacter::Input_Slot5);
+	EIC->BindAction(LastInvAction, ETriggerEvent::Started, this, &ALambdaCharacter::Input_LastInv);
+	EIC->BindAction(InvNextAction, ETriggerEvent::Started, this, &ALambdaCharacter::Input_InvNext);
+	EIC->BindAction(InvPrevAction, ETriggerEvent::Started, this, &ALambdaCharacter::Input_InvPrev);
 	EIC->BindAction(AttackAction, ETriggerEvent::Completed, this, &ALambdaCharacter::Input_AttackStop);
 	EIC->BindAction(ReloadAction, ETriggerEvent::Started, this, &ALambdaCharacter::Input_ReloadStart);
 	EIC->BindAction(ReloadAction, ETriggerEvent::Completed, this, &ALambdaCharacter::Input_ReloadStop);
@@ -728,6 +759,52 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 		}
 	}
 
+	// The scripted view is enforced for a moment (see setpos.auto), then the deferred spawn commands fire into it.
+	if (AutoViewHoldSeconds > 0.0f)
+	{
+		AutoViewHoldSeconds -= DeltaSeconds;
+		if (AController* PC = GetController())
+		{
+			PC->SetControlRotation(AutoViewRotation);
+		}
+	}
+	if (AutoSpawnDelay > 0.0f)
+	{
+		AutoSpawnDelay -= DeltaSeconds;
+		if (AutoSpawnDelay <= 0.0f)
+		{
+			if (!PendingNPCCreate.IsEmpty())
+			{
+				NPCCreate(PendingNPCCreate);
+				PendingNPCCreate.Reset();
+			}
+			if (!PendingPropCreate.IsEmpty())
+			{
+				TArray<FString> Parts;
+				PendingPropCreate.ParseIntoArrayWS(Parts);
+				if (Parts.Num() > 0)
+				{
+					PropCreate(Parts[0], Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : 300.0f);
+				}
+				PendingPropCreate.Reset();
+			}
+		}
+	}
+
+	// lambda.slot.auto: a scripted press of the slot key plus the confirming attack.
+	if (AutoSlotDelay > 0.0f)
+	{
+		AutoSlotDelay -= DeltaSeconds;
+		if (AutoSlotDelay <= 0.0f)
+		{
+			SelectSlot(AutoSlotBucket);
+			bSelectionActive = false;
+			SwitchToWeapon(GetSelectedWeapon());
+			UE_LOG(LogLambda, Display, TEXT("slot.auto %d -> %s"), AutoSlotBucket,
+				ActiveWeapon ? *ActiveWeapon->GetWeaponClassName() : TEXT("none"));
+		}
+	}
+
 	// lambda.walk.auto: walk forward, so what the player bumps into can be tested.
 	if (AutoWalkSeconds > 0.0f)
 	{
@@ -811,34 +888,25 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 					const FVector Feet = FSourceCoords::ToUE(Source, ULambdaSourceSettings::Get().UnitScale);
 					const float HalfHeight = GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
 					SetActorLocation(Feet + FVector(0, 0, HalfHeight + 2.0f), false, nullptr, ETeleportType::TeleportPhysics);
-					// setang: the two extra arguments aim the view, Source-style (yaw first, then pitch).
+					// setang: the two extra arguments aim the view, Source-style (yaw first, then pitch). The
+					// rotation is held for a moment - a single SetControlRotation can lose to the controller's
+					// own first-frame update, and a spawn command reading the view that frame went the wrong way.
 					if (Parts.Num() >= 4)
 					{
 						const FVector3f Angles(Parts.Num() >= 5 ? FCString::Atof(*Parts[4]) : 0.0f, FCString::Atof(*Parts[3]), 0.0f);
+						AutoViewRotation = FSourceCoords::AnglesToUE(Angles);
+						AutoViewHoldSeconds = 0.5f;
 						if (AController* PC = GetController())
 						{
-							PC->SetControlRotation(FSourceCoords::AnglesToUE(Angles));
+							PC->SetControlRotation(AutoViewRotation);
 						}
 					}
 					UE_LOG(LogLambda, Display, TEXT("setpos %s"), *GetActorLocation().ToString());
 				}
 			}
-			if (!GNPCCreateAuto.IsEmpty())
-			{
-				// "<classname> [distance_cm]"
-				TArray<FString> Parts;
-				GNPCCreateAuto.ParseIntoArrayWS(Parts);
-				AutoFireTarget = NPCCreate(Parts[0], Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : 5000.0f);
-			}
-			if (!GPropCreateAuto.IsEmpty())
-			{
-				TArray<FString> Parts;
-				GPropCreateAuto.ParseIntoArrayWS(Parts);
-				if (Parts.Num() > 0)
-				{
-					PropCreate(Parts[0], Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : 300.0f);
-				}
-			}
+			AutoSpawnDelay = 0.25f;
+			PendingNPCCreate = GNPCCreateAuto;
+			PendingPropCreate = GPropCreateAuto;
 			if (!GPitchSweepAuto.IsEmpty())
 			{
 				TArray<FString> Parts;
@@ -851,6 +919,13 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 					SweepDelay = Parts.Num() > 3 ? FCString::Atof(*Parts[3]) : 8.0f;
 					SweepElapsed = 0.0f;
 				}
+			}
+			if (!GSlotAuto.IsEmpty())
+			{
+				TArray<FString> Parts;
+				GSlotAuto.ParseIntoArrayWS(Parts);
+				AutoSlotBucket = Parts.Num() > 0 ? FCString::Atoi(*Parts[0]) : 0;
+				AutoSlotDelay = Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : 1.0f;
 			}
 			if (!GWalkAuto.IsEmpty())
 			{
@@ -1026,6 +1101,92 @@ void ALambdaCharacter::RunDecalTest(float DistanceCm, float AngleDeg, int32 Coun
 	DecalTestScreenshotTimer = 1.5f;	// Saved/Screenshots/.../decaltest.png once the view has settled
 }
 
+ALambdaWeapon* ALambdaCharacter::FindWeapon(const FString& WeaponClassName) const
+{
+	for (const TObjectPtr<ALambdaWeapon>& Weapon : Weapons)
+	{
+		if (Weapon && Weapon->GetWeaponClassName().Equals(WeaponClassName, ESearchCase::IgnoreCase))
+		{
+			return Weapon.Get();
+		}
+	}
+	return nullptr;
+}
+
+void ALambdaCharacter::SwitchToWeapon(ALambdaWeapon* Weapon)
+{
+	if (!Weapon || Weapon == ActiveWeapon)
+	{
+		return;
+	}
+	if (ActiveWeapon)
+	{
+		ActiveWeapon->Holster();
+		LastWeapon = ActiveWeapon;
+	}
+	ActiveWeapon = Weapon;
+	SetViewModel(Weapon->GetWeaponInfo().ViewModel);
+	Weapon->Deploy();
+}
+
+void ALambdaCharacter::Input_LastInv()
+{
+	// "lastinv" swaps straight back, no menu.
+	bSelectionActive = false;
+	if (LastWeapon && Weapons.Contains(LastWeapon))
+	{
+		SwitchToWeapon(LastWeapon);
+	}
+}
+
+void ALambdaCharacter::SelectSlot(int32 Bucket)
+{
+	// CHudWeaponSelection::SelectWeaponSlot: open the menu on that bucket, or cycle within it if already there.
+	int32 First = INDEX_NONE;
+	for (int32 i = 0; i < Weapons.Num(); ++i)
+	{
+		if (Weapons[i] && Weapons[i]->GetWeaponInfo().Bucket == Bucket)
+		{
+			First = i;
+			break;
+		}
+	}
+	if (First == INDEX_NONE)
+	{
+		return;		// nothing in that bucket
+	}
+	if (bSelectionActive && Weapons.IsValidIndex(SelectionIndex) && Weapons[SelectionIndex]->GetWeaponInfo().Bucket == Bucket)
+	{
+		// Cycle within the bucket, wrapping back to its first weapon.
+		int32 Next = SelectionIndex + 1;
+		if (!Weapons.IsValidIndex(Next) || Weapons[Next]->GetWeaponInfo().Bucket != Bucket)
+		{
+			Next = First;
+		}
+		SelectionIndex = Next;
+	}
+	else
+	{
+		SelectionIndex = First;
+	}
+	bSelectionActive = true;
+}
+
+void ALambdaCharacter::CycleSelection(int32 Step)
+{
+	// invnext/invprev walk the whole arsenal in bucket order, opening the menu from the weapon in hand.
+	if (Weapons.Num() == 0)
+	{
+		return;
+	}
+	if (!bSelectionActive)
+	{
+		SelectionIndex = Weapons.IndexOfByKey(ActiveWeapon);
+		bSelectionActive = true;
+	}
+	SelectionIndex = (SelectionIndex + Step + Weapons.Num()) % Weapons.Num();
+}
+
 ALambdaWeapon* ALambdaCharacter::GiveWeapon(const FString& WeaponClassName)
 {
 	UWorld* World = GetWorld();
@@ -1039,6 +1200,10 @@ ALambdaWeapon* ALambdaCharacter::GiveWeapon(const FString& WeaponClassName)
 	if (WeaponClassName.Equals(TEXT("weapon_pistol"), ESearchCase::IgnoreCase))
 	{
 		WeaponClass = ALambdaWeaponPistol::StaticClass();
+	}
+	else if (WeaponClassName.Equals(TEXT("weapon_crowbar"), ESearchCase::IgnoreCase))
+	{
+		WeaponClass = ALambdaWeaponCrowbar::StaticClass();
 	}
 
 	FActorSpawnParameters Params;
@@ -1054,15 +1219,17 @@ ALambdaWeapon* ALambdaCharacter::GiveWeapon(const FString& WeaponClassName)
 	Weapon->InitializeFromScript(WeaponClassName);
 	Weapon->AttachToActor(this, FAttachmentTransformRules::SnapToTargetIncludingScale);
 
-	if (ActiveWeapon)
+	// The arsenal, kept sorted by bucket then position - the order the selection HUD draws it in.
+	Weapons.Add(Weapon);
+	Weapons.Sort([](const ALambdaWeapon& A, const ALambdaWeapon& B)
 	{
-		ActiveWeapon->Destroy();
-	}
-	ActiveWeapon = Weapon;
+		const FSourceWeaponInfo& IA = A.GetWeaponInfo();
+		const FSourceWeaponInfo& IB = B.GetWeaponInfo();
+		return IA.Bucket != IB.Bucket ? IA.Bucket < IB.Bucket : IA.BucketPosition < IB.BucketPosition;
+	});
 
-	// Show the weapon's view model (models/weapons/v_pistol.mdl and friends, from the weapon script).
-	SetViewModel(Weapon->GetWeaponInfo().ViewModel);
-
+	// CBasePlayer::Weapon_Equip switches to a picked-up weapon.
+	SwitchToWeapon(Weapon);
 	return Weapon;
 }
 
@@ -1142,8 +1309,8 @@ bool ALambdaCharacter::BumpWeapon(const FString& WeaponClassName)
 		return false;
 	}
 
-	// Only one weapon is carried at a time so far, so bumping the one in hand just tops up its ammo.
-	if (ActiveWeapon && ActiveWeapon->GetWeaponClassName().Equals(WeaponClassName, ESearchCase::IgnoreCase))
+	// A weapon already carried hands over its ammo instead.
+	if (FindWeapon(WeaponClassName))
 	{
 		return GiveAmmo(Info->PrimaryAmmo, FMath::Max(Info->ClipSize, 1)) > 0;
 	}
@@ -1151,9 +1318,21 @@ bool ALambdaCharacter::BumpWeapon(const FString& WeaponClassName)
 	if (GiveWeapon(WeaponClassName))
 	{
 		GiveAmmo(Info->PrimaryAmmo, FMath::Max(Info->ClipSize, 1));
+		ALambdaCharacterAddPickupHistory(PickupHistory, GetWorld(), WeaponClassName.ToUpper());
 		return true;
 	}
 	return false;
+}
+
+void ALambdaCharacterAddPickupHistory(TArray<ALambdaCharacter::FPickupEvent>& History, UWorld* World, const FString& Text)
+{
+	ALambdaCharacter::FPickupEvent& Event = History.AddDefaulted_GetRef();
+	Event.Text = Text;
+	Event.Time = World ? World->GetTimeSeconds() : 0.0f;
+	while (History.Num() > 4)
+	{
+		History.RemoveAt(0);
+	}
 }
 
 int32 ALambdaCharacter::GiveAmmo(const FString& AmmoType, int32 Count)
@@ -1176,7 +1355,14 @@ int32 ALambdaCharacter::GiveAmmo(const FString& AmmoType, int32 Count)
 	int32& Current = AmmoCounts.FindOrAdd(AmmoType.ToLower());
 	const int32 Before = Current;
 	Current = FMath::Min(Current + Count, MaxCarry);
-	return Current - Before;
+	const int32 Added = Current - Before;
+	if (Added > 0)
+	{
+		// CHudHistoryResource: the pickup shows on the right of the screen for a moment.
+		ALambdaCharacterAddPickupHistory(PickupHistory, GetWorld(),
+			FString::Printf(TEXT("+%d %s"), Added, *AmmoType.ToUpper()));
+	}
+	return Added;
 }
 
 void ALambdaCharacter::RemoveAmmo(const FString& AmmoType, int32 Count)
@@ -1193,6 +1379,13 @@ void ALambdaCharacter::RemoveAmmo(const FString& AmmoType, int32 Count)
 
 void ALambdaCharacter::Input_AttackStart()
 {
+	// With the weapon menu open, the attack is the confirmation, not a shot (CBaseHudWeaponSelection).
+	if (bSelectionActive)
+	{
+		bSelectionActive = false;
+		SwitchToWeapon(GetSelectedWeapon());
+		return;
+	}
 	// CPlayerPickupController::Use: firing while carrying something throws it instead (the weapon is holstered
 	// while the player has his hands full).
 	if (ThrowCarriedProp())
@@ -1473,6 +1666,19 @@ float ALambdaCharacter::TakeDamage(float DamageAmount, const FDamageEvent& Damag
 	// health simply stops at zero.
 	Health = FMath::Max(0.0f, Health - DamageAmount);
 	UE_LOG(LogLambda, Log, TEXT("player took %.0f damage from %s, health %.0f"), DamageAmount, *GetNameSafe(DamageCauser), Health);
+
+	// The HUD's damage indicator wants to know which way the blow came from, relative to the view.
+	LastDamageTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	LastDamageAmount = DamageAmount;
+	if (DamageCauser)
+	{
+		const FVector ToCauser = (DamageCauser->GetActorLocation() - GetActorLocation()).GetSafeNormal2D();
+		LastDamageYaw = FMath::FindDeltaAngleDegrees(GetControlRotation().Yaw, ToCauser.Rotation().Yaw);
+	}
+	else
+	{
+		LastDamageYaw = 0.0f;
+	}
 	return DamageAmount;
 }
 

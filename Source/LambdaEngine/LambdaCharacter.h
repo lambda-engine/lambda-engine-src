@@ -51,6 +51,25 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Lambda")
 	ALambdaWeapon* GetActiveWeapon() const { return ActiveWeapon; }
+	/** Every weapon the player carries, for the selection HUD (sorted by bucket, then position). */
+	const TArray<TObjectPtr<ALambdaWeapon>>& GetWeapons() const { return Weapons; }
+	ALambdaWeapon* FindWeapon(const FString& WeaponClassName) const;
+	/** CBasePlayer::Weapon_Switch: holster the old, deploy the new. */
+	void SwitchToWeapon(ALambdaWeapon* Weapon);
+
+	/** The weapon selection menu (CHudWeaponSelection's state lives on the player here). */
+	bool IsWeaponSelectionActive() const { return bSelectionActive; }
+	ALambdaWeapon* GetSelectedWeapon() const { return SelectionIndex >= 0 && Weapons.IsValidIndex(SelectionIndex) ? Weapons[SelectionIndex].Get() : nullptr; }
+
+	/** What the HUD's damage indicator needs: when, how hard, and from which side. */
+	float GetLastDamageTime() const { return LastDamageTime; }
+	float GetLastDamageAmount() const { return LastDamageAmount; }
+	/** Angle of the blow relative to the view: 0 ahead, +90 right, -90 left, +/-180 behind. */
+	float GetLastDamageYaw() const { return LastDamageYaw; }
+
+	/** CHudHistoryResource: the last few pickups, newest last. */
+	struct FPickupEvent { FString Text; float Time = 0.0f; };
+	const TArray<FPickupEvent>& GetPickupHistory() const { return PickupHistory; }
 
 	/** CBasePlayer::GetAmmoCount / GiveAmmo / RemoveAmmo, keyed by the ammo type name from the weapon script. */
 	UFUNCTION(BlueprintPure, Category = "Lambda")
@@ -130,6 +149,17 @@ protected:
 	/** CBasePlayer::FindUseEntity - trace from the eye for a usable entity within PLAYER_USE_RADIUS. */
 	AActor* FindUseEntity() const;
 	void Input_Quit();
+	/** slot1..slot5 / lastinv / invnext / invprev, the HL2 weapon selection commands. */
+	void Input_Slot1() { SelectSlot(0); }
+	void Input_Slot2() { SelectSlot(1); }
+	void Input_Slot3() { SelectSlot(2); }
+	void Input_Slot4() { SelectSlot(3); }
+	void Input_Slot5() { SelectSlot(4); }
+	void Input_LastInv();
+	void Input_InvNext() { CycleSelection(+1); }
+	void Input_InvPrev() { CycleSelection(-1); }
+	void SelectSlot(int32 Bucket);
+	void CycleSelection(int32 Step);
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Lambda")
 	TObjectPtr<UCameraComponent> FirstPersonCamera;
@@ -178,6 +208,15 @@ protected:
 	float SweepSeconds = 0.0f;
 	float SweepDelay = 0.0f;
 	float SweepElapsed = 0.0f;
+	/** The scripted view (setpos.auto) is held briefly, and scripted spawns fire inside that window. */
+	FRotator AutoViewRotation = FRotator::ZeroRotator;
+	float AutoViewHoldSeconds = 0.0f;
+	float AutoSpawnDelay = 0.0f;
+	FString PendingNPCCreate;
+	FString PendingPropCreate;
+	/** lambda.slot.auto state. */
+	int32 AutoSlotBucket = 0;
+	float AutoSlotDelay = 0.0f;
 	/** lambda.walk.auto state. */
 	float AutoWalkSeconds = 0.0f;
 	float AutoWalkDelay = 0.0f;
@@ -224,11 +263,36 @@ protected:
 	UPROPERTY(Transient)
 	TObjectPtr<UInputAction> QuitAction;
 
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> SlotActions[5];
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> LastInvAction;
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> InvNextAction;
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> InvPrevAction;
+
 	float WalkSpeedCm = 0.0f;
 	float SprintSpeedCm = 0.0f;
 
 	UPROPERTY(Transient)
 	TObjectPtr<ALambdaWeapon> ActiveWeapon;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<ALambdaWeapon>> Weapons;
+	UPROPERTY(Transient)
+	TObjectPtr<ALambdaWeapon> LastWeapon;
+
+	/** Weapon selection menu state. */
+	bool bSelectionActive = false;
+	int32 SelectionIndex = -1;
+
+	/** Damage indicator memory. */
+	float LastDamageTime = -1000.0f;
+	float LastDamageAmount = 0.0f;
+	float LastDamageYaw = 0.0f;
+
+	TArray<FPickupEvent> PickupHistory;
 
 	/** Ammo carried, by ammo type name. */
 	TMap<FString, int32> AmmoCounts;
