@@ -5,7 +5,7 @@ rem
 rem  Usage: Build.bat [Target=LambdaEngineEditor] [Configuration=Development]
 rem
 rem  NOTE: this does NOT update the packaged game in ..\game. Building the editor target only produces
-rem        the editor DLLs. To refresh game\LambdaEngine.exe, run Package.bat.
+rem        the editor DLLs. To refresh the packaged game, run Release.bat.
 rem        To compile and immediately play from source, use PlayDev.bat.
 rem =====================================================================================================
 call "%~dp0Env.bat" || exit /b 1
@@ -24,5 +24,5 @@ if exist "%PACKAGED%" (
 	echo.
 	echo [LambdaEngine] Reminder: the packaged build in ..\game was NOT updated by this command.
 	for %%I in ("%PACKAGED%") do echo                game\LambdaEngine.exe was packaged %%~tI
-	echo                Run Package.bat to refresh it, or PlayDev.bat to play the code you just built.
+	echo                Run Release.bat to refresh it, or Debug.bat to play the code you just built.
 )

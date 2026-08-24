@@ -17,12 +17,12 @@ lambda-engine-src/            this repository - the Unreal project
   Plugins/LambdaSource/       Source-format runtime: BSP/VMT/VTF/KeyValues/VPK parsers, virtual file system, world actor
   Config/  Content/
   Build/Windows/              Application.ico - the icon compiled into the packaged exe
-  Tools/                      dev scripts: GenerateProjectFiles / Build / PlayDev / CreateAssets / Editor / Package
+  Tools/                      dev scripts: GenerateProjectFiles / Build / CreateAssets / Editor / Env
 
 lambda-engine/                the other repository - the shippable game files
-  LambdaEngine.exe            the packaged game (created by Tools\Package.bat over here)
+  lambda.exe                  the packaged game (created by Release.bat over here)
   Engine/  LambdaEngine/      cooked engine + game data (created by packaging)
-  <map>.bat                   launches the game on Game\lambda\maps\<map>.bsp
+  <map>.bat                   launches the game on Mods\lambda\maps\<map>.bsp
   Mods/                       all mod content lives here; packaging never touches it
     lambda/                   the mod content directory (like hl2/)
       gameinfo.txt            declares the mod name and its content mounts (dirs, VPKs, Steam installs, packs)
@@ -39,11 +39,11 @@ beside the `.uproject` holds one absolute path - your clone of the game reposito
 C:\Users\you\Development\lambda-engine
 ```
 
-`Tools\Env.bat` reads it, so `Package.bat` knows where to put the build and `PlayDev.bat` knows what to mount; the
+`Tools\Env.bat` reads it, so `Release.bat` knows where to put the build and `Debug.bat` knows what to mount; the
 editor reads it too, which is what lets Play work without passing `-gamedir` every time. A `-gamedir=` on the
 command line still wins over it, and so does a `GAME_DIR` already set in the environment.
 
-`Tools\PlayDev.bat` runs the code you are currently editing without cooking; `Package.bat` builds the game into
+`Debug.bat` runs the code you are currently editing without cooking; `Release.bat` builds the game into
 the game repository, where its `.bat` launchers run it.
 
 ## Requirements
@@ -56,7 +56,7 @@ the game repository, where its `.bat` launchers run it.
 ```bat
 src\Tools\GenerateProjectFiles.bat    rem creates src\LambdaEngine.sln
 src\Tools\CreateAssets.bat            rem one-time: master material + empty startup level (editor Python)
-src\Tools\PlayDev.bat test            rem compile + play from source - the day-to-day dev loop
+Debug.bat startup            rem compile + play from source - the day-to-day dev loop
 ```
 
 Or open `src\LambdaEngine.uproject` in the editor and press Play.
@@ -68,21 +68,21 @@ There are two separate builds here, and mixing them up is the easiest mistake to
 | Command | Builds | Runs |
 |---|---|---|
 | `src\Tools\Build.bat` | editor DLLs | nothing |
-| `src\Tools\PlayDev.bat` | editor DLLs | the game **from source** (no cooking) |
-| `src\Tools\Package.bat` | cooked standalone build into `game\` | nothing |
-| `game\Run.bat` | nothing | the **packaged** `game\LambdaEngine.exe` |
+| `Debug.bat` | editor DLLs | the game **from source** (no cooking) |
+| `Release.bat` | cooked standalone build into the game repository | nothing |
+| a per-map  | nothing | the **packaged**  |
 
-`Build.bat` does *not* refresh `game\LambdaEngine.exe` — only `Package.bat` does. While iterating on code use
-`PlayDev.bat`; repackage when you want the shipped exe to catch up.
+`Build.bat` does *not* refresh `lambda.exe` — only `Release.bat` does. While iterating on code use
+`Debug.bat`; repackage when you want the shipped exe to catch up.
 
 ## Packaging
 
 ```bat
-src\Tools\Package.bat                 rem Development build; pass "Shipping" for a shipping build
+Release.bat                 rem Development build; pass "Shipping" for a shipping build
 ```
 
 This cooks and stages the game straight into `game\`, so that folder becomes self-contained:
-`LambdaEngine.exe` sits next to `Game\`, which packaging never overwrites. Re-run this whenever you want the shipped
+`lambda.exe` sits next to `Mods\`, which packaging never overwrites. Re-run this whenever you want the shipped
 exe to pick up code or content changes — a plain `Build.bat` will not.
 
 The exe's icon comes from `src\Build\Windows\Application.ico` (UBT picks it up automatically); replace that file and

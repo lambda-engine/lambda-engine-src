@@ -1,14 +1,15 @@
 @echo off
 rem =====================================================================================================
 rem  Development loop: compile the game code and run it straight from source - no cooking, no packaging.
-rem  This is what you want while iterating on gameplay code.
+rem  This is what you want while working on the game.
 rem
-rem  Usage:  PlayDev.bat [mapname=startup] [extra engine args...]
+rem  Usage:  Debug.bat [mapname=startup] [extra engine args...]
 rem
-rem  It runs the editor binary in -game mode against src\, reading content from the game repository's Mods\lambda.
-rem  It does NOT touch game\LambdaEngine.exe - repackage with Package.bat when you want to update that.
+rem  It runs the editor binary in -game mode against this project, reading content from the game
+rem  repository's Mods\lambda. It does NOT touch the packaged LambdaEngine.exe over there - run
+rem  Release.bat when you want that to catch up.
 rem =====================================================================================================
-call "%~dp0Env.bat" || exit /b 1
+call "%~dp0Tools\Env.bat" || exit /b 1
 
 set "MAP=%~1"
 if "%MAP%"=="" set "MAP=startup"
