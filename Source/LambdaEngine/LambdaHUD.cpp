@@ -5,10 +5,47 @@
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
 #include "Engine/Font.h"
+#include "LambdaMaterialLibrary.h"
+#include "LambdaFileSystem.h"
+#include "LambdaEngine.h"
+#include "Engine/FontFace.h"
 
 ALambdaHUD::ALambdaHUD()
 {
 	HudFont = GEngine ? GEngine->GetLargeFont() : nullptr;
+}
+
+void ALambdaHUD::LoadSchemeFont()
+{
+	// ClientScheme's CustomFontFiles: the scheme ships the face it wants next to the .res that names it, and the
+	// HUD fonts are all "Alte DIN 1451 Mittelschrift". Loaded from the game directory the same way as every other
+	// piece of game content, so a mod can drop its own face in and the HUD picks it up.
+	if (SchemeFont || SchemeFontFace)
+	{
+		return;
+	}
+	TArray<uint8> FontData;
+	const FLambdaFileSystem& Files = FLambdaFileSystem::Get();
+	if (!Files.ReadFile(TEXT("resource/din1451alt.ttf"), FontData) || FontData.Num() == 0)
+	{
+		return;
+	}
+	UFontFace* Face = NewObject<UFontFace>(this);
+	Face->LoadingPolicy = EFontLoadingPolicy::Inline;
+	Face->FontFaceData = FFontFaceData::MakeFontFaceData(MoveTemp(FontData));
+
+	UFont* Font = NewObject<UFont>(this);
+	Font->FontCacheType = EFontCacheType::Runtime;
+	FTypefaceEntry& Entry = Font->CompositeFont.DefaultTypeface.Fonts.AddDefaulted_GetRef();
+	Entry.Name = TEXT("Regular");
+	Entry.Font = FFontData(Face);
+	Font->LegacyFontSize = 31;	// HudTextLarge's "tall"
+
+	SchemeFontFace = Face;
+	SchemeFont = Font;
+	// Only the number fields take it. Black Mesa sets DIN on the HUD's numerals and leaves the smaller captions
+	// to another face, and letting it loose on everything just makes the labels enormous.
+	UE_LOG(LogLambda, Log, TEXT("HUD: using the scheme font resource/din1451alt.ttf for the number fields"));
 }
 
 void ALambdaHUD::DrawPanel(float X, float Y, float W, float H)
@@ -25,6 +62,96 @@ void ALambdaHUD::DrawLabelledValue(float X, float Y, const FString& Label, const
 	// Small caption above a large number, the way the HL2 panels read.
 	DrawText(Label, Colour * FLinearColor(1.0f, 1.0f, 1.0f, 0.75f), X, Y, HudFont, 1.0f);
 	DrawText(Value, Colour, X, Y + 16.0f, HudFont, ValueScale);
+}
+
+ULambdaMaterialLibrary* ALambdaHUD::GetMaterials()
+{
+	if (!Materials.IsValid())
+	{
+		if (ALambdaCharacter* Player = Cast<ALambdaCharacter>(GetOwningPawn()))
+		{
+			Materials = Player->GetWorldMaterialLibrary();
+		}
+	}
+	return Materials.Get();
+}
+
+void ALambdaHUD::DrawHudIcon(const FString& TextureName, float X, float Y, float Size, const FLinearColor& Colour)
+{
+	ULambdaMaterialLibrary* Library = GetMaterials();
+	if (!Library || !Canvas)
+	{
+		return;
+	}
+	if (UTexture2D* Icon = Library->GetTexture(TextureName))
+	{
+		// The icons are $translucent UnlitGeneric, drawn with $vertexcolor - the sheet is white and the colour
+		// comes from the HUD, which is why one texture serves the normal, dim and warning states.
+		Canvas->SetDrawColor(Colour.ToFColor(false));
+		Canvas->DrawTile(Icon, X, Y, Size, Size, 0.0f, 0.0f, Icon->GetSizeX(), Icon->GetSizeY(),
+			BLEND_Translucent);
+		Canvas->SetDrawColor(FColor::White);
+	}
+}
+
+float ALambdaHUD::DrawNumberField(float RightX, float Y, int32 Value, int32 Digits, float PixelHeight,
+	const FLinearColor& Bright, const FLinearColor& Dim)
+{
+	UFont* Font = SchemeFont ? SchemeFont.Get() : HudFont.Get();
+	if (!Font)
+	{
+		return RightX;
+	}
+	const FString Text = FString::Printf(TEXT("%0*d"), Digits, FMath::Clamp(Value, 0, 999));
+
+	// The scale that puts the face at the height the scheme asks for.
+	float Unused = 0.0f, FontHeight = 0.0f;
+	GetTextSize(TEXT("0"), Unused, FontHeight, Font, 1.0f);
+	const float Scale = FontHeight > 0.0f ? PixelHeight / FontHeight : 1.0f;
+
+	// Where the number really starts: everything before it is a leading zero and is drawn faint.
+	int32 FirstSignificant = 0;
+	while (FirstSignificant < Text.Len() - 1 && Text[FirstSignificant] == TEXT('0'))
+	{
+		++FirstSignificant;
+	}
+
+	float TotalWidth = 0.0f, CharH = 0.0f;
+	GetTextSize(Text, TotalWidth, CharH, Font, Scale);
+	float X = RightX - TotalWidth;
+	const float StartX = X;
+	for (int32 i = 0; i < Text.Len(); ++i)
+	{
+		const FString Glyph = FString::Chr(Text[i]);
+		float GlyphW = 0.0f, GlyphH = 0.0f;
+		GetTextSize(Glyph, GlyphW, GlyphH, Font, Scale);
+		DrawText(Glyph, i < FirstSignificant ? Dim : Bright, X, Y, Font, Scale);
+		X += GlyphW;
+	}
+	return StartX;
+}
+
+/**
+ * Black Mesa names its ammo icons for the round itself - ammo_9mm, ammo_357, ammo_buckshot - while the weapon
+ * scripts name the ammo pool the HL2 way, "Pistol", "SMG1", "AR2". This is that translation; an ammo type with no
+ * icon of its own falls back to the 9mm box.
+ */
+FString ALambdaHUD::AmmoIconName(const FString& AmmoType)
+{
+	static const TMap<FString, FString> Icons = {
+		{ TEXT("pistol"),       TEXT("ammo_9mm") },
+		{ TEXT("smg1"),         TEXT("ammo_9mm") },
+		{ TEXT("357"),          TEXT("ammo_357") },
+		{ TEXT("buckshot"),     TEXT("ammo_buckshot") },
+		{ TEXT("ar2"),          TEXT("ammo_energy") },
+		{ TEXT("xbowbolt"),     TEXT("ammo_bolt") },
+		{ TEXT("rpg_round"),    TEXT("ammo_grenade_rpg") },
+		{ TEXT("grenade"),      TEXT("ammo_grenade_frag") },
+		{ TEXT("smg1_grenade"), TEXT("ammo_grenade_mp5") },
+		{ TEXT("slam"),         TEXT("ammo_grenade_tripmine") },
+	};
+	const FString* Found = Icons.Find(AmmoType.ToLower());
+	return FString::Printf(TEXT("vgui/hud/%s"), Found ? **Found : TEXT("ammo_9mm"));
 }
 
 void ALambdaHUD::DrawCrosshair(float CenterX, float CenterY)
@@ -145,6 +272,8 @@ void ALambdaHUD::DrawHUD()
 {
 	Super::DrawHUD();
 
+	LoadSchemeFont();
+
 	if (!Canvas || !HudFont)
 	{
 		return;
@@ -177,15 +306,13 @@ void ALambdaHUD::DrawHUD()
 	}
 	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 
-	const float Margin = 24.0f;
-	const float PanelH = 58.0f;
-	const float Bottom = H - Margin - PanelH;
+	// Black Mesa's hudlayout.res is authored against a 480-tall screen, so everything below is in those units
+	// scaled to the real one. "r36" in the file means 36 up from the bottom.
+	const float S = H / 480.0f;
+	const float DigitHeight = 31.0f * S;	// HudTextLarge: "Alte DIN 1451 Mittelschrift" tall 31
 
-	// ---- Health / suit, bottom left ----
+	// ---- Health and suit, bottom left ----
 	{
-		const float PanelW = 240.0f;
-		DrawPanel(Margin, Bottom, PanelW, PanelH);
-
 		const int32 Health = FMath::RoundToInt(Player->GetHealth());
 		const int32 Armour = FMath::RoundToInt(Player->GetArmor());
 
@@ -197,7 +324,10 @@ void ALambdaHUD::DrawHUD()
 		}
 		LastHealthSeen = Health;
 
-		FLinearColor HealthColour = (Health <= 20) ? LowColour : HudColour;
+		// "warnIfLessThan" "25": below that the field turns red, and the low-health pulse rides on top.
+		const bool bWarn = Health < 25;
+		FLinearColor HealthColour = bWarn ? LowColour : HudColour;
+		FLinearColor HealthDim = bWarn ? LowColourDark : HudColourDark;
 		if (Now < DamageFlashEndTime)
 		{
 			HealthColour = FMath::Lerp(FLinearColor::White, HealthColour, 1.0f - (DamageFlashEndTime - Now) / 0.6f);
@@ -207,8 +337,19 @@ void ALambdaHUD::DrawHUD()
 			HealthColour.A = 0.55f + 0.45f * FMath::Abs(FMath::Sin(Now * 6.0f));
 		}
 
-		DrawLabelledValue(Margin + 14.0f, Bottom + 8.0f, TEXT("HEALTH"), FString::FromInt(Health), HealthColour, 1.6f);
-		DrawLabelledValue(Margin + 130.0f, Bottom + 8.0f, TEXT("SUIT"), FString::FromInt(Armour), HudColour, 1.6f);
+		const float RowY = H - 36.0f * S;
+		// The dot that opens the row, then three digits, then the health cross - CHudHealth's DotTexture and
+		// CrossTexture.
+		DrawHudIcon(TEXT("vgui/hud/hud_dot"), 16.0f * S, RowY + 12.0f * S, 10.0f * S, HealthColour);
+		const float HealthRight = (16.0f + 74.0f) * S;
+		DrawNumberField(HealthRight, RowY, Health, 3, DigitHeight, HealthColour, HealthDim);
+		DrawHudIcon(TEXT("vgui/hud/hud_health_overlay"), HealthRight + 2.0f * S, RowY + 8.0f * S, 14.0f * S, HealthColour);
+
+		// Suit, immediately to its right (CHudArmor xpos 90), with the HEV figure.
+		const float ArmourRight = (90.0f + 74.0f) * S;
+		DrawNumberField(ArmourRight, RowY, Armour, 3, DigitHeight, Armour > 0 ? HudColour : HudColourDim, HudColourDark);
+		DrawHudIcon(TEXT("vgui/hud/hud_hev_overlay"), ArmourRight + 2.0f * S, RowY + 8.0f * S, 14.0f * S,
+			Armour > 0 ? HudColour : HudColourDim);
 	}
 
 	DrawDamageIndicator(Player, W, H, Now);
@@ -229,26 +370,32 @@ void ALambdaHUD::DrawHUD()
 		{
 			return;
 		}
-		const float PanelW = 210.0f;
-		const float X = W - Margin - PanelW;
-		DrawPanel(X, Bottom, PanelW, PanelH);
-
 		const int32 Reserve = Player->GetAmmoCount(Weapon->GetPrimaryAmmoType());
+		const float RowY = H - 44.0f * S;			// CHudClip ypos r44
+		const float ClipRight = W - 73.0f * S;		// xpos r147 + wide 74, east aligned
+
+		const FString AmmoIcon = AmmoIconName(Weapon->GetPrimaryAmmoType());
 
 		if (Weapon->UsesClipsForAmmo1())
 		{
 			const int32 Clip = Weapon->GetClip1();
 			FLinearColor ClipColour = (Clip <= 0) ? LowColour : HudColour;
+			const FLinearColor ClipDim = (Clip <= 0) ? LowColourDark : HudColourDark;
 			if (Now < WeaponFlashEndTime)
 			{
 				ClipColour = FLinearColor::White;
 			}
-			DrawLabelledValue(X + 14.0f, Bottom + 8.0f, TEXT("AMMO"), FString::FromInt(Clip), ClipColour, 1.6f);
-			DrawLabelledValue(X + 118.0f, Bottom + 8.0f, TEXT("RESERVE"), FString::FromInt(Reserve), HudColour, 1.6f);
+			// dot, the clip in three digits, then the icon, then the reserve small beside it.
+			DrawHudIcon(TEXT("vgui/hud/hud_dot"), W - 128.0f * S, RowY + 16.0f * S, 10.0f * S, ClipColour);
+			DrawNumberField(ClipRight, RowY, Clip, 3, DigitHeight, ClipColour, ClipDim);
+			DrawHudIcon(AmmoIcon, W - 62.0f * S, H - 36.0f * S, 15.0f * S, HudColourNormal);
+			DrawNumberField(W - 16.0f * S, H - 34.0f * S, Reserve, 3, 15.0f * S, HudColourNormal, HudColourDark);
 		}
 		else
 		{
-			DrawLabelledValue(X + 14.0f, Bottom + 8.0f, TEXT("AMMO"), FString::FromInt(Reserve), HudColour, 1.6f);
+			DrawHudIcon(TEXT("vgui/hud/hud_dot"), W - 128.0f * S, RowY + 16.0f * S, 10.0f * S, HudColour);
+			DrawNumberField(ClipRight, RowY, Reserve, 3, DigitHeight, HudColour, HudColourDark);
+			DrawHudIcon(AmmoIcon, W - 43.0f * S, H - 36.0f * S, 15.0f * S, HudColourNormal);
 		}
 	}
 }

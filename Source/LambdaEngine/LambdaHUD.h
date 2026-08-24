@@ -23,13 +23,42 @@ protected:
 	void DrawPanel(float X, float Y, float W, float H);
 	void DrawLabelledValue(float X, float Y, const FString& Label, const FString& Value, const FLinearColor& Colour, float ValueScale);
 
+	/**
+	 * A Black Mesa number field: the value in a fixed number of digits, with the leading zeros left in place and
+	 * drawn in the dim colour, so "13" of a 3-digit field reads as a faint 0 followed by a bright 13. Returns the
+	 * x it started drawing at.
+	 */
+	float DrawNumberField(float RightX, float Y, int32 Value, int32 Digits, float PixelHeight,
+		const FLinearColor& Bright, const FLinearColor& Dim);
+	/** Maps an HL2 ammo pool name onto the Black Mesa icon for that round. */
+	static FString AmmoIconName(const FString& AmmoType);
+	/** Draws one of Black Mesa's HUD icons (materials/vgui/hud) tinted, sized in pixels. */
+	void DrawHudIcon(const FString& TextureName, float X, float Y, float Size, const FLinearColor& Colour);
+	class ULambdaMaterialLibrary* GetMaterials();
+
 	/** HL2's HUD amber. */
-	FLinearColor HudColour = FLinearColor(1.0f, 0.68f, 0.28f, 1.0f);
-	FLinearColor PanelColour = FLinearColor(0.05f, 0.05f, 0.05f, 0.5f);
-	FLinearColor LowColour = FLinearColor(1.0f, 0.25f, 0.15f, 1.0f);
+	// Black Mesa's scheme is one amber - "Orange" "255 176 0" - used at a handful of alphas, and one red for
+	// trouble. The dim tiers are the same hue faded, which is what makes a field's leading zeros sink into the
+	// background instead of reading as another colour.
+	static constexpr float BMAmberG = 176.0f / 255.0f;
+	FLinearColor HudColour = FLinearColor(1.0f, BMAmberG, 0.0f, 1.0f);			// OrangeBright
+	FLinearColor HudColourNormal = FLinearColor(1.0f, BMAmberG, 0.0f, 160.0f / 255.0f);	// Orange
+	FLinearColor HudColourDim = FLinearColor(1.0f, BMAmberG, 0.0f, 110.0f / 255.0f);	// OrangeDim
+	FLinearColor HudColourDark = FLinearColor(1.0f, BMAmberG, 0.0f, 42.0f / 255.0f);	// OrangeDark
+	FLinearColor PanelColour = FLinearColor(0.0f, 0.0f, 0.0f, 0.0f);			// BM paints no panel behind the HUD
+	FLinearColor LowColour = FLinearColor(1.0f, 28.0f / 255.0f, 0.0f, 1.0f);		// RedBright
+	FLinearColor LowColourDark = FLinearColor(1.0f, 28.0f / 255.0f, 0.0f, 42.0f / 255.0f);	// RedDark
 
 	UPROPERTY()
 	TObjectPtr<UFont> HudFont;
+	/** Black Mesa's own face, loaded from the game directory at startup; null falls back to the engine font. */
+	UPROPERTY(Transient)
+	TObjectPtr<UFont> SchemeFont;
+	UPROPERTY(Transient)
+	TObjectPtr<class UFontFace> SchemeFontFace;
+	void LoadSchemeFont();
+	UPROPERTY(Transient)
+	TWeakObjectPtr<class ULambdaMaterialLibrary> Materials;
 
 	/** cl_showfps-style counter, smoothed so it reads steadily. */
 	float SmoothedFrameTime = 0.0f;

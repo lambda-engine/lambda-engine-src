@@ -115,7 +115,7 @@ public:
 
 	/** Brightness of that muzzle flash light, in candelas. */
 	UPROPERTY(config, EditAnywhere, Category = "Effects", meta = (ClampMin = "0.0"))
-	float MuzzleFlashLightIntensity = 2500.0f;
+	float MuzzleFlashLightIntensity = 1250.0f;
 
 	/**
 	 * Multiplier on the muzzle flash sprite's emissive. Source blends its flash additively over an LDR
