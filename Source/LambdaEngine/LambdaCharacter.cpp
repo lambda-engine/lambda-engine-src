@@ -1521,11 +1521,20 @@ AActor* ALambdaCharacter::NPCCreate(const FString& ClassName, float MaxDistanceC
 		// Back off the surface by a hull's width so the NPC is not spawned into a wall...
 		Spot = Hit.ImpactPoint + Hit.ImpactNormal * 40.0f;
 	}
-	// ...then UTIL_DropToFloor: the NPC stands on whatever is below that point.
-	FHitResult Floor;
-	if (World->LineTraceSingleByChannel(Floor, Spot + FVector(0, 0, 20.0f), Spot - FVector(0, 0, 5000.0f), ECC_Visibility, Params))
+	// ...then UTIL_DropToFloor: the NPC stands on whatever is below that point. Not the barnacle - a ceiling
+	// feeder hangs where the trace hit, so aiming at the ceiling puts one there.
+	if (!ClassName.Equals(TEXT("npc_barnacle"), ESearchCase::IgnoreCase))
 	{
-		Spot = Floor.ImpactPoint + FVector(0, 0, 1.0f);
+		FHitResult Floor;
+		if (World->LineTraceSingleByChannel(Floor, Spot + FVector(0, 0, 20.0f), Spot - FVector(0, 0, 5000.0f), ECC_Visibility, Params))
+		{
+			Spot = Floor.ImpactPoint + FVector(0, 0, 1.0f);
+		}
+	}
+	else if (Hit.bBlockingHit)
+	{
+		// The barnacle's origin is its mount point: put it right at the ceiling, not a hull's width below it.
+		Spot = Hit.ImpactPoint;
 	}
 	const float Yaw = (GetActorLocation() - Spot).Rotation().Yaw;
 	AActor* NPC = BSPWorld->CreateNPC(ClassName, Spot, Yaw);

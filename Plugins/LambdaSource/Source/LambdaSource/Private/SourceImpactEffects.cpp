@@ -87,6 +87,8 @@ bool TraceBullet(UWorld* World, const FVector& Start, const FVector& End, FColli
 		{
 			return false;
 		}
+		UE_LOG(LogLambdaSource, VeryVerbose, TEXT("bullet pass %d: %s (%s) at %s"), Pass,
+			*GetNameSafe(OutHit.GetActor()), *GetNameSafe(OutHit.GetComponent()), *OutHit.ImpactPoint.ToCompactString());
 		ASourceNPCBase* NPC = Cast<ASourceNPCBase>(OutHit.GetActor());
 		if (NPC && NPC->HasHitboxes())
 		{

@@ -1,6 +1,7 @@
 #include "SourceBSPWorldActor.h"
 #include "SourceImpactEffects.h"
 #include "SourceNPCHeadcrab.h"
+#include "SourceNPCBarnacle.h"
 #include "SourceNPCZombie.h"
 #include "SourceItem.h"
 #include "SourcePropData.h"
@@ -267,6 +268,10 @@ TSubclassOf<ASourceNPCBase> ASourceBSPWorldActor::NPCClassForName(const FString&
 	if (ClassName.Equals(TEXT("npc_zombie"), ESearchCase::IgnoreCase))
 	{
 		return ASourceNPCZombie::StaticClass();
+	}
+	if (ClassName.Equals(TEXT("npc_barnacle"), ESearchCase::IgnoreCase))
+	{
+		return ASourceNPCBarnacle::StaticClass();
 	}
 	return nullptr;
 }

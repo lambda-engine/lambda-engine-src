@@ -104,6 +104,15 @@ public:
 	 */
 	void SetExternalPose(const TArray<FSourceMatrix3x4>& InBoneToModel);
 	void ClearExternalPose() { bExternalPose = false; }
+
+	/**
+	 * Code-driven bones, for the barnacle's tongue: the bone's model-space position is replaced after the
+	 * sequence pose is composed, keeping whatever rotation the animation gave it - the same trick
+	 * C_NPC_Barnacle::BuildTransformations plays, spacing the tongue bones between the root and the tip.
+	 * Positions are component-local, UE cm.
+	 */
+	void SetBonePositionOverride(const FString& BoneName, const FVector& ComponentPosition);
+	void ClearBonePositionOverrides() { BonePositionOverrides.Reset(); }
 	bool HasExternalPose() const { return bExternalPose; }
 
 	FSourceAnimationEvent OnAnimationEvent;
@@ -145,6 +154,7 @@ private:
 
 	/** Bone-to-model transforms for the pose currently displayed, in Source space. */
 	TArray<FSourceMatrix3x4> BoneToModel;
+	TMap<int32, FVector> BonePositionOverrides;
 
 	int32 CurrentSequence = INDEX_NONE;
 	float Cycle = 0.0f;

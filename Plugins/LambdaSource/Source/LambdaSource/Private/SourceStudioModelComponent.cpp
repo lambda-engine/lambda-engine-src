@@ -160,7 +160,39 @@ void USourceStudioModelComponent::ComposePose()
 		Model->AccumulateSequence(Pose, Gesture.Sequence, Gesture.Cycle, 1.0f);
 	}
 	Model->BuildBoneToModel(Pose, BoneToModel);
+
+	// Bones the code owns keep the animation's rotation but go where they are told (the barnacle's tongue).
+	if (BonePositionOverrides.Num() > 0)
+	{
+		const float Scale = ULambdaSourceSettings::Get().UnitScale;
+		for (const TPair<int32, FVector>& Override : BonePositionOverrides)
+		{
+			if (BoneToModel.IsValidIndex(Override.Key))
+			{
+				FTransform T = BoneToModel[Override.Key].ToUETransform(Scale);
+				T.SetTranslation(Override.Value);
+				BoneToModel[Override.Key] = FSourceMatrix3x4::FromUETransform(T, Scale);
+			}
+		}
+	}
 	RefreshPose();
+}
+
+void USourceStudioModelComponent::SetBonePositionOverride(const FString& BoneName, const FVector& ComponentPosition)
+{
+	if (!HasModel())
+	{
+		return;
+	}
+	const TArray<FSourceStudioBone>& Bones = Model->GetBones();
+	for (int32 i = 0; i < Bones.Num(); ++i)
+	{
+		if (Bones[i].Name.Equals(BoneName, ESearchCase::IgnoreCase))
+		{
+			BonePositionOverrides.Add(i, ComponentPosition);
+			return;
+		}
+	}
 }
 
 bool USourceStudioModelComponent::PlayGesture(const FString& ActivityName)

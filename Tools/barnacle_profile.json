@@ -1,0 +1,132 @@
+{
+  "comment": "Conversion profile for HL:A models/creatures/barnacle -> Source 1 MDL (Tools/ImportSource2Model.py). The barnacle hangs from its root at the ceiling; the tongue is part of the model (tongue1..tongue8, matching HL2's BARNACLE_TONGUE_POINTS). Sequences map HL:A animations onto the activities npc_barnacle drives; the tongue bones are excluded from the hull so the tongue's reach does not inflate the bbox.",
+  "meshes": [
+    "barnacle",
+    "barnacle_tongue"
+  ],
+  "surfaceprop": "alienflesh",
+  "eyeposition": [
+    0,
+    0,
+    0
+  ],
+  "mass": 500,
+  "attachments": [
+    "TongueEnd",
+    "TongueRoot",
+    "TongueSplineEnd"
+  ],
+  "prune_patterns": [
+    "blendshape"
+  ],
+  "hull_bones": [
+    "base",
+    "body",
+    "innards",
+    "jaw1",
+    "jaw2",
+    "mouth1",
+    "mouth2",
+    "mouth3",
+    "mouth4"
+  ],
+  "sequences": [
+    {
+      "name": "refpose",
+      "anim": "barnacle_ref",
+      "hidden": true
+    },
+    {
+      "name": "idle01",
+      "anim": "barnacle_idle",
+      "activity": "ACT_IDLE",
+      "weight": 2,
+      "loop": true
+    },
+    {
+      "name": "idle02",
+      "anim": "barnacle_idle_02",
+      "activity": "ACT_IDLE",
+      "weight": 1,
+      "loop": true
+    },
+    {
+      "name": "idle03",
+      "anim": "barnacle_idle_03",
+      "activity": "ACT_IDLE",
+      "weight": 1,
+      "loop": true
+    },
+    {
+      "name": "idle05",
+      "anim": "barnacle_idle_05",
+      "activity": "ACT_IDLE",
+      "weight": 1,
+      "loop": true
+    },
+    {
+      "name": "slurp",
+      "anim": "barnacle_slurp",
+      "activity": "ACT_BARNACLE_SLURP",
+      "weight": 1,
+      "loop": true
+    },
+    {
+      "name": "bite_player",
+      "anim": "barnacle_slurp_attack_player",
+      "activity": "ACT_BARNACLE_BITE_PLAYER",
+      "weight": 1
+    },
+    {
+      "name": "bite",
+      "anim": "barnacle_attack",
+      "activity": "ACT_BARNACLE_BITE_HUMAN",
+      "weight": 1
+    },
+    {
+      "name": "chew",
+      "anim": "barnacle_eat",
+      "activity": "ACT_BARNACLE_CHEW_HUMAN",
+      "weight": 1,
+      "loop": true
+    },
+    {
+      "name": "digest",
+      "anim": "barnacle_digesting",
+      "activity": "ACT_BARNACLE_CHEW_SMALL_THINGS",
+      "weight": 1,
+      "loop": true
+    },
+    {
+      "name": "spit",
+      "anim": "banacle_spit",
+      "activity": "ACT_BARNACLE_TASTE_SPIT",
+      "weight": 1
+    },
+    {
+      "name": "barf",
+      "anim": "banacle_barf",
+      "activity": "ACT_BARNACLE_BARF_HUMAN",
+      "weight": 1
+    },
+    {
+      "name": "death",
+      "anim": "barnacle_death",
+      "activity": "ACT_DIESIMPLE",
+      "weight": 2
+    },
+    {
+      "name": "death2",
+      "anim": "barnacle_death2",
+      "activity": "ACT_DIESIMPLE",
+      "weight": 1
+    },
+    {
+      "name": "death_idle",
+      "anim": "barnacle_death_idle",
+      "activity": "ACT_DIE_IDLE",
+      "weight": 1,
+      "loop": true
+    }
+  ]
+}
