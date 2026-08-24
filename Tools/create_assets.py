@@ -20,6 +20,7 @@ SPRITE_NOZ_NAME = 'M_LambdaSpriteNoZ'
 SPRITE_TRANSLUCENT_NAME = 'M_LambdaSpriteTranslucent'
 MODEL_NAME = 'M_LambdaModel'
 MODEL_TRANSLUCENT_NAME = 'M_LambdaModelTranslucent'
+MODEL_MASKED_NAME = 'M_LambdaModelMasked'
 LEVEL_PATH = '/Game/LambdaEngine/Maps/LambdaEntry'
 
 
@@ -742,7 +743,7 @@ def build_sprite_material(name, ignore_z, translucent=False):
     return material
 
 
-def build_model_material(name, translucent=False):
+def build_model_material(name, translucent=False, masked=False):
     # Lit PBR master for VertexLitGeneric/LightmappedGeneric materials that bring more than a base texture:
     # $bumpmap (normal), $roughness/$metalness (Lambda constants; Source 1 has $phong instead, Source 2 imports
     # carry real values), $color2 tint, $selfillum + $selfillummask + $selfillumtint (emissive = base * mask * tint).
@@ -759,7 +760,10 @@ def build_model_material(name, translucent=False):
 
     material.set_editor_property('material_domain', unreal.MaterialDomain.MD_SURFACE)
     material.set_editor_property('shading_model', unreal.MaterialShadingModel.MSM_DEFAULT_LIT)
-    material.set_editor_property('blend_mode', unreal.BlendMode.BLEND_TRANSLUCENT if translucent else unreal.BlendMode.BLEND_OPAQUE)
+    # masked is "$alphatest 1": the base texture's alpha is cut at 0.5, the way Source clips it - an open
+    # plastic crate's lattice is holes, not glass.
+    blend = unreal.BlendMode.BLEND_TRANSLUCENT if translucent else (unreal.BlendMode.BLEND_MASKED if masked else unreal.BlendMode.BLEND_OPAQUE)
+    material.set_editor_property('blend_mode', blend)
     material.set_editor_property('two_sided', True)	# $nocull is common on creature models; Source culls per material
     if translucent:
         try:
@@ -856,6 +860,8 @@ def build_model_material(name, translucent=False):
 
     if translucent:
         connect_property(base, 'A', unreal.MaterialProperty.MP_OPACITY)
+    if masked:
+        connect_property(base, 'A', unreal.MaterialProperty.MP_OPACITY_MASK)
 
     mel.recompile_material(material)
     unreal.EditorAssetLibrary.save_asset(full_path, only_if_is_dirty=False)
@@ -866,6 +872,7 @@ def build_model_material(name, translucent=False):
 def ensure_model_materials():
     build_model_material(MODEL_NAME, translucent=False)
     build_model_material(MODEL_TRANSLUCENT_NAME, translucent=True)
+    build_model_material(MODEL_MASKED_NAME, masked=True)
 
 
 def ensure_sprite_materials():

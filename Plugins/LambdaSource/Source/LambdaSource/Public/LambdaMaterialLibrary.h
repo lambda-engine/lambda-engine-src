@@ -145,6 +145,7 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInterface> ModelMasterMaterialTranslucent;
+	TObjectPtr<UMaterialInterface> ModelMasterMaterialMasked;
 
 	UPROPERTY(Transient)
 	TMap<FString, TObjectPtr<UMaterialInterface>> DecalCache;

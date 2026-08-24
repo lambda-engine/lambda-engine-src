@@ -8,6 +8,7 @@
 #include "SourceAmmoDef.h"
 #include "SourceDamage.h"
 #include "SourceImpactEffects.h"
+#include "SourcePropPhysics.h"
 #include "SourceCoordinates.h"
 #include "SourceMDLFile.h"
 #include "SourceStudioModelComponent.h"
@@ -24,6 +25,7 @@ namespace
 	constexpr float BARNACLE_DEAD_TONGUE_ALTITUDE = 32.0f;
 	constexpr float BARNACLE_DIGEST_TIME = 10.0f;
 	constexpr int32 BARNACLE_TONGUE_POINTS = 8;				// tongue1..tongue8
+	constexpr float BARNACLE_TONGUE_MAX_LIFT_MASS = 70.0f;	// npc_barnacle.h: heavier things stay on the floor
 }
 
 ASourceNPCBarnacle::ASourceNPCBarnacle(const FObjectInitializer& ObjectInitializer)
@@ -73,6 +75,26 @@ void ASourceNPCBarnacle::Tick(float DeltaSeconds)
 	Super::Tick(DeltaSeconds);
 
 	UpdateTongue();
+
+	// A speared crate rides the tongue tip up (LiftPhysicsObject's shadow, done with velocity).
+	if (ASourcePropPhysics* HeldProp = Cast<ASourcePropPhysics>(Victim.Get()))
+	{
+		if (Phase == EBarnaclePhase::Lifting || Phase == EBarnaclePhase::Biting)
+		{
+			if (UPrimitiveComponent* Body = HeldProp->GetPhysicsBody())
+			{
+				const float Scale = ULambdaSourceSettings::Get().UnitScale;
+				const FVector At = HeldProp->GetActorLocation();
+				FVector Velocity;
+				Velocity.X = (TongueRootCm.X - At.X) * 4.0f;
+				Velocity.Y = (TongueRootCm.Y - At.Y) * 4.0f;
+				Velocity.Z = Phase == EBarnaclePhase::Lifting
+					? PullSpeedUnits * Scale * FMath::Abs(FMath::Sin(LocalTimer * 5.0f))
+					: FMath::Clamp((TongueRootCm.Z - BARNACLE_BITE_Z_OFFSET * Scale - At.Z) * 3.0f, -100.0f * Scale, 100.0f * Scale);
+				Body->SetPhysicsLinearVelocity(Velocity);
+			}
+		}
+	}
 
 	// The victim hangs from the tongue: pinned under the barnacle and hauled upward. Done every frame, not every
 	// think, or the ride is visibly steppy - this is the fixed constraint to the tongue tip, done with velocity.
@@ -147,6 +169,11 @@ void ASourceNPCBarnacle::NPCThink()
 			SetActivity(TEXT("ACT_DIE_IDLE"));
 		}
 		return;
+	}
+
+	if (LastSpitEnemy.IsValid() && Now >= ForgetSpitTime)
+	{
+		LastSpitEnemy.Reset();
 	}
 
 	// Whatever phase we're in, a vanished victim means the meal is over.
@@ -308,6 +335,33 @@ float ASourceNPCBarnacle::TongueTouchLength(AActor*& OutTouch) const
 			break;
 		}
 	}
+	// "Deal with physics objects": anything light enough for the tongue to lift.
+	if (!OutTouch)
+	{
+		for (TActorIterator<ASourcePropPhysics> It(World); It; ++It)
+		{
+			ASourcePropPhysics* Prop = *It;
+			if (Prop == LastSpitEnemy.Get() || Prop->IsHeld() || Prop->GetMass() > BARNACLE_TONGUE_MAX_LIFT_MASS)
+			{
+				continue;
+			}
+			const FVector At = Prop->GetActorLocation();
+			if (FVector::Dist2D(At, TongueRootCm) / Scale > BARNACLE_CHECK_SPACING)
+			{
+				continue;
+			}
+			// "Allow the barnacles to grab stuff while their tongue is lowering": for a physics object HL2
+			// lowers the tongue to the object itself, so a low crate under the resting tip still gets taken -
+			// the tip only has to come within reach of its top, not touch it.
+			const float TopZ = At.Z + Prop->GetHullExtent().Z;
+			const float TipZ = TongueRootCm.Z - AltitudeUnits * Scale;
+			if (TopZ + RestUnitsAboveGround * Scale >= TipZ && TopZ < TongueRootCm.Z)
+			{
+				OutTouch = Prop;
+				break;
+			}
+		}
+	}
 	return Length;
 }
 
@@ -338,6 +392,7 @@ void ASourceNPCBarnacle::LiftPrey()
 	}
 	const float Scale = ULambdaSourceSettings::Get().UnitScale;
 	ACharacter* PreyCharacter = Cast<ACharacter>(Prey);
+	ASourcePropPhysics* PreyProp = Cast<ASourcePropPhysics>(Prey);
 	const bool bPlayer = PreyCharacter && PreyCharacter->IsPlayerControlled();
 
 	// An NPC that died on the way up is dropped (the ragdoll lift is not ported).
@@ -356,7 +411,8 @@ void ASourceNPCBarnacle::LiftPrey()
 	AltitudeUnits = FMath::Max(0.0f, AltitudeUnits - Pull);
 
 	const float BiteZ = BARNACLE_BITE_Z_OFFSET + (bPlayer ? BARNACLE_PLAYER_EXTRA_LIFT : 0.0f);
-	const float PreyEyeZ = Prey->GetActorLocation().Z + (PreyCharacter ? PreyCharacter->BaseEyeHeight : 0.0f);
+	const float PreyEyeZ = Prey->GetActorLocation().Z + (PreyCharacter ? PreyCharacter->BaseEyeHeight : 0.0f)
+		+ (PreyProp ? PreyProp->GetHullExtent().Z : 0.0f);
 
 	// PlayLiftingScream: "Play a scream when we're almost within bite range."
 	if (!bScreamed && TongueRootCm.Z - PreyEyeZ < (BiteZ + 120.0f) * Scale)
@@ -369,7 +425,8 @@ void ASourceNPCBarnacle::LiftPrey()
 	{
 		// "Start the bite animation. The anim event in it will finish the job."
 		Phase = EBarnaclePhase::Biting;
-		SetActivity(bPlayer ? TEXT("ACT_BARNACLE_BITE_PLAYER") : TEXT("ACT_BARNACLE_BITE_HUMAN"));
+		SetActivity(bPlayer ? TEXT("ACT_BARNACLE_BITE_PLAYER")
+			: PreyProp ? TEXT("ACT_BARNACLE_TASTE_SPIT") : TEXT("ACT_BARNACLE_BITE_HUMAN"));
 		NextBiteTime = GetWorld()->GetTimeSeconds() + 1.0f;
 	}
 }
@@ -380,6 +437,12 @@ void ASourceNPCBarnacle::BitePrey()
 	if (!Prey)
 	{
 		LostPrey();
+		return;
+	}
+	// "Yuck! Me no like that!" - a crate is no meal: it is tasted and flung away (SpitPrey).
+	if (Cast<ASourcePropPhysics>(Prey))
+	{
+		SpitPrey();
 		return;
 	}
 	EmitSound(TEXT("NPC_Barnacle.FinalBite"));
@@ -414,6 +477,77 @@ void ASourceNPCBarnacle::BitePrey()
 	AltitudeUnits = 0.0f;
 }
 
+void ASourceNPCBarnacle::SpitPrey()
+{
+	AActor* Prey = Victim.Get();
+	if (!Prey)
+	{
+		return;
+	}
+	EmitSound(TEXT("NPC_Barnacle.Spit"));
+	// "Spit out the prey; add physics force!" - flung sideways and down, and remembered so the tongue does not
+	// scoop the same crate straight back up.
+	if (ASourcePropPhysics* Prop = Cast<ASourcePropPhysics>(Prey))
+	{
+		if (UPrimitiveComponent* Body = Prop->GetPhysicsBody())
+		{
+			const float Scale = ULambdaSourceSettings::Get().UnitScale;
+			const FVector Fling = FVector(FMath::FRandRange(-1.0f, 1.0f), FMath::FRandRange(-1.0f, 1.0f), -0.3f).GetSafeNormal();
+			Body->SetPhysicsLinearVelocity(Fling * 350.0f * Scale);
+			Body->SetPhysicsAngularVelocityInDegrees(FVector(FMath::FRandRange(-360.0f, 360.0f),
+				FMath::FRandRange(-360.0f, 360.0f), FMath::FRandRange(-360.0f, 360.0f)));
+		}
+	}
+	LastSpitEnemy = Prey;
+	ForgetSpitTime = GetWorld()->GetTimeSeconds() + 8.0f;
+	Victim.Reset();
+	Phase = EBarnaclePhase::Idle;
+	SetActivity(TEXT("ACT_BARNACLE_TASTE_SPIT"));
+	AltitudeUnits = 0.0f;
+}
+
+void ASourceNPCBarnacle::SpawnDeathGibs()
+{
+	// CNPC_Barnacle::SpawnDeathGibs: each gib in the list has a coin-flip chance of coming up, and at least one
+	// always does. They are physics props tumbling out of the mouth, gone after their fade time.
+	static const TCHAR* GibNames[] = {
+		TEXT("models/gibs/hgibs.mdl"),
+		TEXT("models/gibs/hgibs_scapula.mdl"),
+		TEXT("models/gibs/hgibs_rib.mdl"),
+		TEXT("models/gibs/hgibs_spine.mdl"),
+	};
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+	bool bDroppedAny = false;
+	for (int32 i = 0; i < UE_ARRAY_COUNT(GibNames); ++i)
+	{
+		const bool bLast = i == UE_ARRAY_COUNT(GibNames) - 1;
+		if (!FMath::RandBool() && !(bLast && !bDroppedAny))
+		{
+			continue;
+		}
+		bDroppedAny = true;
+		FActorSpawnParameters Params;
+		Params.ObjectFlags |= RF_Transient;
+		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		ASourcePropPhysics* Gib = World->SpawnActor<ASourcePropPhysics>(ASourcePropPhysics::StaticClass(), FTransform::Identity, Params);
+		if (!Gib)
+		{
+			continue;
+		}
+		// SpawnSpecificGibs( this, 1, 32, 1, ... ): out of the mouth at a gentle 32 units/s, scattered.
+		const FVector Velocity = FVector(FMath::FRandRange(-1.0f, 1.0f), FMath::FRandRange(-1.0f, 1.0f), -1.0f).GetSafeNormal() * 32.0f * Scale;
+		Gib->InitializeAsGib(GibNames[i], MaterialLibrary,
+			FTransform(FRotator(0.0f, FMath::FRandRange(0.0f, 360.0f), 0.0f), GetActorLocation()),
+			Velocity, FVector(FMath::FRandRange(-180.0f, 180.0f), FMath::FRandRange(-180.0f, 180.0f), FMath::FRandRange(-180.0f, 180.0f)),
+			20.0f);
+	}
+}
+
 void ASourceNPCBarnacle::LostPrey()
 {
 	// LostPrey.
@@ -433,6 +567,7 @@ void ASourceNPCBarnacle::LostPrey()
 
 void ASourceNPCBarnacle::SetVictimHeld(AActor* HeldVictim, bool bHeld)
 {
+	// A speared physics prop keeps simulating; the velocity drive in Tick is all the holding it needs.
 	ACharacter* C = Cast<ACharacter>(HeldVictim);
 	if (!C)
 	{
@@ -473,8 +608,9 @@ void ASourceNPCBarnacle::Event_Killed(AActor* Attacker)
 	EmitSound(TEXT("NPC_Barnacle.Die"));
 	SetActivity(TEXT("ACT_DIESIMPLE"));
 
-	// "Puke blood" at the mouth and onto the floor below.
+	// "Puke blood" at the mouth and onto the floor below, and cough up whatever was inside.
 	SourceImpact::SpawnBlood(GetWorld(), MaterialLibrary, GetActorLocation(), FVector(0, 0, -1), BloodColor);
+	SpawnDeathGibs();
 
 	UE_LOG(LogLambdaSource, Log, TEXT("npc_barnacle killed by %s"), *GetNameSafe(Attacker));
 }

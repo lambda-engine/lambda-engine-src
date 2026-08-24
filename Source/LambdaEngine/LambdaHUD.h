@@ -30,4 +30,7 @@ protected:
 
 	UPROPERTY()
 	TObjectPtr<UFont> HudFont;
+
+	/** cl_showfps-style counter, smoothed so it reads steadily. */
+	float SmoothedFrameTime = 0.0f;
 };

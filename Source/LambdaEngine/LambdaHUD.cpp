@@ -54,6 +54,21 @@ void ALambdaHUD::DrawHUD()
 
 	DrawCrosshair(W * 0.5f, H * 0.5f);
 
+	// cl_showfps, top right: the frame time is smoothed over ~half a second so the number reads steadily.
+	const float FrameTime = GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.0f;
+	SmoothedFrameTime = SmoothedFrameTime <= 0.0f ? FrameTime : FMath::Lerp(SmoothedFrameTime, FrameTime, 0.05f);
+	if (SmoothedFrameTime > 0.0f)
+	{
+		const int32 Fps = FMath::RoundToInt(1.0f / SmoothedFrameTime);
+		// Green at 60+, amber in the middle, red when it is bad, as cl_showfps colours it.
+		const FLinearColor FpsColour = Fps >= 60 ? FLinearColor(0.2f, 1.0f, 0.2f, 1.0f)
+			: Fps >= 30 ? HudColour : LowColour;
+		const FString FpsText = FString::Printf(TEXT("%d fps"), Fps);
+		float TextW = 0.0f, TextH = 0.0f;
+		GetTextSize(FpsText, TextW, TextH, HudFont, 1.0f);
+		DrawText(FpsText, FpsColour, W - TextW - 12.0f, 8.0f, HudFont, 1.0f);
+	}
+
 	ALambdaCharacter* Player = Cast<ALambdaCharacter>(GetOwningPawn());
 	if (!Player)
 	{

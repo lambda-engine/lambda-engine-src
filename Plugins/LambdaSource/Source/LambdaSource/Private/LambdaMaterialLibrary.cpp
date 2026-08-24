@@ -90,6 +90,10 @@ void ULambdaMaterialLibrary::Initialize()
 	{
 		ModelMasterMaterialTranslucent = Cast<UMaterialInterface>(Settings.ModelMaterialTranslucent.TryLoad());
 	}
+	if (Settings.ModelMaterialMasked.IsValid())
+	{
+		ModelMasterMaterialMasked = Cast<UMaterialInterface>(Settings.ModelMaterialMasked.TryLoad());
+	}
 	if (!FallbackMaterial)
 	{
 		FallbackMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/EngineMaterials/WorldGridMaterial.WorldGridMaterial"));
@@ -283,6 +287,11 @@ UMaterialInterface* ULambdaMaterialLibrary::CreateMaterial(const FString& Name)
 	if (Info.bTranslucent && ModelMasterMaterialTranslucent)
 	{
 		Master = ModelMasterMaterialTranslucent.Get();
+	}
+	else if (Info.bAlphaTest && ModelMasterMaterialMasked)
+	{
+		// "$alphatest 1": the base alpha is a cut-out, not glass - an open crate's lattice is holes.
+		Master = ModelMasterMaterialMasked.Get();
 	}
 	else if (bWantsPBR && ModelMasterMaterial)
 	{

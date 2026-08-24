@@ -95,6 +95,10 @@ public:
 	UPROPERTY(config, EditAnywhere, Category = "Materials", meta = (AllowedClasses = "/Script/Engine.MaterialInterface"))
 	FSoftObjectPath ModelMaterialTranslucent;
 
+	/** The same, alpha-tested, for "$alphatest 1" cut-outs (crate lattices, foliage). */
+	UPROPERTY(config, EditAnywhere, Category = "Materials", meta = (AllowedClasses = "/Script/Engine.MaterialInterface"))
+	FSoftObjectPath ModelMaterialMasked;
+
 	/** Alpha-blended unlit sprite master, vertex-coloured, for UnlitGeneric $translucent effects (blood, dust, smoke). */
 	UPROPERTY(config, EditAnywhere, Category = "Materials", meta = (AllowedClasses = "/Script/Engine.MaterialInterface"))
 	FSoftObjectPath SpriteMaterialTranslucent;

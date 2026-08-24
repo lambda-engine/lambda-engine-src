@@ -24,8 +24,12 @@ enum class EBarnaclePhase : uint8
  * The model is the HL:A barnacle converted by Tools/ImportSource2Model.py; the sounds are HL:A's, mapped onto
  * the NPC_Barnacle.* soundscript names this code emits.
  *
+ * Physics props under BARNACLE_TONGUE_MAX_LIFT_MASS are lifted too; a mouthful of crate is tasted, spat out
+ * (ACT_BARNACLE_TASTE_SPIT) and remembered, as TongueTouchEnt's m_hLastSpitEnemy does. Death pukes the gibs
+ * SpawnDeathGibs names.
+ *
  * Not ported: the vphysics tongue spring and its shootable tongue tip, ragdoll victims (a bitten NPC is
- * swallowed whole instead), lifting physics props, the poison/bomb special cases, and the death gibs.
+ * swallowed whole instead), and the poison/bomb special cases.
  */
 UCLASS()
 class LAMBDASOURCE_API ASourceNPCBarnacle : public ASourceNPCBase
@@ -57,6 +61,10 @@ private:
 	void BitePrey();
 	/** LostPrey: let go of whatever is on the tongue. */
 	void LostPrey();
+	/** SpitPrey: an inedible mouthful is flung away. */
+	void SpitPrey();
+	/** SpawnDeathGibs: the barnacle's last meal comes back up. */
+	void SpawnDeathGibs();
 	/** The victim hangs from the tongue: gravity off and our velocity, or their own feet back. */
 	void SetVictimHeld(AActor* HeldVictim, bool bHeld);
 
@@ -80,6 +88,9 @@ private:
 	bool bMounted = false;
 	/** The held victim's gravity, put back when it is released. */
 	float VictimSavedGravityScale = 1.0f;
+	/** m_hLastSpitEnemy: what was spat out is not grabbed again until it has been left alone a while. */
+	TWeakObjectPtr<AActor> LastSpitEnemy;
+	float ForgetSpitTime = 0.0f;
 
 	/** Cached world positions of the tongue root (at the mouth) and tip. */
 	FVector TongueRootCm = FVector::ZeroVector;
