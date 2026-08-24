@@ -568,14 +568,6 @@ void ALambdaCharacter::UpdatePropCarry(float DeltaSeconds)
 	// climbing out of view while you look down at the floor. The hold point stays on the view ray instead, and
 	// the sweep below is what keeps it out of the world.
 
-	// How the prop actually reads on screen: how far it is from the eye, and how far above the crosshair it sits.
-	const FVector ToProp = Prop->GetActorLocation() - Eye;
-	const float PropDistance = ToProp.Size();
-	const float AboveCrosshair = FMath::RadiansToDegrees(
-		FMath::Asin(FMath::Clamp(ToProp.GetSafeNormal().Z, -1.0f, 1.0f)) - FMath::Asin(FMath::Clamp(Forward.Z, -1.0f, 1.0f)));
-	UE_LOG(LogLambda, VeryVerbose, TEXT("carry: pitch %.1f radius %.1f hold %.1f | prop %.1f units away, %+.1f deg above crosshair, target %.1f units off"),
-		EyeRot.Pitch, RadiusCm / Scale, (DistanceCm - RadiusCm) / Scale, PropDistance / Scale, AboveCrosshair,
-		(Target - Prop->GetActorLocation()).Size() / Scale);
 
 	// Where the prop can actually be held: the hold point is only useful if the prop fits there. Source keeps it
 	// clear of what the player is looking at by stopping the object's centre a radius short of the hit; sweeping
@@ -590,12 +582,31 @@ void ALambdaCharacter::UpdatePropCarry(float DeltaSeconds)
 			FCollisionObjectQueryParams(ECC_WorldStatic), FCollisionShape::MakeBox(FVector3f(SweepExtent)), Params)
 			&& !Clear.bStartPenetrating)
 		{
-			// Never closer than half a radius, the same floor Source puts under its own pull-in: a prop shoved
-			// against a wall comes back towards the player, it does not end up inside his head.
+			// Source lets the hold point come in to half a radius because its held objects still collide with the
+			// player and its error check drops anything wedged; ours ignore the player's capsule, so a hold point
+			// that close parks the crate around the camera. The full radius is the closest the prop may be held -
+			// and if the world leaves no room even for that, the player cannot hold it here at all: it is dropped,
+			// which is what Source's ComputeError did to a wedged object.
 			const FVector ToTarget = Target - Eye;
-			const float Reach = FMath::Max((Clear.Location - Eye).Size(), RadiusCm * 0.5f);
+			const float Reach = (Clear.Location - Eye).Size();
+			if (Reach < RadiusCm)
+			{
+				UE_LOG(LogLambda, Verbose, TEXT("carry: no room to hold (%.1f < %.1f units), dropping"),
+					Reach / Scale, RadiusCm / Scale);
+				DropCarriedProp(false);
+				return;
+			}
 			Target = Eye + ToTarget.GetSafeNormal() * FMath::Min(Reach, ToTarget.Size());
 		}
+
+	// How the prop actually reads on screen: how far it is from the eye, and how far above the crosshair it sits.
+	const FVector ToProp = Prop->GetActorLocation() - Eye;
+	const float PropDistance = ToProp.Size();
+	const float AboveCrosshair = FMath::RadiansToDegrees(
+		FMath::Asin(FMath::Clamp(ToProp.GetSafeNormal().Z, -1.0f, 1.0f)) - FMath::Asin(FMath::Clamp(Forward.Z, -1.0f, 1.0f)));
+	UE_LOG(LogLambda, VeryVerbose, TEXT("carry: pitch %.1f radius %.1f hold %.1f | prop %.1f units away, %+.1f deg above crosshair, target %.1f units off"),
+		EyeRot.Pitch, RadiusCm / Scale, (DistanceCm - RadiusCm) / Scale, PropDistance / Scale, AboveCrosshair,
+		(Target - Prop->GetActorLocation()).Size() / Scale);
 	}
 
 	const FRotator TargetRotation = (FQuat(CarriedPropRelativeRotation) * FQuat(FRotator(0.0f, EyeRot.Yaw, 0.0f))).Rotator();
