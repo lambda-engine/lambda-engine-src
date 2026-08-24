@@ -10,6 +10,121 @@
 #include "Misc/Parse.h"
 #include "Misc/Paths.h"
 
+#if PLATFORM_WINDOWS
+#include "Windows/AllowWindowsPlatformTypes.h"
+#include "Windows/WindowsHWrapper.h"
+#include "Windows/HideWindowsPlatformTypes.h"
+#endif
+
+namespace
+{
+	/**
+	 * Every Steam library folder on this machine.
+	 *
+	 * Steam records where it is installed in the registry, and beside it keeps steamapps/libraryfolders.vdf
+	 * listing the folders the user has added since - a second drive, an external disk. It is KeyValues like
+	 * everything else here, so the same parser reads it.
+	 */
+	const TArray<FString>& GetSteamLibraryPaths()
+	{
+		static TArray<FString> Libraries;
+		static bool bSearched = false;
+		if (bSearched)
+		{
+			return Libraries;
+		}
+		bSearched = true;
+
+		TArray<FString> Roots;
+#if PLATFORM_WINDOWS
+		FString FromRegistry;
+		if (FWindowsPlatformMisc::QueryRegKey(HKEY_CURRENT_USER, TEXT("Software\\Valve\\Steam"), TEXT("SteamPath"), FromRegistry)
+			&& !FromRegistry.IsEmpty())
+		{
+			Roots.Add(FromRegistry);
+		}
+		if (FWindowsPlatformMisc::QueryRegKey(HKEY_LOCAL_MACHINE, TEXT("SOFTWARE\\WOW6432Node\\Valve\\Steam"), TEXT("InstallPath"), FromRegistry)
+			&& !FromRegistry.IsEmpty())
+		{
+			Roots.AddUnique(FromRegistry);
+		}
+#endif
+		// Where Steam installs itself if nobody moved it, for when the registry has nothing to say.
+		Roots.AddUnique(TEXT("C:/Program Files (x86)/Steam"));
+		Roots.AddUnique(TEXT("C:/Program Files/Steam"));
+
+		auto Tidy = [](FString Path)
+		{
+			// A .vdf writes its paths with escaped separators, so "C:\Steam" arrives with both of them.
+			Path.ReplaceInline(TEXT("\\"), TEXT("/"));
+			while (Path.Contains(TEXT("//")))
+			{
+				Path.ReplaceInline(TEXT("//"), TEXT("/"));
+			}
+			Path.TrimStartAndEndInline();
+			while (Path.EndsWith(TEXT("/")))
+			{
+				Path.LeftChopInline(1);
+			}
+			return Path;
+		};
+
+		for (const FString& RawRoot : Roots)
+		{
+			const FString Root = Tidy(RawRoot);
+			if (Root.IsEmpty() || !FPaths::DirectoryExists(Root))
+			{
+				continue;
+			}
+			Libraries.AddUnique(Root);
+
+			TArray<uint8> Bytes;
+			if (!FFileHelper::LoadFileToArray(Bytes, *(Root / TEXT("steamapps/libraryfolders.vdf"))))
+			{
+				continue;
+			}
+			FSourceKeyValues List;
+			if (!FSourceKeyValues::ParseSingle(Bytes, List, nullptr))
+			{
+				continue;
+			}
+			for (const FSourceKeyValues& Entry : List.Children)
+			{
+				// Steam writes a section per library with a "path" in it; it used to write the path directly.
+				const FString Library = Tidy(Entry.IsSection() ? Entry.GetString(TEXT("path")) : Entry.Value);
+				if (!Library.IsEmpty() && FPaths::DirectoryExists(Library))
+				{
+					Libraries.AddUnique(Library);
+				}
+			}
+		}
+
+		UE_LOG(LogLambdaSource, Log, TEXT("Steam libraries found: %d%s%s"), Libraries.Num(),
+			Libraries.Num() > 0 ? TEXT(" - ") : TEXT(""), *FString::Join(Libraries, TEXT(", ")));
+		return Libraries;
+	}
+
+	/**
+	 * Finds something a |steamlibrary_path| entry asked for. The path it is given starts at the game's own
+	 * folder ("Half-Life 2/hl2/hl2_misc_dir.vpk"), which lives under steamapps/common in whichever library
+	 * Steam happened to install it into, so every library is tried and the first that has it wins.
+	 */
+	bool ResolveInSteamLibraries(const FString& RelativePath, FString& OutResolved)
+	{
+		const bool bIsArchive = RelativePath.EndsWith(TEXT(".vpk"), ESearchCase::IgnoreCase);
+		for (const FString& Library : GetSteamLibraryPaths())
+		{
+			const FString Candidate = Library / TEXT("steamapps/common") / RelativePath;
+			if (bIsArchive ? FPaths::FileExists(Candidate) : FPaths::DirectoryExists(Candidate))
+			{
+				OutResolved = Candidate;
+				return true;
+			}
+		}
+		return false;
+	}
+}
+
 FLambdaFileSystem& FLambdaFileSystem::Get()
 {
 	static FLambdaFileSystem Instance;
@@ -62,6 +177,7 @@ void FLambdaFileSystem::AddDirectoryMount(const FString& Dir)
 	Mount.Type = EMountType::Directory;
 	Mount.AbsoluteDir = Abs;
 	Mounts.Add(MoveTemp(Mount));
+	UE_LOG(LogLambdaSource, Log, TEXT("Mounted directory '%s'"), *Abs);
 }
 
 void FLambdaFileSystem::AddVPKMount(const FString& VpkPath)
@@ -215,6 +331,28 @@ bool FLambdaFileSystem::MountFromGameInfo()
 		{
 			continue;
 		}
+
+		// |steamlibrary_path| is ours rather than Source's: it names something inside a Steam game, and every
+		// Steam library on the machine is searched for it. It lets a mod mount Half-Life 2's own files without
+		// each player having to write down where Steam put them.
+		static const FString SteamLibraryToken = TEXT("|steamlibrary_path|");
+		if (Value.StartsWith(SteamLibraryToken))
+		{
+			FString Relative = Value.RightChop(SteamLibraryToken.Len()).TrimStartAndEnd();
+			while (Relative.StartsWith(TEXT("/")))
+			{
+				Relative.RightChopInline(1);
+			}
+			FString Resolved;
+			if (!ResolveInSteamLibraries(Relative, Resolved))
+			{
+				UE_LOG(LogLambdaSource, Warning,
+					TEXT("SearchPaths: '%s' is in no Steam library on this machine - skipping it"), *Entry.Value);
+				continue;
+			}
+			Value = Resolved;
+		}
+
 		// Resolve relative entries against the game directory, matching Source's behaviour.
 		if (FPaths::IsRelative(Value))
 		{
