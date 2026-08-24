@@ -47,7 +47,7 @@ public:
 
 	/** Map loaded at startup when none is given via -map=<name> or ?map=<name>. Resolved as maps/<name>.bsp. */
 	UPROPERTY(config, EditAnywhere, Category = "Maps")
-	FString DefaultMap = TEXT("test");
+	FString DefaultMap = TEXT("startup");
 
 	// ---- Materials ----
 

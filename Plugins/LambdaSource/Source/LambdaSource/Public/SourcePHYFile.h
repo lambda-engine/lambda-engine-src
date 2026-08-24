@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 
@@ -65,7 +65,7 @@ struct LAMBDASOURCE_API FSourcePHYConstraint
 class LAMBDASOURCE_API FSourcePHYFile
 {
 public:
-	/** Loads the .phy beside a model ("models/headcrabclassic.mdl" -> "models/headcrabclassic.phy"). */
+	/** Loads the .phy beside a model ("models/creatures/npc_headcrab/npc_headcrab.mdl" -> "models/creatures/npc_headcrab/npc_headcrab.phy"). */
 	bool Load(const FString& RelativeModelPath, float Scale, FString* OutError = nullptr);
 
 	bool IsLoaded() const { return bLoaded; }

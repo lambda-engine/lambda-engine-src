@@ -1,4 +1,4 @@
-#include "SourceNPCHeadcrab.h"
+﻿#include "SourceNPCHeadcrab.h"
 #include "LambdaSourceModule.h"
 #include "LambdaSourceSettings.h"
 #include "SourceAmmoDef.h"
@@ -21,7 +21,7 @@ ASourceNPCHeadcrab::ASourceNPCHeadcrab(const FObjectInitializer& ObjectInitializ
 void ASourceNPCHeadcrab::Spawn()
 {
 	// CHeadcrab::Spawn + CBaseHeadcrab::Spawn
-	SetModel(TEXT("models/headcrabclassic.mdl"));
+	SetModel(TEXT("models/creatures/npc_headcrab/npc_headcrab.mdl"));
 	SetHull(12.0f, 24.0f);						// HULL_TINY: (-12,-12,0) to (12,12,24)
 	ViewOffsetUnits = FVector3f(6, 0, 11);		// SetViewOffset: position of the eyes relative to the origin
 	FieldOfView = 0.5f;							// m_flFieldOfView

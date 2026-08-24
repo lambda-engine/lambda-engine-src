@@ -1,4 +1,4 @@
-#include "SourceSkeletalMesh.h"
+﻿#include "SourceSkeletalMesh.h"
 
 #include "LambdaMaterialLibrary.h"
 #include "LambdaSourceModule.h"
@@ -326,7 +326,7 @@ static void LambdaSkelTestCommand(const TArray<FString>& Args, UWorld* World)
 {
 	if (!World || Args.Num() < 1)
 	{
-		UE_LOG(LogLambdaSource, Display, TEXT("Usage: lambda.skeltest <models/headcrabclassic.mdl>"));
+		UE_LOG(LogLambdaSource, Display, TEXT("Usage: lambda.skeltest <models/creatures/npc_headcrab/npc_headcrab.mdl>"));
 		return;
 	}
 	APlayerController* PC = World->GetFirstPlayerController();

@@ -1,4 +1,4 @@
-#include "SourceNPCBarnacle.h"
+﻿#include "SourceNPCBarnacle.h"
 #include "Components/CapsuleComponent.h"
 #include "EngineUtils.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -44,7 +44,7 @@ void ASourceNPCBarnacle::Spawn()
 {
 	// CNPC_Barnacle::Spawn. The HL:A barnacle converted by Tools/ImportSource2Model.py is preferred; HL2's
 	// model is the fallback.
-	if (!SetModel(TEXT("models/hla/barnacle.mdl")))
+	if (!SetModel(TEXT("models/creatures/npc_barnacle/npc_barnacle.mdl")))
 	{
 		SetModel(TEXT("models/barnacle.mdl"));
 	}

@@ -1,4 +1,4 @@
-#include "SourceNPCZombie.h"
+﻿#include "SourceNPCZombie.h"
 #include "LambdaSourceModule.h"
 #include "LambdaSourceSettings.h"
 #include "SourceAmmoDef.h"
@@ -34,7 +34,7 @@ void ASourceNPCZombie::Spawn()
 {
 	// CNPC_BaseZombie::Spawn / CZombie::Spawn / SetZombieModel. The HL:A classic zombie converted by
 	// Tools/ImportSource2Model.py is preferred when it has been generated; HL2's model is the fallback.
-	if (!SetModel(TEXT("models/hla/zombie_classic.mdl")))
+	if (!SetModel(TEXT("models/creatures/npc_zombie/npc_zombie.mdl")))
 	{
 		SetModel(TEXT("models/zombie/classic.mdl"));
 	}
