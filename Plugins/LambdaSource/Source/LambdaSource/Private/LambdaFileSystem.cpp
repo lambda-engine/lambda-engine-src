@@ -159,6 +159,55 @@ FString FLambdaFileSystem::MakeAbsoluteDirectory(const FString& Dir)
 	return Result;
 }
 
+void FLambdaFileSystem::AddWildcardMount(const FString& Folder)
+{
+	// Source describes this in Half-Life 2's own gameinfo: "This will search for VPKs and subfolders and mount
+	// them in alphabetical order. The easiest way to distribute a mod is to pack up the custom content into a
+	// VPK. To install a mod, just drop it in this folder." Scanned once, at boot, as it is there.
+	const FString AbsFolder = MakeAbsoluteDirectory(Folder);
+	if (!FPaths::DirectoryExists(AbsFolder))
+	{
+		UE_LOG(LogLambdaSource, Verbose, TEXT("SearchPaths: '%s/*' - no such folder, nothing to mount"), *AbsFolder);
+		return;
+	}
+
+	IFileManager& Files = IFileManager::Get();
+
+	TArray<FString> Entries;
+	Files.FindFiles(Entries, *(AbsFolder / TEXT("*")), /*Files=*/ false, /*Directories=*/ true);
+
+	TArray<FString> Archives;
+	Files.FindFiles(Archives, *(AbsFolder / TEXT("*.vpk")), /*Files=*/ true, /*Directories=*/ false);
+	for (const FString& Archive : Archives)
+	{
+		// A multi-chunk set is mounted through its _dir.vpk; the numbered chunks beside it are streamed from,
+		// never mounted in their own right.
+		FString Stem = FPaths::GetBaseFilename(Archive);
+		if (Stem.Len() > 4 && Stem.Right(4).IsNumeric() && Stem[Stem.Len() - 5] == TEXT('_'))
+		{
+			continue;
+		}
+		Entries.Add(Archive);
+	}
+
+	// One alphabetical list, folders and archives together, as Source mounts them.
+	Entries.Sort([](const FString& A, const FString& B) { return A.Compare(B, ESearchCase::IgnoreCase) < 0; });
+
+	for (const FString& Entry : Entries)
+	{
+		const FString Full = AbsFolder / Entry;
+		if (Entry.EndsWith(TEXT(".vpk"), ESearchCase::IgnoreCase))
+		{
+			AddVPKMount(Full);
+		}
+		else
+		{
+			AddDirectoryMount(Full);
+		}
+	}
+	UE_LOG(LogLambdaSource, Log, TEXT("SearchPaths: '%s/*' mounted %d entries"), *AbsFolder, Entries.Num());
+}
+
 void FLambdaFileSystem::AddDirectoryMount(const FString& Dir)
 {
 	if (Dir.IsEmpty())
@@ -321,6 +370,11 @@ bool FLambdaFileSystem::MountFromGameInfo()
 		Value.ReplaceInline(TEXT("|all_source_engine_paths|"), TEXT(""));
 		Value.ReplaceInline(TEXT("\\"), TEXT("/"));
 		Value.TrimStartAndEndInline();
+		// |gameinfo_path| already ends in a separator, so writing "|gameinfo_path|/plugins" doubles it up.
+		while (Value.Contains(TEXT("//")))
+		{
+			Value.ReplaceInline(TEXT("//"), TEXT("/"));
+		}
 
 		// A trailing "/." (Source's way of writing "this folder") would otherwise become a literal path component.
 		if (Value.EndsWith(TEXT("/.")))
@@ -359,7 +413,11 @@ bool FLambdaFileSystem::MountFromGameInfo()
 			Value = GameDirectory / Value;
 		}
 
-		if (Value.EndsWith(TEXT(".vpk"), ESearchCase::IgnoreCase))
+		if (Value.EndsWith(TEXT("/*")))
+		{
+			AddWildcardMount(Value.LeftChop(2));
+		}
+		else if (Value.EndsWith(TEXT(".vpk"), ESearchCase::IgnoreCase))
 		{
 			AddVPKMount(Value);
 		}

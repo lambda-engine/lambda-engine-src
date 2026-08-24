@@ -64,6 +64,12 @@ private:
 	};
 
 	static FString MakeAbsoluteDirectory(const FString& Dir);
+	/**
+	 * Mounts everything inside a folder, the way Source's "custom/*" does: every VPK and every subfolder in it,
+	 * in alphabetical order. It is how content arrives without this file being edited - drop a folder or a VPK
+	 * in and it is picked up on the next boot.
+	 */
+	void AddWildcardMount(const FString& Folder);
 	void AddDirectoryMount(const FString& Dir);
 	void AddVPKMount(const FString& VpkPath);
 
