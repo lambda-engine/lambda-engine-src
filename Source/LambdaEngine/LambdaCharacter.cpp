@@ -578,9 +578,29 @@ void ALambdaCharacter::UpdatePropCarry(float DeltaSeconds)
 	if (SweepExtent.GetMin() > 0.0f)
 	{
 		FHitResult Clear;
-		if (World->SweepSingleByObjectType(Clear, Eye, Target, Prop->GetActorQuat(),
-			FCollisionObjectQueryParams(ECC_WorldStatic), FCollisionShape::MakeBox(FVector3f(SweepExtent)), Params)
-			&& !Clear.bStartPenetrating)
+		const bool bSweepHit = World->SweepSingleByObjectType(Clear, Eye, Target, Prop->GetActorQuat(),
+			FCollisionObjectQueryParams(ECC_WorldStatic), FCollisionShape::MakeBox(FVector3f(SweepExtent)), Params);
+		if (bSweepHit && Clear.bStartPenetrating)
+		{
+			// Standing with your back to a wall, the swept box already overlaps it at the eye and the sweep can
+			// say nothing useful - and quietly skipping the clamp here is what let the crate be driven into the
+			// floor and squeezed up over the player's head. Fall back to a line: where the view ray meets the
+			// world, minus the room the prop needs in front of it.
+			FHitResult Line;
+			if (World->LineTraceSingleByObjectType(Line, Eye, Target, FCollisionObjectQueryParams(ECC_WorldStatic), Params))
+			{
+				const float Reach = Line.Distance - Prop->GetExtentAlong(Forward);
+				if (Reach < RadiusCm)
+				{
+					UE_LOG(LogLambda, Verbose, TEXT("carry: no room to hold (line %.1f < %.1f units), dropping"),
+						Reach / Scale, RadiusCm / Scale);
+					DropCarriedProp(false);
+					return;
+				}
+				Target = Eye + Forward * FMath::Min(Reach, (Target - Eye).Size());
+			}
+		}
+		else if (bSweepHit)
 		{
 			// Source lets the hold point come in to half a radius because its held objects still collide with the
 			// player and its error check drops anything wedged; ours ignore the player's capsule, so a hold point
