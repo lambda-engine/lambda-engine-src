@@ -6,7 +6,7 @@ rem
 rem      game\LambdaEngine.exe          <- launcher
 rem      game\Engine\ , game\LambdaEngine\   <- cooked engine + game data
 rem      game\lambda\                   <- mod content (gameinfo.txt, maps, materials) - NOT overwritten
-rem      game\Run.bat                   <- convenience launcher
+rem      <map>.bat                      <- convenience launcher, named for the map it runs
 rem
 rem  Usage: Package.bat [Configuration=Development]     (Development or Shipping)
 rem =====================================================================================================
@@ -61,5 +61,5 @@ ie4uinit.exe -show >nul 2>&1
 
 echo.
 echo [LambdaEngine] Done. Run the game with:
-echo     "%GAME_DIR%\Run.bat" test
+echo     "%GAME_DIR%\startup.bat"
 endlocal
