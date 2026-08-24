@@ -14,7 +14,11 @@ set "MAP=%~1"
 if "%MAP%"=="" set "MAP=test"
 if not "%~1"=="" shift
 
-for %%I in ("%PROJECT_DIR%\..\game\Game\lambda") do set "GAMEDIR=%%~fI"
+if not defined MOD_DIR (
+	echo [LambdaEngine] No game directory. Put the path to your game repository in "%PROJECT_DIR%\GameDir.txt".
+	exit /b 1
+)
+set "GAMEDIR=%MOD_DIR%"
 
 echo [LambdaEngine] Building LambdaEngineEditor...
 call "%UE_ROOT%\Engine\Build\BatchFiles\Build.bat" LambdaEngineEditor Win64 Development -Project="%PROJECT%" -WaitMutex -NoHotReload

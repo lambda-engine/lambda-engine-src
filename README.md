@@ -6,28 +6,45 @@ archives). Lighting comes from UE5 dynamic lights (no lightmaps).
 
 ## Layout
 
+The engine and the game files are two repositories. This one is the Unreal project; the other holds everything a
+player actually runs, and is where packaging puts the built game.
+
 ```
-LambdaEngine-UE5/
-  src/                        the Unreal project (everything UE-related)
-    LambdaEngine.uproject
-    Source/LambdaEngine/      game module: ALambdaGameMode, ALambdaCharacter (HL2-style FPS), console commands
-    Plugins/LambdaSource/     Source-format runtime: BSP/VMT/VTF/KeyValues/VPK parsers, virtual file system, world actor
-    Config/  Content/
-    Build/Windows/            Application.ico - the icon compiled into the packaged exe
-    Tools/                    dev scripts: GenerateProjectFiles / Build / PlayDev / CreateAssets / Editor / Package
-  game/                       the shippable game files (what a player/modder runs)
-    LambdaEngine.exe          the packaged game (created by src\Tools\Package.bat)
-    Engine/  LambdaEngine/    cooked engine + game data (created by packaging)
-    Run.bat                   launches the game and loads Game\lambda\maps\<name>.bsp
-    Game/                     all mod content lives here; packaging never touches it
-      lambda/                 the mod content directory (like hl2/)
-        gameinfo.txt          declares the mod name and its content mounts (dirs + VPKs)
-        maps/  materials/     mod content
-        *.vpk                 (optional) VPKs shipped with the mod
+lambda-engine-src/            this repository - the Unreal project
+  LambdaEngine.uproject
+  GameDir.txt                 where the game repository is on this machine (see below)
+  Source/LambdaEngine/        game module: ALambdaGameMode, ALambdaCharacter (HL2-style FPS), console commands
+  Plugins/LambdaSource/       Source-format runtime: BSP/VMT/VTF/KeyValues/VPK parsers, virtual file system, world actor
+  Config/  Content/
+  Build/Windows/              Application.ico - the icon compiled into the packaged exe
+  Tools/                      dev scripts: GenerateProjectFiles / Build / PlayDev / CreateAssets / Editor / Package
+
+lambda-engine/                the other repository - the shippable game files
+  LambdaEngine.exe            the packaged game (created by Tools\Package.bat over here)
+  Engine/  LambdaEngine/      cooked engine + game data (created by packaging)
+  <map>.bat                   launches the game on Game\lambda\maps\<map>.bsp
+  Game/                       all mod content lives here; packaging never touches it
+    lambda/                   the mod content directory (like hl2/)
+      gameinfo.txt            declares the mod name and its content mounts (dirs, VPKs, Steam installs, packs)
+      maps/  materials/       mod content
+      plugins/                content packs, each mounted in turn (like Source's custom/)
 ```
 
-`src/` is the development project; `game/` is what gets distributed. `game/Run.bat` launches the packaged
-`LambdaEngine.exe`; to run the code you are currently editing without cooking, use `src/Tools/PlayDev.bat`.
+## GameDir.txt
+
+Because the two are separate, the tools and the editor have to be told where the game files are. `GameDir.txt`
+beside the `.uproject` holds one absolute path - your clone of the game repository:
+
+```
+C:\Users\you\Development\lambda-engine
+```
+
+`Tools\Env.bat` reads it, so `Package.bat` knows where to put the build and `PlayDev.bat` knows what to mount; the
+editor reads it too, which is what lets Play work without passing `-gamedir` every time. A `-gamedir=` on the
+command line still wins over it, and so does a `GAME_DIR` already set in the environment.
+
+`Tools\PlayDev.bat` runs the code you are currently editing without cooking; `Package.bat` builds the game into
+the game repository, where its `.bat` launchers run it.
 
 ## Requirements
 

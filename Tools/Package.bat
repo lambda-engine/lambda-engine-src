@@ -15,7 +15,14 @@ call "%~dp0Env.bat" || exit /b 1
 set "CONFIG=%~1"
 if "%CONFIG%"=="" set "CONFIG=Development"
 
-for %%I in ("%PROJECT_DIR%\..\game") do set "GAME_DIR=%%~fI"
+if not defined GAME_DIR (
+	echo [LambdaEngine] No game directory. Put the path to your game repository in "%PROJECT_DIR%\GameDir.txt".
+	exit /b 1
+)
+if not exist "%GAME_DIR%" (
+	echo [LambdaEngine] GameDir.txt points at "%GAME_DIR%", which does not exist.
+	exit /b 1
+)
 set "STAGE_DIR=%PROJECT_DIR%\Saved\Packaged"
 
 echo [LambdaEngine] Packaging %CONFIG% into "%GAME_DIR%"

@@ -271,7 +271,40 @@ FString FLambdaFileSystem::ResolveGameDirectory()
 		return MakeAbsoluteDirectory(CmdLineDir);
 	}
 
-	// 2. Conventional locations, relative to the roots below. Packaged builds run from <root>/<Project>/Binaries/Win64,
+	// 2. GameDir.txt beside the .uproject. The engine source and the game files are separate repositories, so
+	//    there is nothing next to the project to find; this is how the editor is told where to look, and it
+	//    saves passing -gamedir on every launch.
+	{
+		TArray<FString> Lines;
+		if (FFileHelper::LoadFileToStringArray(Lines, *(FPaths::ProjectDir() / TEXT("GameDir.txt"))))
+		{
+			for (FString Line : Lines)
+			{
+				Line.TrimStartAndEndInline();
+				Line.RemoveFromStart(TEXT("\""));
+				Line.RemoveFromEnd(TEXT("\""));
+				if (Line.IsEmpty() || Line.StartsWith(TEXT("#")))
+				{
+					continue;
+				}
+				const FString Configured = MakeAbsoluteDirectory(Line);
+				// It names the game folder; the mod itself is the tree with the gameinfo.txt inside it.
+				for (const FString& Candidate : { Configured / TEXT("Game/lambda"), Configured / TEXT("lambda"), Configured })
+				{
+					if (HasGameInfo(Candidate))
+					{
+						UE_LOG(LogLambdaSource, Log, TEXT("Game directory from GameDir.txt: %s"), *Candidate);
+						return Candidate;
+					}
+				}
+				UE_LOG(LogLambdaSource, Warning,
+					TEXT("GameDir.txt names '%s', but there is no gameinfo.txt under it"), *Configured);
+				break;
+			}
+		}
+	}
+
+	// 3. Conventional locations, relative to the roots below. Packaged builds run from <root>/<Project>/Binaries/Win64,
 	//    so <root> is three levels up; in the editor the game tree sits next to the project (../game).
 	TArray<FString> Roots;
 	Roots.Add(MakeAbsoluteDirectory(FPaths::Combine(FPlatformProcess::BaseDir(), TEXT("../../.."))));

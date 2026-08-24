@@ -1,0 +1,12 @@
+# Where the game files are.
+#
+# The engine source and the game files are separate repositories, so this is how one finds the other. Point it
+# at your clone of the game repository - the folder holding Game\lambda and, once you have packaged, the
+# LambdaEngine.exe you run.
+#
+# The build tools read it (Package.bat copies the packaged build there), and so does the editor, which is what
+# lets Play work without passing -gamedir every time. A -gamedir= on the command line still wins over it.
+#
+# One path, absolute, with or without quotes. Lines starting with # are ignored, as are blank ones.
+
+C:\Users\Admin\Development\Misc\LambdaEngine\lambda-engine

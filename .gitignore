@@ -1,0 +1,55 @@
+# Lambda Engine - engine source.
+
+# ---------------------------------------------------------------------------
+# Unreal project (src/) - generated output
+# ---------------------------------------------------------------------------
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+.vs/
+.vsconfig
+*.sln
+*.slnx
+Plugins/*/Binaries/
+Plugins/*/Intermediate/
+
+# Build/ holds generated files, but the exe icon is source and must be kept.
+# Note: a file cannot be un-ignored if its parent directory is excluded, so exclude
+# directory *contents* (with /*) rather than the directories themselves.
+Build/*
+!Build/Windows/
+Build/Windows/*
+!Build/Windows/Application.ico
+
+# ---------------------------------------------------------------------------
+# Packaged game (game/) - produced by src/Tools/Package.bat, not source
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Mod content: keep maps/materials/gameinfo.txt, but not the Valve VPKs.
+# Those ship with Half-Life 2 / Source SDK Base 2013 - see gameinfo.txt for
+# where they come from. Redistributing them here would be both huge and wrong.
+# ---------------------------------------------------------------------------
+*.vpk
+
+# ---------------------------------------------------------------------------
+# Editors / OS
+# ---------------------------------------------------------------------------
+.idea/
+*.suo
+*.VC.db
+*.VC.opendb
+*.user
+Thumbs.db
+desktop.ini
+
+# Valve content converted from an owned Half-Life: Alyx install (Tools/ImportSource2Decals.py) - not redistributable
+# Half-Life: Alyx headcrab ported to HL2 (community port dropped in by hand) and the materials converted from the
+# HL:A install by Tools/ImportSource2Material.py - Valve content, not redistributable
+# Models converted from the owned HL:A install by Tools/ImportSource2Model.py - Valve content, not redistributable
+# Third-party pistol view model (Juniez, see game/Game/lambda/readme/credits.txt) dropped in by hand
+# Half-Life 2's crowbar view model and its materials, from an owned install - Valve content, not redistributable
+# Black Mesa's HUD icons and the scheme's own fonts, read out of an owned install (Crowbar Collective) by hand -
+# the HUD reads them at runtime from the game directory; they are not ours to redistribute
+__pycache__/
