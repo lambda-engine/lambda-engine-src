@@ -14,7 +14,7 @@ if not defined GAME_DIR if exist "%PROJECT_DIR%\GameDir.txt" (
 )
 if defined GAME_DIR for %%I in ("%GAME_DIR%") do set "GAME_DIR=%%~fI"
 rem The mod folder inside it, which is what -gamedir wants.
-if defined GAME_DIR set "MOD_DIR=%GAME_DIR%\Game\lambda"
+if defined GAME_DIR set "MOD_DIR=%GAME_DIR%\Mods\lambda"
 
 if not exist "%UE_ROOT%\Engine\Binaries\Win64\UnrealEditor.exe" (
 	echo [LambdaEngine] Unreal Engine not found at "%UE_ROOT%". Set UE_ROOT to your UE 5.8 folder.

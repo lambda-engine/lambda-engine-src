@@ -16,7 +16,7 @@ Requires: Python 3 with Pillow, the .NET SDK, and a build of ValveResourceFormat
 Usage:
   python ImportSource2Decals.py --vrf <path/to/Source2Viewer-CLI.dll> ^
       --pak "D:/SteamLibrary/steamapps/common/Half-Life Alyx/game/hlvr/pak01_dir.vpk" ^
-      --out "<repo>/game/Game/lambda" ^
+      --out "<repo>/Mods/lambda" ^
       --hl2-decals "C:/Program Files (x86)/Steam/steamapps/common/Source SDK Base 2013 Singleplayer/hl2/scripts/decals_subrect.txt"
 
 The converted textures are Valve's content: they may be used against an owned copy of the game, not redistributed.

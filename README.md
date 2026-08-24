@@ -23,7 +23,7 @@ lambda-engine/                the other repository - the shippable game files
   LambdaEngine.exe            the packaged game (created by Tools\Package.bat over here)
   Engine/  LambdaEngine/      cooked engine + game data (created by packaging)
   <map>.bat                   launches the game on Game\lambda\maps\<map>.bsp
-  Game/                       all mod content lives here; packaging never touches it
+  Mods/                       all mod content lives here; packaging never touches it
     lambda/                   the mod content directory (like hl2/)
       gameinfo.txt            declares the mod name and its content mounts (dirs, VPKs, Steam installs, packs)
       maps/  materials/       mod content
@@ -90,7 +90,7 @@ repackage to change it.
 
 ## Content sources (gameinfo.txt and VPK mounting)
 
-Content mounts are declared in `game/Game/lambda/gameinfo.txt`, Source-style — this is the single source of truth:
+Content mounts are declared in `Mods/lambda/gameinfo.txt`, Source-style — this is the single source of truth:
 
 ```
 "GameInfo"
@@ -113,7 +113,7 @@ value ending in `.vpk` mounts an archive (point at the `_dir.vpk` of a multi-chu
 `_NNN.vpk` chunks, nothing is extracted); anything else mounts a loose directory. `|gameinfo_path|` expands to the
 game directory, and relative paths resolve against it.
 
-The game directory is found automatically — `<root>/Game/<mod>` where `<root>` is the folder holding the exe when
+The game directory is found automatically — `<root>/Mods/<mod>` where `<root>` is the folder holding the exe when
 packaged and `../game` in the editor; any subfolder containing a `gameinfo.txt` is accepted, so the mod folder can be
 renamed freely. It can also be forced with `-gamedir=<path>`.
 

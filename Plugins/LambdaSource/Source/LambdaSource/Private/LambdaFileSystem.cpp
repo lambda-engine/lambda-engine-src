@@ -289,7 +289,7 @@ FString FLambdaFileSystem::ResolveGameDirectory()
 				}
 				const FString Configured = MakeAbsoluteDirectory(Line);
 				// It names the game folder; the mod itself is the tree with the gameinfo.txt inside it.
-				for (const FString& Candidate : { Configured / TEXT("Game/lambda"), Configured / TEXT("lambda"), Configured })
+				for (const FString& Candidate : { Configured / TEXT("Mods/lambda"), Configured / TEXT("Game/lambda"), Configured / TEXT("lambda"), Configured })
 				{
 					if (HasGameInfo(Candidate))
 					{
@@ -316,7 +316,8 @@ FString FLambdaFileSystem::ResolveGameDirectory()
 	TArray<FString> Named;
 	for (const FString& Root : Roots)
 	{
-		Named.AddUnique(Root / TEXT("Game/lambda"));	// current layout: <root>/Game/<mod>
+		Named.AddUnique(Root / TEXT("Mods/lambda"));	// current layout: <root>/Mods/<mod>
+		Named.AddUnique(Root / TEXT("Game/lambda"));	// what it used to be, so an older install still runs
 		Named.AddUnique(Root / TEXT("lambda"));			// flat layout:    <root>/<mod>
 	}
 	const ULambdaSourceSettings& Settings = ULambdaSourceSettings::Get();

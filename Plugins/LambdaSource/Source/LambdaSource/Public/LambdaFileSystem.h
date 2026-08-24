@@ -11,7 +11,7 @@ class FSourceVPKFile;
  * The mount list comes from the game directory's gameinfo.txt (FileSystem/SearchPaths), exactly like Source. The game
  * directory is located in this order:
  *   1. -gamedir=<path> on the command line
- *   2. <root>/Game/<mod> (or <root>/<mod>) where <root> is <ExecutableDir>/../../.. when packaged and
+ *   2. <root>/Mods/<mod> (or <root>/<mod>) where <root> is <ExecutableDir>/../../.. when packaged and
  *      <ProjectDir>/../game in the editor; any subfolder holding a gameinfo.txt is accepted
  *   3. ULambdaSourceSettings::GameDirectories
  *

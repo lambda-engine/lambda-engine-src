@@ -5,7 +5,7 @@ rem  This is what you want while iterating on gameplay code.
 rem
 rem  Usage:  PlayDev.bat [mapname=startup] [extra engine args...]
 rem
-rem  It runs the editor binary in -game mode against src\, reading content from game\Game\lambda.
+rem  It runs the editor binary in -game mode against src\, reading content from the game repository's Mods\lambda.
 rem  It does NOT touch game\LambdaEngine.exe - repackage with Package.bat when you want to update that.
 rem =====================================================================================================
 call "%~dp0Env.bat" || exit /b 1

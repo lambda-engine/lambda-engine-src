@@ -49,7 +49,7 @@ if not exist "%ARCHIVED%" (
 )
 
 echo [LambdaEngine] Copying build into "%GAME_DIR%" (lambda\ is preserved)...
-robocopy "%ARCHIVED%" "%GAME_DIR%" /E /NFL /NDL /NJH /NJS /NP /XD "%GAME_DIR%\Game" >nul
+robocopy "%ARCHIVED%" "%GAME_DIR%" /E /NFL /NDL /NJH /NJS /NP /XD "%GAME_DIR%\Mods" >nul
 if errorlevel 8 (
 	echo [LambdaEngine] Copy FAILED.
 	exit /b 1
