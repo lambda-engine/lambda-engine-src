@@ -549,11 +549,16 @@ float ALambdaCharacter::PlayerHullRadiusCm() const
 
 void ALambdaCharacter::UpdatePropCarry(float DeltaSeconds)
 {
+	// The +USE carry, rebuilt from one rule: the prop is held at the farthest point along the view ray where it
+	// actually fits, out to arm's length. One prop-shaped sweep finds that point - there is no pitch clamp, no
+	// pull-in shortcut and no radial push-out, each of which was a way for the hold point to end up somewhere
+	// the prop could not be, with physics squeezing it up past the player's head as the answer. Looking straight
+	// down simply parks the prop at your feet, under the crosshair.
 	ASourcePropPhysics* Prop = CarriedProp.Get();
 	if (!Prop)
 	{
-		// The prop was destroyed while it was being held - shot to pieces, or it left the world. Let go properly so
-		// the weapon comes back out.
+		// The prop was destroyed while it was being held - shot to pieces, or it left the world. Let go properly
+		// so the weapon comes back out.
 		if (!CarriedProp.IsExplicitlyNull())
 		{
 			DropCarriedProp(false);
@@ -561,8 +566,7 @@ void ALambdaCharacter::UpdatePropCarry(float DeltaSeconds)
 		return;
 	}
 	UWorld* World = GetWorld();
-	// "pPlayer->GetGroundEntity() == pEntity": standing on the thing you are holding drops it, or the player
-	// could ride it upwards.
+	// "pPlayer->GetGroundEntity() == pEntity": standing on the thing you are holding drops it.
 	const FHitResult& Floor = GetCharacterMovement()->CurrentFloor.HitResult;
 	if (!World || Floor.GetActor() == Prop)
 	{
@@ -574,99 +578,69 @@ void ALambdaCharacter::UpdatePropCarry(float DeltaSeconds)
 	FVector Eye;
 	FRotator EyeRot;
 	GetActorEyesViewPoint(Eye, EyeRot);
-	// Clamped pitch: looking straight down should not drive the prop into the floor.
-	EyeRot.Pitch = FMath::Clamp(EyeRot.Pitch, -75.0f, 75.0f);
 	const FVector Forward = EyeRot.Vector();
 
-	// A sphere of the prop's radius has to clear the player's own bounds: radius = the player's 2D extent plus
-	// how far the prop reaches back towards him, and the prop hangs 24 units beyond that.
+	// How much room the prop needs between its centre and the player, and how far out it is preferred:
+	// CGrabController's 24 units past the clearance radius.
 	const float RadiusCm = PlayerHullRadiusCm() + Prop->GetExtentAlong(-Forward);
-	const float DistanceCm = 24.0f * Scale + RadiusCm * 2.0f;
+	const float PreferredCm = 24.0f * Scale + RadiusCm * 2.0f - RadiusCm;
 
-	// Source pulls the hold point in to radius/2 when its view trace hits the world at close range. That rule is
-	// not used here: with the view aimed under the horizon it names a spot between the eye and the floor that a
-	// crate cannot possibly occupy, and physics answered by squeezing the crate up past the player's head. The
-	// prop-shaped sweep below does the same job properly - it stops the hold point at the farthest place along
-	// the view ray the prop actually fits.
-	FCollisionQueryParams Params(SCENE_QUERY_STAT(LambdaCarryClear), false, this);
+	// Sweep the prop's own shape from the eye along the view. Where it stops is where the prop can actually be:
+	// against a wall it comes back toward the player, over open floor it rides the ray, looking down it settles
+	// where the box meets the ground.
+	float ReachCm = PreferredCm;
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(LambdaCarryHold), false, this);
 	Params.AddIgnoredActor(Prop);
-	FVector Target = Eye + Forward * (DistanceCm - RadiusCm);
-
-	// Source then pushes the hold point radially away from the player's own column, so that a held object cannot
-	// end up inside him. A prop being carried here already ignores the player, so it has no such work to do - and
-	// doing it anyway is what threw the prop up over the player's head: with something in front pulling the hold
-	// point in close, a sideways shove of a crate's radius keeps the height it had, which reads as the prop
-	// climbing out of view while you look down at the floor. The hold point stays on the view ray instead, and
-	// the sweep below is what keeps it out of the world.
-
-
-	// Where the prop can actually be held: the hold point is only useful if the prop fits there. Source keeps it
-	// clear of what the player is looking at by stopping the object's centre a radius short of the hit; sweeping
-	// the prop's own shape does the same job for the floor a steeply-angled view runs into, which a line trace
-	// stopping short by a radius does not - and a prop driven into the floor every frame squeezes out of it and up
-	// past the player.
 	const FVector SweepExtent = Prop->GetHullExtent() * 0.9f;
-	if (SweepExtent.GetMin() > 0.0f)
+	FHitResult Block;
+	if (SweepExtent.GetMin() > 0.0f && World->SweepSingleByObjectType(Block, Eye, Eye + Forward * PreferredCm,
+		Prop->GetActorQuat(), FCollisionObjectQueryParams(ECC_WorldStatic),
+		FCollisionShape::MakeBox(FVector3f(SweepExtent)), Params))
 	{
-		FHitResult Clear;
-		const bool bSweepHit = World->SweepSingleByObjectType(Clear, Eye, Target, Prop->GetActorQuat(),
-			FCollisionObjectQueryParams(ECC_WorldStatic), FCollisionShape::MakeBox(FVector3f(SweepExtent)), Params);
-		if (bSweepHit && Clear.bStartPenetrating)
+		if (Block.bStartPenetrating)
 		{
-			// Standing with your back to a wall, the swept box already overlaps it at the eye and the sweep can
-			// say nothing useful - and quietly skipping the clamp here is what let the crate be driven into the
-			// floor and squeezed up over the player's head. Fall back to a line: where the view ray meets the
-			// world, minus the room the prop needs in front of it.
+			// The box already overlaps the world at the eye (back to a wall): a line stands in, less the room the
+			// prop needs in front of it.
 			FHitResult Line;
-			if (World->LineTraceSingleByObjectType(Line, Eye, Target, FCollisionObjectQueryParams(ECC_WorldStatic), Params))
+			if (World->LineTraceSingleByObjectType(Line, Eye, Eye + Forward * PreferredCm,
+				FCollisionObjectQueryParams(ECC_WorldStatic), Params))
 			{
-				const float Reach = Line.Distance - Prop->GetExtentAlong(Forward);
-				if (Reach < RadiusCm)
-				{
-					UE_LOG(LogLambda, Verbose, TEXT("carry: no room to hold (line %.1f < %.1f units), dropping"),
-						Reach / Scale, RadiusCm / Scale);
-					DropCarriedProp(false);
-					return;
-				}
-				Target = Eye + Forward * FMath::Min(Reach, (Target - Eye).Size());
+				ReachCm = Line.Distance - Prop->GetExtentAlong(Forward);
 			}
 		}
-		else if (bSweepHit)
+		else
 		{
-			// Source lets the hold point come in to half a radius because its held objects still collide with the
-			// player and its error check drops anything wedged; ours ignore the player's capsule, so a hold point
-			// that close parks the crate around the camera. The full radius is the closest the prop may be held -
-			// and if the world leaves no room even for that, the player cannot hold it here at all: it is dropped,
-			// which is what Source's ComputeError did to a wedged object.
-			const FVector ToTarget = Target - Eye;
-			const float Reach = (Clear.Location - Eye).Size();
-			if (Reach < RadiusCm)
-			{
-				UE_LOG(LogLambda, Verbose, TEXT("carry: no room to hold (%.1f < %.1f units), dropping"),
-					Reach / Scale, RadiusCm / Scale);
-				DropCarriedProp(false);
-				return;
-			}
-			Target = Eye + ToTarget.GetSafeNormal() * FMath::Min(Reach, ToTarget.Size());
+			ReachCm = (Block.Location - Eye).Size();
 		}
+	}
+
+	// No room to hold the prop even at its clearance radius: it cannot be carried here (the wedged case Source's
+	// error check caught).
+	if (ReachCm < RadiusCm)
+	{
+		UE_LOG(LogLambda, Verbose, TEXT("carry: no room to hold (%.1f < %.1f units), dropping"),
+			ReachCm / Scale, RadiusCm / Scale);
+		DropCarriedProp(false);
+		return;
+	}
+
+	const FVector Target = Eye + Forward * FMath::Min(ReachCm, PreferredCm);
 
 	// How the prop actually reads on screen: how far it is from the eye, and how far above the crosshair it sits.
 	const FVector ToProp = Prop->GetActorLocation() - Eye;
-	const float PropDistance = ToProp.Size();
 	const float AboveCrosshair = FMath::RadiansToDegrees(
 		FMath::Asin(FMath::Clamp(ToProp.GetSafeNormal().Z, -1.0f, 1.0f)) - FMath::Asin(FMath::Clamp(Forward.Z, -1.0f, 1.0f)));
-	UE_LOG(LogLambda, VeryVerbose, TEXT("carry: pitch %.1f radius %.1f hold %.1f | prop %.1f units away, %+.1f deg above crosshair, target %.1f units off"),
-		EyeRot.Pitch, RadiusCm / Scale, (DistanceCm - RadiusCm) / Scale, PropDistance / Scale, AboveCrosshair,
-		(Target - Prop->GetActorLocation()).Size() / Scale);
-	}
+	UE_LOG(LogLambda, VeryVerbose, TEXT("carry: pitch %.1f reach %.1f | prop %.1f units away, %+.1f deg above crosshair, target %.1f units off"),
+		EyeRot.Pitch, ReachCm / Scale, ToProp.Size() / Scale, AboveCrosshair, (Target - Prop->GetActorLocation()).Size() / Scale);
 
+	// The prop keeps the yaw it was picked up at, relative to where the player is looking.
 	const FRotator TargetRotation = (FQuat(CarriedPropRelativeRotation) * FQuat(FRotator(0.0f, EyeRot.Yaw, 0.0f))).Rotator();
-	// ComputeError() > 12 units and the object is considered stuck; Source drops it.
 	if (!Prop->UpdateCarry(Target, TargetRotation, DeltaSeconds, 12.0f))
 	{
 		DropCarriedProp(false);
 	}
 }
+
 
 void ALambdaCharacter::NotifyHit(UPrimitiveComponent* MyComp, AActor* Other, UPrimitiveComponent* OtherComp, bool bSelfMoved,
 	FVector HitLocation, FVector HitNormal, FVector NormalImpulse, const FHitResult& Hit)

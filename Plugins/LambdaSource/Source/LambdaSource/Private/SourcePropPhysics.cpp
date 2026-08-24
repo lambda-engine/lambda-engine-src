@@ -54,7 +54,9 @@ namespace
 	constexpr float SHADOW_PUSH_SPEED_LIMIT_UNITS = 50.0f;
 	/** m_shadow.maxSpeed / DEFAULT_MAX_ANGULAR: how fast the controller may drag a held object about. */
 	constexpr float SHADOW_MAX_SPEED_UNITS = 1000.0f;
-	constexpr float SHADOW_MAX_ANGULAR_DEGREES = 360.0f * 10.0f;
+	// One turn a second is plenty to keep the pickup yaw; the old ten turns a second could kick a floor-contacting
+	// prop upward between frames.
+	constexpr float SHADOW_MAX_ANGULAR_DEGREES = 360.0f;
 
 	/** CBaseEntity::IsInWorld: MAX_COORD_INTEGER, and the speed past which the engine gives up on an object. */
 	constexpr float MAX_COORD_UNITS = 16384.0f;
