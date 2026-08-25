@@ -103,6 +103,12 @@ static FAutoConsoleVariableRef CVarWalkAuto(
 	GWalkAuto,
 	TEXT("\"<seconds> [delay_s]\": walk forward for that long"));
 
+static FString GCrouchAuto;
+static FAutoConsoleVariableRef CVarCrouchAuto(
+	TEXT("crouch.auto"),
+	GCrouchAuto,
+	TEXT("\"<seconds> [delay_s]\": hold duck for that long"));
+
 static FString GPropCarryAuto;
 static FAutoConsoleVariableRef CVarPropCarryAuto(
 	TEXT("propcarry.auto"),
@@ -153,7 +159,13 @@ ALambdaCharacter::ALambdaCharacter(const FObjectInitializer& ObjectInitializer)
 	// physics shadow that pushes what it walks into at its own walking speed, and no harder (PushPhysicsObject).
 	GetCharacterMovement()->bEnablePhysicsInteraction = false;
 	BaseEyeHeight = EyeHeightCm - HalfHeightCm;
-	CrouchedEyeHeight = BaseEyeHeight * 0.5f;
+
+	// VEC_DUCK_HULL / VEC_DUCK_VIEW: the ducked player is 36 units tall against 72 standing, and sees from 28
+	// units up rather than 64. Both are stated from the feet, so they lose the half height to become Unreal's,
+	// which measures from the middle of the capsule.
+	const float DuckHalfHeightCm = 18.0f * Scale;		// a 36 unit hull
+	GetCharacterMovement()->SetCrouchedHalfHeight(DuckHalfHeightCm);
+	CrouchedEyeHeight = 28.0f * Scale - DuckHalfHeightCm;
 
 	bUseControllerRotationPitch = false;
 	bUseControllerRotationYaw = true;
@@ -296,6 +308,7 @@ void ALambdaCharacter::BuildInputAssets()
 	LookAction = MakeAction(TEXT("IA_Look"), EInputActionValueType::Axis2D);
 	JumpAction = MakeAction(TEXT("IA_Jump"), EInputActionValueType::Boolean);
 	SprintAction = MakeAction(TEXT("IA_Sprint"), EInputActionValueType::Boolean);
+	CrouchAction = MakeAction(TEXT("IA_Crouch"), EInputActionValueType::Boolean);
 	UseAction = MakeAction(TEXT("IA_Use"), EInputActionValueType::Boolean);
 	AttackAction = MakeAction(TEXT("IA_Attack"), EInputActionValueType::Boolean);
 	Attack2Action = MakeAction(TEXT("IA_Attack2"), EInputActionValueType::Boolean);
@@ -338,6 +351,7 @@ void ALambdaCharacter::BuildInputAssets()
 
 	MappingContext->MapKey(JumpAction, EKeys::SpaceBar);
 	MappingContext->MapKey(SprintAction, EKeys::LeftShift);
+	MappingContext->MapKey(CrouchAction, EKeys::LeftControl);
 	MappingContext->MapKey(UseAction, EKeys::E);
 	MappingContext->MapKey(AttackAction, EKeys::LeftMouseButton);
 	MappingContext->MapKey(Attack2Action, EKeys::RightMouseButton);
@@ -395,6 +409,8 @@ void ALambdaCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 	EIC->BindAction(JumpAction, ETriggerEvent::Completed, this, &ALambdaCharacter::Input_JumpEnd);
 	EIC->BindAction(SprintAction, ETriggerEvent::Started, this, &ALambdaCharacter::Input_SprintStart);
 	EIC->BindAction(SprintAction, ETriggerEvent::Completed, this, &ALambdaCharacter::Input_SprintEnd);
+	EIC->BindAction(CrouchAction, ETriggerEvent::Started, this, &ALambdaCharacter::Input_CrouchStart);
+	EIC->BindAction(CrouchAction, ETriggerEvent::Completed, this, &ALambdaCharacter::Input_CrouchEnd);
 	EIC->BindAction(UseAction, ETriggerEvent::Started, this, &ALambdaCharacter::Input_Use);
 	EIC->BindAction(AttackAction, ETriggerEvent::Started, this, &ALambdaCharacter::Input_AttackStart);
 	EIC->BindAction(Attack2Action, ETriggerEvent::Started, this, &ALambdaCharacter::Input_Attack2Start);
@@ -750,6 +766,7 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
+	UpdateEyeHeight(DeltaSeconds);
 	UpdateStepSound(DeltaSeconds);
 
 	// CBasePlayer::ItemPostFrame drives the active weapon every frame.
@@ -817,6 +834,30 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 			SwitchToWeapon(GetSelectedWeapon());
 			UE_LOG(LogLambda, Display, TEXT("slot.auto %d -> %s"), AutoSlotBucket,
 				ActiveWeapon ? *ActiveWeapon->GetWeaponClassName() : TEXT("none"));
+		}
+	}
+
+	// crouch.auto: hold duck, so the ducked hull and view can be tested.
+	if (AutoCrouchSeconds > 0.0f)
+	{
+		if (AutoCrouchDelay > 0.0f)
+		{
+			AutoCrouchDelay -= DeltaSeconds;
+		}
+		else
+		{
+			if (!bIsCrouched)
+			{
+				// The resize happens in the movement update, not here, so there is nothing to report yet.
+				Crouch();
+				UE_LOG(LogLambda, Display, TEXT("crouch.auto: ducking"));
+			}
+			AutoCrouchSeconds -= DeltaSeconds;
+			if (AutoCrouchSeconds <= 0.0f)
+			{
+				UnCrouch();
+				UE_LOG(LogLambda, Display, TEXT("crouch.auto: standing up"));
+			}
 		}
 	}
 
@@ -948,6 +989,13 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 				GWalkAuto.ParseIntoArrayWS(Parts);
 				AutoWalkSeconds = Parts.Num() > 0 ? FCString::Atof(*Parts[0]) : 2.0f;
 				AutoWalkDelay = Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : 2.0f;
+			}
+			if (!GCrouchAuto.IsEmpty())
+			{
+				TArray<FString> Parts;
+				GCrouchAuto.ParseIntoArrayWS(Parts);
+				AutoCrouchSeconds = Parts.Num() > 0 ? FCString::Atof(*Parts[0]) : 2.0f;
+				AutoCrouchDelay = Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : 2.0f;
 			}
 			if (!GPropCarryAuto.IsEmpty())
 			{
@@ -1970,4 +2018,69 @@ void ALambdaCharacter::PlayStepSound(const FString& SurfaceProp, float Volume)
 		UGameplayStatics::SpawnSoundAtLocation(this, Wave, GetActorLocation(), FRotator::ZeroRotator,
 			Volume, Pitch, 0.0f, Attenuation);
 	}
+}
+
+void ALambdaCharacter::Input_CrouchStart()
+{
+	Crouch();
+}
+
+void ALambdaCharacter::Input_CrouchEnd()
+{
+	UnCrouch();
+}
+
+void ALambdaCharacter::OnStartCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust)
+{
+	Super::OnStartCrouch(HalfHeightAdjust, ScaledHalfHeightAdjust);
+
+	// On the ground Unreal has already done what Source does - shrunk the capsule and dropped its centre so the
+	// feet stay put. In the air Source does the opposite, and this undoes Unreal's drop and applies the lift:
+	// twice the adjustment, which is the whole difference between the two hulls.
+	if (GetCharacterMovement() && GetCharacterMovement()->IsFalling())
+	{
+		AddActorWorldOffset(FVector(0.0f, 0.0f, 2.0f * ScaledHalfHeightAdjust), /*bSweep=*/ false);
+	}
+}
+
+void ALambdaCharacter::OnEndCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust)
+{
+	Super::OnEndCrouch(HalfHeightAdjust, ScaledHalfHeightAdjust);
+
+	// FinishUnDuck: standing up in mid air puts the feet back down where they would have been.
+	if (GetCharacterMovement() && GetCharacterMovement()->IsFalling())
+	{
+		AddActorWorldOffset(FVector(0.0f, 0.0f, -2.0f * ScaledHalfHeightAdjust), /*bSweep=*/ false);
+	}
+}
+
+void ALambdaCharacter::UpdateEyeHeight(float DeltaSeconds)
+{
+	// VEC_VIEW / VEC_DUCK_VIEW: the eye is 64 units above the feet standing and 28 ducked. Source eases between
+	// them over TIME_TO_DUCK rather than switching, and unducks faster than it ducks.
+	if (!FirstPersonCamera)
+	{
+		return;
+	}
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+	const float StandEyeCm = 64.0f * Scale;
+	const float DuckEyeCm = 28.0f * Scale;
+	const float TargetCm = bIsCrouched ? DuckEyeCm : StandEyeCm;
+
+	if (EyeAboveFeetCm < 0.0f)
+	{
+		EyeAboveFeetCm = TargetCm;	// first frame: start where we are, do not sweep up from the floor
+	}
+	else
+	{
+		// TIME_TO_DUCK 0.4s, TIME_TO_UNDUCK 0.2s, across the 36 units between the two.
+		const float Travel = StandEyeCm - DuckEyeCm;
+		const float Rate = Travel / (bIsCrouched ? 0.4f : 0.2f);
+		EyeAboveFeetCm = FMath::FInterpConstantTo(EyeAboveFeetCm, TargetCm, DeltaSeconds, Rate);
+	}
+
+	// Stated from the feet, so it has to lose the half height to become a position relative to the middle of the
+	// capsule - which is also what absorbs the capsule resizing under it, so nothing jumps.
+	const float HalfHeight = GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+	FirstPersonCamera->SetRelativeLocation(FVector(0.0f, 0.0f, EyeAboveFeetCm - HalfHeight));
 }

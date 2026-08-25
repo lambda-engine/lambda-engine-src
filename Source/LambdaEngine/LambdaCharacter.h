@@ -105,6 +105,8 @@ public:
 	 * Steps are timed rather than driven by the animation - Source counts down a few hundred milliseconds
 	 * between them, shorter when running.
 	 */
+	/** Eases the eye between the standing and ducked view heights, as Source does over TIME_TO_DUCK. */
+	void UpdateEyeHeight(float DeltaSeconds);
 	void UpdateStepSound(float DeltaSeconds);
 	/** CBasePlayer::PlayStepSound: the surface names the sound, alternating feet. */
 	void PlayStepSound(const FString& SurfaceProp, float Volume);
@@ -137,6 +139,23 @@ protected:
 	void Input_JumpEnd();
 	void Input_SprintStart();
 	void Input_SprintEnd();
+	/** IN_DUCK. Source ducks while the key is held and stands again when it is let go. */
+	void Input_CrouchStart();
+	void Input_CrouchEnd();
+
+public:
+	/**
+	 * CGameMovement::FinishDuck / FinishUnDuck.
+	 *
+	 * Unreal keeps the feet where they are when the capsule shrinks, so ducking never buys any height. Source
+	 * does that only when standing on something: in the air it moves the origin up by the difference between the
+	 * hulls, lifting the feet and leaving the head where it was. That is crouch jumping, and it is the reason a
+	 * Half-Life player can reach a ledge a plain jump cannot.
+	 */
+	virtual void OnStartCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust) override;
+	virtual void OnEndCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust) override;
+
+protected:
 	void Input_Use();
 	/** CPlayerPickupController: picks up the physics prop in front of the player, or drops the carried one. */
 	void TogglePropCarry();
@@ -241,6 +260,16 @@ protected:
 	/** walk.auto state. */
 	float AutoWalkSeconds = 0.0f;
 	float AutoWalkDelay = 0.0f;
+	/**
+	 * How high the eye sits above the feet right now, in centimetres, easing towards where ducking wants it.
+	 *
+	 * Source moves the view offset over TIME_TO_DUCK rather than switching it (CGameMovement::Duck), which is
+	 * what makes ducking read as crouching rather than as the camera changing places.
+	 */
+	float EyeAboveFeetCm = -1.0f;
+
+	float AutoCrouchSeconds = 0.0f;
+	float AutoCrouchDelay = 0.0f;
 	float DecalTestScreenshotTimer = 0.0f;
 	bool bAutoFireAimHead = false;
 	/** m_Local.m_vecPunchAngle / m_vecPunchAngleVel (pitch, yaw, roll degrees). */
@@ -271,6 +300,8 @@ protected:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UInputAction> SprintAction;
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> CrouchAction;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UInputAction> UseAction;
