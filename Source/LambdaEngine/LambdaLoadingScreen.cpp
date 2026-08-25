@@ -2,8 +2,8 @@
 
 #include "LambdaEngine.h"
 #include "LambdaFonts.h"
-#include "LambdaFileSystem.h"
-#include "LambdaLoadProgress.h"
+#include "FileSystem/LambdaFileSystem.h"
+#include "Core/LambdaLoadProgress.h"
 #include "LambdaUITextures.h"
 
 #include "Engine/Font.h"

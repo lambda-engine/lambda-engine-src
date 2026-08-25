@@ -2,10 +2,10 @@
 
 #include "LambdaConsole.h"
 #include "LambdaEngine.h"
-#include "LambdaFileSystem.h"
+#include "FileSystem/LambdaFileSystem.h"
 #include "LambdaLoadingScreen.h"
-#include "LambdaSourceSettings.h"
-#include "SourceKeyValues.h"
+#include "Core/LambdaSourceSettings.h"
+#include "Formats/SourceKeyValues.h"
 
 #include "Engine/GameInstance.h"
 #include "GameFramework/PlayerController.h"

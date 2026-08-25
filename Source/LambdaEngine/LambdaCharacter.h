@@ -2,8 +2,8 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
-#include "SourcePlayerPunch.h"
-#include "SourceItemPickup.h"
+#include "Gameplay/SourcePlayerPunch.h"
+#include "Entities/SourceItemPickup.h"
 #include "LambdaCharacter.generated.h"
 
 class UCameraComponent;

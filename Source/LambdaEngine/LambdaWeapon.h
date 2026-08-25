@@ -2,7 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "SourceWeaponScript.h"
+#include "Weapons/SourceWeaponScript.h"
 #include "LambdaWeapon.generated.h"
 
 class ALambdaCharacter;

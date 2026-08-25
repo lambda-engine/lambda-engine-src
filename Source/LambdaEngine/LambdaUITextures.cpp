@@ -1,10 +1,10 @@
 #include "LambdaUITextures.h"
 
 #include "LambdaEngine.h"
-#include "LambdaFileSystem.h"
-#include "LambdaMaterialLibrary.h"
-#include "SourceKeyValues.h"
-#include "SourceVTFFile.h"
+#include "FileSystem/LambdaFileSystem.h"
+#include "Materials/LambdaMaterialLibrary.h"
+#include "Formats/SourceKeyValues.h"
+#include "Formats/SourceVTFFile.h"
 
 #include "Engine/Texture2D.h"
 

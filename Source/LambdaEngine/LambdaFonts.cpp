@@ -1,7 +1,7 @@
 #include "LambdaFonts.h"
 
 #include "LambdaEngine.h"
-#include "LambdaFileSystem.h"
+#include "FileSystem/LambdaFileSystem.h"
 
 #include "Engine/Font.h"
 #include "Engine/FontFace.h"
