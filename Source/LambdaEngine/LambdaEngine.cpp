@@ -16,25 +16,23 @@
 #include "Materials/SourceDecalScript.h"
 #include "Materials/SourceSurfaceProps.h"
 #include "LambdaConsole.h"
+#include "Creatures/SourceNPCBase.h"
+#include "NavigationSystem.h"
+#include "NavigationPath.h"
+#include "TimerManager.h"
+#include "NavMesh/RecastNavMesh.h"
 #include "LambdaLoadingScreen.h"
 
 DEFINE_LOG_CATEGORY(LogLambda);
 
 namespace
 {
-	/**
-	 * Source-style launcher arguments. "LambdaEngine.exe +map mymap" runs mymap.bsp - but the bare "+map" token
-	 * must never reach the engine's own parsing: UGameInstance::GetMapOverrideName takes the first token that does
-	 * not start with '-' as a UE map override, would read the override as a map called "+map", fail to browse to
-	 * it and exit. The game module loads before StartGameInstance runs, so the tokens are rewritten here into the
-	 * -sourcemap= switch the rest of the game already understands.
-	 */
 	/** Everything a "+command" on the command line asked for, in the order it was written. */
 	TArray<FString> GStartupCommands;
 
 	/**
 	 * Source-style launcher arguments. Anything written "+command arg arg" is a console command to run once the
-	 * game is up, exactly as typing it would - "lambda.exe +map startup +lambda.give weapon_smg1" starts on
+	 * game is up, exactly as typing it would - "lambda.exe +map startup +give weapon_smg1" starts on
 	 * startup.bsp with an SMG. A command runs to the end of the line or to the next token beginning with + or -.
 	 *
 	 * They have to be taken off the command line rather than left on it. UGameInstance::GetMapOverrideName reads
@@ -140,7 +138,7 @@ namespace
 		UGameInstance* Instance = World->GetGameInstance();
 		ULambdaConsole* Console = Instance ? Instance->GetSubsystem<ULambdaConsole>() : nullptr;
 		// Through the console, so a startup command is the same thing as a typed one - it reaches the console's
-		// own commands as well as every lambda.* and engine one.
+		// own commands as well as every engine one.
 		for (const FString& Line : GStartupCommands)
 		{
 			if (Console)
@@ -187,20 +185,98 @@ static void LambdaMapCommand(const TArray<FString>& Args, UWorld* World)
 	}
 	if (Args.Num() < 1 || Args[0].IsEmpty())
 	{
-		UE_LOG(LogLambda, Display, TEXT("Usage: lambda.map <mapname>   (loads <gamedir>/maps/<mapname>.bsp)"));
+		UE_LOG(LogLambda, Display, TEXT("Usage: map <mapname>   (loads <gamedir>/maps/<mapname>.bsp)"));
 		return;
 	}
 	const FString MapName = Args[0];
 	const FString EntryMap = UGameMapsSettings::GetGameDefaultMap();
-	UE_LOG(LogLambda, Log, TEXT("lambda.map: reloading '%s' with Source map '%s'"), *EntryMap, *MapName);
+	UE_LOG(LogLambda, Log, TEXT("map: reloading '%s' with Source map '%s'"), *EntryMap, *MapName);
 	FLambdaLoadingScreen::Arm();
 	UGameplayStatics::OpenLevel(World, FName(*EntryMap), true, FString::Printf(TEXT("map=%s"), *MapName));
 }
 
 static FAutoConsoleCommandWithWorldAndArgs GLambdaMapCommand(
-	TEXT("lambda.map"),
-	TEXT("Load a Source BSP map from the game directory: lambda.map <name>"),
+	TEXT("map"),
+	TEXT("Load a Source BSP map from the game directory: map <name>"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaMapCommand));
+
+// nav_test - what the navmesh makes of the map: a route from the player to every NPC in it. Source has its own
+// nav_* commands for the navmesh its bots use; this is the one worth having while the mesh is young.
+static void LambdaNavTestCommand(const TArray<FString>& Args, UWorld* World)
+{
+	if (!World)
+	{
+		return;
+	}
+	// Generation runs in the background, so a report asked for the instant a map loads sees an empty mesh.
+	// "nav_test 5" asks again in five seconds.
+	if (Args.Num() > 0)
+	{
+		const float Delay = FMath::Max(0.1f, FCString::Atof(*Args[0]));
+		FTimerHandle Handle;
+		World->GetTimerManager().SetTimer(Handle, FTimerDelegate::CreateLambda([World]()
+		{
+			if (IsValid(World))
+			{
+				LambdaNavTestCommand(TArray<FString>(), World);
+			}
+		}), Delay, false);
+		UE_LOG(LogLambda, Display, TEXT("nav_test: reporting in %.1fs"), Delay);
+		return;
+	}
+
+	UNavigationSystemV1* NavSys = FNavigationSystem::GetCurrent<UNavigationSystemV1>(World);
+	APlayerController* PC = World->GetFirstPlayerController();
+	APawn* Pawn = PC ? PC->GetPawn() : nullptr;
+	if (!NavSys || !Pawn)
+	{
+		UE_LOG(LogLambda, Display, TEXT("nav_test: no navigation system or no player"));
+		return;
+	}
+	ARecastNavMesh* Recast = Cast<ARecastNavMesh>(NavSys->GetDefaultNavDataInstance(FNavigationSystem::DontCreate));
+	UE_LOG(LogLambda, Display, TEXT("nav_test: navmesh %s, %d tiles with data (pool %d)"),
+		Recast && Recast->HasValidNavmesh() ? TEXT("valid") : TEXT("MISSING"),
+		Recast ? Recast->GetNumActiveTiles() : 0,
+		Recast ? Recast->GetNavMeshTilesCount() : 0);
+
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+	int32 Count = 0;
+	for (TActorIterator<ASourceNPCBase> It(World); It; ++It)
+	{
+		const FVector Goal = It->GetActorLocation();
+		const float Straight = FVector::Dist(Pawn->GetActorLocation(), Goal);
+		// Queried as the NPC, not as the player: the navmesh is built for the NPC's agent size, and a query
+		// carries the querier's own size with it. This is the same call NavigateTo makes.
+		UNavigationPath* Path = NavSys->FindPathToLocationSynchronously(World, Goal, Pawn->GetActorLocation(), *It);
+		if (!Path || !Path->IsValid())
+		{
+			UE_LOG(LogLambda, Display, TEXT("  %s at %.0fu: NO ROUTE from it to the player"), *It->GetClassName(), Straight / Scale);
+		}
+		else
+		{
+			// A route longer than the straight line is a route around something.
+			float Along = 0.0f;
+			for (int32 i = 1; i < Path->PathPoints.Num(); ++i)
+			{
+				Along += FVector::Dist(Path->PathPoints[i - 1], Path->PathPoints[i]);
+			}
+			UE_LOG(LogLambda, Display, TEXT("  %s at %.0fu: %d corners, %.0fu along the route vs %.0fu straight%s%s"),
+				*It->GetClassName(), Straight / Scale, Path->PathPoints.Num(), Along / Scale, Straight / Scale,
+				Path->IsPartial() ? TEXT(" (partial)") : TEXT(""),
+				Along > Straight * 1.1f ? TEXT("  <- goes around something") : TEXT(""));
+		}
+		++Count;
+	}
+	if (Count == 0)
+	{
+		UE_LOG(LogLambda, Display, TEXT("  no NPCs in the map to path to"));
+	}
+}
+
+static FAutoConsoleCommandWithWorldAndArgs GLambdaNavTestCommand(
+	TEXT("nav_test"),
+	TEXT("Report the navmesh and a route from every NPC to the player: nav_test [delay_seconds]"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaNavTestCommand));
 
 static void LambdaMapsCommand(const TArray<FString>& Args, UWorld* World)
 {
@@ -215,7 +291,7 @@ static void LambdaMapsCommand(const TArray<FString>& Args, UWorld* World)
 }
 
 static FAutoConsoleCommandWithWorldAndArgs GLambdaMapsCommand(
-	TEXT("lambda.maps"),
+	TEXT("maps"),
 	TEXT("List the BSP maps available in the game directories"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaMapsCommand));
 
@@ -224,7 +300,7 @@ static void LambdaSetPosCommand(const TArray<FString>& Args, UWorld* World)
 {
 	if (!World || Args.Num() < 3)
 	{
-		UE_LOG(LogLambda, Display, TEXT("Usage: lambda.setpos <x> <y> <z>   (Hammer units)"));
+		UE_LOG(LogLambda, Display, TEXT("Usage: setpos <x> <y> <z>   (Hammer units)"));
 		return;
 	}
 	APlayerController* PC = World->GetFirstPlayerController();
@@ -241,15 +317,15 @@ static void LambdaSetPosCommand(const TArray<FString>& Args, UWorld* World)
 }
 
 static FAutoConsoleCommandWithWorldAndArgs GLambdaSetPosCommand(
-	TEXT("lambda.setpos"),
-	TEXT("Teleport the player to a position in Hammer units: lambda.setpos <x> <y> <z>"),
+	TEXT("setpos"),
+	TEXT("Teleport the player to a position in Hammer units: setpos <x> <y> <z>"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaSetPosCommand));
 
 static void LambdaSetAngCommand(const TArray<FString>& Args, UWorld* World)
 {
 	if (!World || Args.Num() < 2)
 	{
-		UE_LOG(LogLambda, Display, TEXT("Usage: lambda.setang <pitch> <yaw> [roll]   (Source angles)"));
+		UE_LOG(LogLambda, Display, TEXT("Usage: setang <pitch> <yaw> [roll]   (Source angles)"));
 		return;
 	}
 	APlayerController* PC = World->GetFirstPlayerController();
@@ -263,16 +339,16 @@ static void LambdaSetAngCommand(const TArray<FString>& Args, UWorld* World)
 }
 
 static FAutoConsoleCommandWithWorldAndArgs GLambdaSetAngCommand(
-	TEXT("lambda.setang"),
+	TEXT("setang"),
 	TEXT("Set the player's view angles in Source (pitch yaw roll) degrees"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaSetAngCommand));
 
-// Source's ent_fire: lambda.ent_fire <targetname> <input> [parameter]
+// Source's ent_fire: ent_fire <targetname> <input> [parameter]
 static void LambdaEntFireCommand(const TArray<FString>& Args, UWorld* World)
 {
 	if (!World || Args.Num() < 2)
 	{
-		UE_LOG(LogLambda, Display, TEXT("Usage: lambda.ent_fire <targetname> <input> [parameter]"));
+		UE_LOG(LogLambda, Display, TEXT("Usage: ent_fire <targetname> <input> [parameter]"));
 		return;
 	}
 	for (TActorIterator<ASourceBSPWorldActor> It(World); It; ++It)
@@ -287,16 +363,16 @@ static void LambdaEntFireCommand(const TArray<FString>& Args, UWorld* World)
 }
 
 static FAutoConsoleCommandWithWorldAndArgs GLambdaEntFireCommand(
-	TEXT("lambda.ent_fire"),
-	TEXT("Fire an input on an entity by targetname: lambda.ent_fire <targetname> <input> [parameter]"),
+	TEXT("ent_fire"),
+	TEXT("Fire an input on an entity by targetname: ent_fire <targetname> <input> [parameter]"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaEntFireCommand));
 
-// Source's give: lambda.give weapon_pistol
+// Source's give: give weapon_pistol
 static void LambdaGiveCommand(const TArray<FString>& Args, UWorld* World)
 {
 	if (!World || Args.Num() < 1)
 	{
-		UE_LOG(LogLambda, Display, TEXT("Usage: lambda.give <weapon_classname>"));
+		UE_LOG(LogLambda, Display, TEXT("Usage: give <weapon_classname>"));
 		return;
 	}
 	APlayerController* PC = World->GetFirstPlayerController();
@@ -312,16 +388,16 @@ static void LambdaGiveCommand(const TArray<FString>& Args, UWorld* World)
 }
 
 static FAutoConsoleCommandWithWorldAndArgs GLambdaGiveCommand(
-	TEXT("lambda.give"),
-	TEXT("Give the player a weapon by classname: lambda.give weapon_pistol"),
+	TEXT("give"),
+	TEXT("Give the player a weapon by classname: give weapon_pistol"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaGiveCommand));
 
-// lambda.giveammo <type> <count>
+// giveammo <type> <count>
 static void LambdaGiveAmmoCommand(const TArray<FString>& Args, UWorld* World)
 {
 	if (!World || Args.Num() < 2)
 	{
-		UE_LOG(LogLambda, Display, TEXT("Usage: lambda.giveammo <ammotype> <count>   e.g. lambda.giveammo Pistol 50"));
+		UE_LOG(LogLambda, Display, TEXT("Usage: giveammo <ammotype> <count>   e.g. giveammo Pistol 50"));
 		return;
 	}
 	APlayerController* PC = World->GetFirstPlayerController();
@@ -335,16 +411,16 @@ static void LambdaGiveAmmoCommand(const TArray<FString>& Args, UWorld* World)
 }
 
 static FAutoConsoleCommandWithWorldAndArgs GLambdaGiveAmmoCommand(
-	TEXT("lambda.giveammo"),
-	TEXT("Give the player ammo: lambda.giveammo <ammotype> <count>"),
+	TEXT("giveammo"),
+	TEXT("Give the player ammo: giveammo <ammotype> <count>"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaGiveAmmoCommand));
 
-// lambda.viewmodel <models/path.mdl> - load any Source model as the view model, for checking MDL support
+// viewmodel <models/path.mdl> - load any Source model as the view model, for checking MDL support
 static void LambdaViewModelCommand(const TArray<FString>& Args, UWorld* World)
 {
 	if (!World || Args.Num() < 1)
 	{
-		UE_LOG(LogLambda, Display, TEXT("Usage: lambda.viewmodel <models/weapons/v_pistol.mdl>"));
+		UE_LOG(LogLambda, Display, TEXT("Usage: viewmodel <models/weapons/v_pistol.mdl>"));
 		return;
 	}
 	APlayerController* PC = World->GetFirstPlayerController();
@@ -356,11 +432,11 @@ static void LambdaViewModelCommand(const TArray<FString>& Args, UWorld* World)
 }
 
 static FAutoConsoleCommandWithWorldAndArgs GLambdaViewModelCommand(
-	TEXT("lambda.viewmodel"),
+	TEXT("viewmodel"),
 	TEXT("Load a Source .mdl as the first-person view model"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaViewModelCommand));
 
-// lambda.surfaceinfo [surfaceprop ...] - show how each surface resolves to a game material and impact decal,
+// surfaceinfo [surfaceprop ...] - show how each surface resolves to a game material and impact decal,
 // the chain GetImpactDecal walks (VMT $surfaceprop -> surfaceproperties gamematerial -> decals_subrect group).
 static void LambdaSurfaceInfoCommand(const TArray<FString>& Args, UWorld* World)
 {
@@ -391,12 +467,12 @@ static void LambdaSurfaceInfoCommand(const TArray<FString>& Args, UWorld* World)
 	}
 }
 
-// lambda.npc_create <classname> - Source's npc_create: spawn an NPC where the player is looking
+// npc_create <classname> - Source's npc_create: spawn an NPC where the player is looking
 static void LambdaNPCCreateCommand(const TArray<FString>& Args, UWorld* World)
 {
 	if (!World || Args.Num() < 1)
 	{
-		UE_LOG(LogLambda, Display, TEXT("Usage: lambda.npc_create <npc_headcrab>"));
+		UE_LOG(LogLambda, Display, TEXT("Usage: npc_create <npc_headcrab>"));
 		return;
 	}
 	APlayerController* PC = World->GetFirstPlayerController();
@@ -406,7 +482,7 @@ static void LambdaNPCCreateCommand(const TArray<FString>& Args, UWorld* World)
 	}
 }
 
-// lambda.prop_list - what physics props exist and where they ended up (Source's ent_dump, cut down)
+// prop_list - what physics props exist and where they ended up (Source's ent_dump, cut down)
 static void LambdaPropListCommand(const TArray<FString>& Args, UWorld* World)
 {
 	if (!World)
@@ -426,16 +502,16 @@ static void LambdaPropListCommand(const TArray<FString>& Args, UWorld* World)
 }
 
 static FAutoConsoleCommandWithWorldAndArgs GLambdaPropListCommand(
-	TEXT("lambda.prop_list"),
+	TEXT("prop_list"),
 	TEXT("List the physics props in the world and where they are"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaPropListCommand));
 
-// lambda.prop_create <model> - Source's prop_physics_create
+// prop_create <model> - Source's prop_physics_create
 static void LambdaPropCreateCommand(const TArray<FString>& Args, UWorld* World)
 {
 	if (!World || Args.Num() < 1)
 	{
-		UE_LOG(LogLambda, Display, TEXT("Usage: lambda.prop_create <models/props_junk/wood_crate001a.mdl>"));
+		UE_LOG(LogLambda, Display, TEXT("Usage: prop_create <models/props_junk/wood_crate001a.mdl>"));
 		return;
 	}
 	APlayerController* PC = World->GetFirstPlayerController();
@@ -446,16 +522,16 @@ static void LambdaPropCreateCommand(const TArray<FString>& Args, UWorld* World)
 }
 
 static FAutoConsoleCommandWithWorldAndArgs GLambdaPropCreateCommand(
-	TEXT("lambda.prop_create"),
+	TEXT("prop_create"),
 	TEXT("Drop a physics prop of that model where the player is looking (Source's prop_physics_create)"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaPropCreateCommand));
 
 static FAutoConsoleCommandWithWorldAndArgs GLambdaNPCCreateCommand(
-	TEXT("lambda.npc_create"),
+	TEXT("npc_create"),
 	TEXT("Spawn an NPC by classname where the player is looking (Source's npc_create)"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaNPCCreateCommand));
 
-// lambda.decaltest [distance_cm] [angle_deg] - stamp test impact decals ahead and jump to a fixed viewpoint
+// decaltest [distance_cm] [angle_deg] - stamp test impact decals ahead and jump to a fixed viewpoint
 static void LambdaDecalTestCommand(const TArray<FString>& Args, UWorld* World)
 {
 	APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
@@ -468,12 +544,12 @@ static void LambdaDecalTestCommand(const TArray<FString>& Args, UWorld* World)
 }
 
 static FAutoConsoleCommandWithWorldAndArgs GLambdaDecalTestCommand(
-	TEXT("lambda.decaltest"),
+	TEXT("decaltest"),
 	TEXT("Stamp a row of impact decals on the wall ahead and view them from <distance_cm> at <angle_deg>"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaDecalTestCommand));
 
 static FAutoConsoleCommandWithWorldAndArgs GLambdaSurfaceInfoCommand(
-	TEXT("lambda.surfaceinfo"),
+	TEXT("surfaceinfo"),
 	TEXT("Show the surfaceprop -> game material -> impact decal chain for one or more surfaces"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaSurfaceInfoCommand));
 

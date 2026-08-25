@@ -9,7 +9,6 @@
 #include "FileSystem/LambdaFileSystem.h"
 #include "Core/LambdaLoadProgress.h"
 #include "NavigationSystem.h"
-#include "NavMesh/RecastNavMesh.h"
 #include "Rendering/SourceSkeletalMesh.h"
 #include "Materials/LambdaMaterialLibrary.h"
 #include "Core/LambdaSourceModule.h"
@@ -860,23 +859,6 @@ void ASourceBSPWorldActor::Tick(float DeltaSeconds)
 	{
 		RegisterPlayerAsNavInvoker();
 	}
-	// Generation runs in the background after the invoker registers, so what came of it is worth saying once.
-	if (bPlayerRegisteredAsInvoker && !bReportedNavTiles)
-	{
-		NavReportCountdown -= DeltaSeconds;
-		if (NavReportCountdown <= 0.0f)
-		{
-			bReportedNavTiles = true;
-			UNavigationSystemV1* NavSys = FNavigationSystem::GetCurrent<UNavigationSystemV1>(GetWorld());
-			ARecastNavMesh* Recast = NavSys ? Cast<ARecastNavMesh>(NavSys->GetDefaultNavDataInstance(FNavigationSystem::DontCreate)) : nullptr;
-			ANavigationData* AnyData = NavSys ? NavSys->GetDefaultNavDataInstance(FNavigationSystem::DontCreate) : nullptr;
-			UE_LOG(LogLambdaSource, Log, TEXT("Navigation: nav data %s (%s), %d tiles, navmesh %s"),
-				AnyData ? *AnyData->GetName() : TEXT("none"),
-				AnyData ? *AnyData->GetClass()->GetName() : TEXT("-"),
-				Recast ? Recast->GetNavMeshTilesCount() : -1,
-				Recast ? (Recast->HasValidNavmesh() ? TEXT("valid") : TEXT("EMPTY")) : TEXT("not a recast mesh"));
-		}
-	}
 
 	if (EventQueue.Num() == 0)
 	{
@@ -942,6 +924,31 @@ void ASourceBSPWorldActor::BuildNavigation()
 
 	bNavigationReady = true;
 	RegisterPlayerAsNavInvoker();
+
+	// The whole map is navigable. Without this the system looks for a NavMeshBoundsVolume to decide where it is
+	// allowed to build, finds none - our world is made after the level loaded, and nobody placed a volume in it -
+	// and declines to build anything at all (UNavigationSystemV1::IsThereAnywhereToBuildNavigation). Saying so
+	// outright is the truthful answer for an engine whose level *is* the map.
+	NavSys->bWholeWorldNavigable = true;
+
+	// The world mesh entered the navigation octree when the actor was created, which was before it had any
+	// geometry in it - the octree took it, saw empty bounds and threw it away. It has to be offered again now
+	// that it is a map, or navigation would be generated over everything in the level except the level.
+	if (WorldMesh)
+	{
+		FNavigationSystem::UpdateComponentData(*WorldMesh);
+	}
+	for (const TObjectPtr<AActor>& Actor : SpawnedActors)
+	{
+		if (IsValid(Actor))
+		{
+			FNavigationSystem::UpdateActorAndComponentData(*Actor);
+		}
+	}
+
+	// Nothing was navigable when the world was initialised, so the system has not looked at this map yet. Build()
+	// is what spawns any missing navigation data, registers it and starts generating.
+	NavSys->Build();
 }
 
 void ASourceBSPWorldActor::RegisterPlayerAsNavInvoker()

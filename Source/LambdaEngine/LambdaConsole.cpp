@@ -163,7 +163,7 @@ void ULambdaConsole::Execute(const FString& CommandLine)
 		return;
 	}
 
-	// Anything else is handed to the engine's own console, which is where every lambda.* command already lives.
+	// Anything else is handed to the engine's own console, which is where every * command already lives.
 	if (World && GEngine && GEngine->Exec(World, *CommandLine))
 	{
 		return;
@@ -189,7 +189,7 @@ static void LambdaConsoleToggle(const TArray<FString>& Args, UWorld* World)
 }
 
 static FAutoConsoleCommandWithWorldAndArgs GLambdaConsoleToggle(
-	TEXT("lambda.console"),
+	TEXT("console"),
 	TEXT("Open or close the developer console"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaConsoleToggle));
 
@@ -217,6 +217,6 @@ static void LambdaConsoleExec(const TArray<FString>& Args, UWorld* World)
 }
 
 static FAutoConsoleCommandWithWorldAndArgs GLambdaConsoleExec(
-	TEXT("lambda.console.exec"),
-	TEXT("Type a line into the developer console and submit it: lambda.console.exec map startup"),
+	TEXT("console.exec"),
+	TEXT("Type a line into the developer console and submit it: console.exec map startup"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaConsoleExec));

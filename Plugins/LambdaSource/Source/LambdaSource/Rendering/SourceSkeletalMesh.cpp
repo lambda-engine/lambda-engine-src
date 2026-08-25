@@ -320,13 +320,13 @@ USkeletalMesh* FSourceSkeletalMesh::Build(const FSourceMDLFile& Model, ULambdaMa
 }
 
 // ---------------------------------------------------------------------------------------------------------
-// lambda.skeltest <model> - builds a skeletal mesh for a model and stands it in front of the player in its
+// skeltest <model> - builds a skeletal mesh for a model and stands it in front of the player in its
 // bind pose, to check the conversion before anything depends on it.
 static void LambdaSkelTestCommand(const TArray<FString>& Args, UWorld* World)
 {
 	if (!World || Args.Num() < 1)
 	{
-		UE_LOG(LogLambdaSource, Display, TEXT("Usage: lambda.skeltest <models/creatures/npc_headcrab/npc_headcrab.mdl>"));
+		UE_LOG(LogLambdaSource, Display, TEXT("Usage: skeltest <models/creatures/npc_headcrab/npc_headcrab.mdl>"));
 		return;
 	}
 	APlayerController* PC = World->GetFirstPlayerController();
@@ -377,6 +377,6 @@ static void LambdaSkelTestCommand(const TArray<FString>& Args, UWorld* World)
 }
 
 static FAutoConsoleCommandWithWorldAndArgs GLambdaSkelTestCommand(
-	TEXT("lambda.skeltest"),
+	TEXT("skeltest"),
 	TEXT("Build a GPU-skinned mesh for a Source model and stand it in front of the player"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaSkelTestCommand));

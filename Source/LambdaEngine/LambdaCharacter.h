@@ -187,7 +187,7 @@ protected:
 	float MuzzleFlashLightRadius = 0.0f;
 	float AutoCommandTimer = 0.0f;
 	bool bAutoCommandsRun = false;
-	// lambda.fire.auto state
+	// fire.auto state
 	int32 AutoFireShotsLeft = 0;
 	int32 AutoFireShotTaken = 0;
 	float AutoFireInterval = 0.6f;
@@ -195,7 +195,7 @@ protected:
 	float AutoFireScreenshotTimer = 0.0f;
 	float AutoFireFinalTimer = 0.0f;
 	bool AutoFirePulse = false;
-	/** lambda.firehold.auto: how much longer to keep the trigger down, and how long until it goes down. */
+	/** firehold.auto: how much longer to keep the trigger down, and how long until it goes down. */
 	float AutoFireHoldLeft = 0.0f;
 	float AutoFireHoldDelay = 0.0f;
 	bool bAutoFireHolding = false;
@@ -205,11 +205,11 @@ protected:
 	TWeakObjectPtr<class ASourcePropPhysics> CarriedProp;
 	FRotator CarriedPropRelativeRotation = FRotator::ZeroRotator;
 
-	/** lambda.propcarry.auto state: seconds until the prop is grabbed, and until it is thrown. */
+	/** propcarry.auto state: seconds until the prop is grabbed, and until it is thrown. */
 	float AutoCarryGrabTimer = -1.0f;
 	float AutoCarryThrowTimer = -1.0f;
 	float AutoCarryLookPitch = 0.0f;
-	/** lambda.pitchsweep.auto state. */
+	/** pitchsweep.auto state. */
 	float SweepFromPitch = 0.0f;
 	float SweepToPitch = 0.0f;
 	float SweepSeconds = 0.0f;
@@ -221,10 +221,10 @@ protected:
 	float AutoSpawnDelay = 0.0f;
 	FString PendingNPCCreate;
 	FString PendingPropCreate;
-	/** lambda.slot.auto state. */
+	/** slot.auto state. */
 	int32 AutoSlotBucket = 0;
 	float AutoSlotDelay = 0.0f;
-	/** lambda.walk.auto state. */
+	/** walk.auto state. */
 	float AutoWalkSeconds = 0.0f;
 	float AutoWalkDelay = 0.0f;
 	float DecalTestScreenshotTimer = 0.0f;

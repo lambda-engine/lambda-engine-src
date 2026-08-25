@@ -133,8 +133,6 @@ private:
 	void RegisterPlayerAsNavInvoker();
 	bool bNavigationReady = false;
 	bool bPlayerRegisteredAsInvoker = false;
-	bool bReportedNavTiles = false;
-	float NavReportCountdown = 3.0f;
 
 	/** How far around an invoker navigation is generated, and the distance at which it is dropped again. */
 	static constexpr float NavInvokerGenerationRadius = 6000.0f;	// cm

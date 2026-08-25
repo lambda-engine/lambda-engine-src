@@ -19,7 +19,7 @@ ALambdaGameMode::ALambdaGameMode()
 
 FString ALambdaGameMode::ResolveRequestedMapName(const FString& Options)
 {
-	// ?map=<name> as a travel URL option (used by the lambda.map console command / OpenLevel).
+	// ?map=<name> as a travel URL option (used by the map console command / OpenLevel).
 	FString Name = UGameplayStatics::ParseOption(Options, TEXT("map"));
 	// -sourcemap=<name> on the command line. NB: we deliberately do NOT use "-map=", because the engine's own
 	// launcher consumes that as the startup level URL and would try to load a UE package of that name.

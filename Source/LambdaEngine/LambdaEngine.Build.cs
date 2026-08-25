@@ -16,7 +16,9 @@ public class LambdaEngine : ModuleRules
 			"EngineSettings",
 			// The view model is a procedural mesh built from a Source .mdl at runtime.
 			"ProceduralMeshComponent",
-			"LambdaSource"
+			"LambdaSource",
+			// nav_test reports on the navmesh the NPCs walk.
+			"NavigationSystem"
 		});
 
 		// SlateCore: the runtime font face the HUD builds from the scheme's own .ttf (FFontFaceData/FFontData).

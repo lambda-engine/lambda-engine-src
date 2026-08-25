@@ -661,13 +661,13 @@ bool ULambdaMaterialLibrary::LoadDecalSubrect(const FString& NormalizedName, FSo
 // zero either at runtime is how a bad-looking decal is traced to one or the other.
 static float GDecalDepth = 1.0f;
 static FAutoConsoleVariableRef CVarDecalDepth(
-	TEXT("lambda.decal.depth"),
+	TEXT("decal.depth"),
 	GDecalDepth,
 	TEXT("DecalDepth parameter on new impact decals (0 = flat Source-style decal)"));
 
 static float GDecalNormalStrength = 3.0f;
 static FAutoConsoleVariableRef CVarDecalNormalStrength(
-	TEXT("lambda.decal.normalstrength"),
+	TEXT("decal.normalstrength"),
 	GDecalNormalStrength,
 	TEXT("NormalStrength parameter on new impact decals (0 = no normal perturbation)"));
 
@@ -676,13 +676,13 @@ static FAutoConsoleVariableRef CVarDecalNormalStrength(
 // the other handedness, which shades a crater as a bump.
 static float GDecalHeightScaleMultiplier = 1.0f;
 static FAutoConsoleVariableRef CVarDecalHeightScaleMultiplier(
-	TEXT("lambda.decal.heightscale"),
+	TEXT("decal.heightscale"),
 	GDecalHeightScaleMultiplier,
 	TEXT("Multiplier on an authored decal's $heightmapscale (its parallax depth)"));
 
 static float GDecalFlipGreen = 0.0f;
 static FAutoConsoleVariableRef CVarDecalFlipGreen(
-	TEXT("lambda.decal.flipgreen"),
+	TEXT("decal.flipgreen"),
 	GDecalFlipGreen,
 	TEXT("1 = flip the green channel of authored decal normal maps"));
 

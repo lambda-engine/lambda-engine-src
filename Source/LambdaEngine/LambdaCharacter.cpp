@@ -45,78 +45,78 @@ void ALambdaCharacterAddPickupHistory(TArray<ALambdaCharacter::FPickupEvent>& Hi
 #include "Components/PointLightComponent.h"
 #include "Engine/World.h"
 
-// lambda.npc_create.auto <classname> spawns that NPC ahead of the player 2s after spawn, for scripted launches.
+// npc_create.auto <classname> spawns that NPC ahead of the player 2s after spawn, for scripted launches.
 static FString GNPCCreateAuto;
 static FAutoConsoleVariableRef CVarNPCCreateAuto(
-	TEXT("lambda.npc_create.auto"),
+	TEXT("npc_create.auto"),
 	GNPCCreateAuto,
 	TEXT("<classname>: npc_create it where the player looks, 2s after spawn"));
 
-// lambda.decaltest.auto "<distance_cm> <angle_deg>" runs RunDecalTest shortly after spawn, so a scripted launch can
+// decaltest.auto "<distance_cm> <angle_deg>" runs RunDecalTest shortly after spawn, so a scripted launch can
 // frame decals identically every time (-ExecCmds runs before the pawn exists, hence the cvar + timer).
 static FString GDecalTestAuto;
 static FAutoConsoleVariableRef CVarDecalTestAuto(
-	TEXT("lambda.decaltest.auto"),
+	TEXT("decaltest.auto"),
 	GDecalTestAuto,
 	TEXT("\"<distance_cm> <angle_deg>\": stamp test impact decals and move to that viewpoint 2s after spawn"));
 
-// lambda.fire.auto "<shots> [interval_s] [start_delay_s]" pulls the trigger from Tick, so a scripted launch can shoot
+// fire.auto "<shots> [interval_s] [start_delay_s]" pulls the trigger from Tick, so a scripted launch can shoot
 // without injecting input (which needs the game window in the foreground). A screenshot is taken after each shot.
-// lambda.setpos.auto "<x> <y> <z>" teleports the player to a Source-space position shortly after spawn, the way
+// setpos.auto "<x> <y> <z>" teleports the player to a Source-space position shortly after spawn, the way
 // Source's setpos does, so a scripted run can start somewhere other than info_player_start.
 static FString GSetPosAuto;
 static FAutoConsoleVariableRef CVarSetPosAuto(
-	TEXT("lambda.setpos.auto"),
+	TEXT("setpos.auto"),
 	GSetPosAuto,
 	TEXT("\"<x> <y> <z> [yaw] [pitch]\": move the player to that Source-space position 2s after spawn"));
 
-// lambda.prop_create.auto "<model> [distance_cm]" drops a physics prop in front of the player after spawn.
+// prop_create.auto "<model> [distance_cm]" drops a physics prop in front of the player after spawn.
 static FString GPropCreateAuto;
 static FAutoConsoleVariableRef CVarPropCreateAuto(
-	TEXT("lambda.prop_create.auto"),
+	TEXT("prop_create.auto"),
 	GPropCreateAuto,
 	TEXT("\"<model> [distance_cm]\": prop_physics_create where the player looks, 2s after spawn"));
 
-// lambda.propcarry.auto "<grab_delay_s> [throw_delay_s]" exercises the +USE carry without injecting input.
-// lambda.walk.auto "<seconds> [delay_s]" walks the player forward, for testing what he bumps into.
-// lambda.pitchsweep.auto "<from> <to> <seconds> [delay_s]" sweeps the view up or down, Source pitch (+ is down).
+// propcarry.auto "<grab_delay_s> [throw_delay_s]" exercises the +USE carry without injecting input.
+// walk.auto "<seconds> [delay_s]" walks the player forward, for testing what he bumps into.
+// pitchsweep.auto "<from> <to> <seconds> [delay_s]" sweeps the view up or down, Source pitch (+ is down).
 static FString GPitchSweepAuto;
 static FAutoConsoleVariableRef CVarPitchSweepAuto(
-	TEXT("lambda.pitchsweep.auto"),
+	TEXT("pitchsweep.auto"),
 	GPitchSweepAuto,
 	TEXT("\"<from> <to> <seconds> [delay_s]\": sweep the view pitch"));
 
-// lambda.slot.auto "<bucket> [delay_s]" selects that weapon slot and confirms it, as the number keys would.
+// slot.auto "<bucket> [delay_s]" selects that weapon slot and confirms it, as the number keys would.
 static FString GSlotAuto;
 static FAutoConsoleVariableRef CVarSlotAuto(
-	TEXT("lambda.slot.auto"),
+	TEXT("slot.auto"),
 	GSlotAuto,
 	TEXT("\"<bucket> [delay_s]\": switch to the first weapon of that bucket"));
 
 static FString GWalkAuto;
 static FAutoConsoleVariableRef CVarWalkAuto(
-	TEXT("lambda.walk.auto"),
+	TEXT("walk.auto"),
 	GWalkAuto,
 	TEXT("\"<seconds> [delay_s]\": walk forward for that long"));
 
 static FString GPropCarryAuto;
 static FAutoConsoleVariableRef CVarPropCarryAuto(
-	TEXT("lambda.propcarry.auto"),
+	TEXT("propcarry.auto"),
 	GPropCarryAuto,
 	TEXT("\"<grab_delay_s> [throw_delay_s]\": pick up the prop ahead, then throw it"));
 
-// lambda.firehold.auto "<seconds> [start_delay_s]" holds the trigger down, which is the only way to see what an
-// automatic weapon does - lambda.fire.auto pulls and releases once per shot, so a machine gun never gets past its
+// firehold.auto "<seconds> [start_delay_s]" holds the trigger down, which is the only way to see what an
+// automatic weapon does - fire.auto pulls and releases once per shot, so a machine gun never gets past its
 // first round of recoil.
 static FString GFireHoldAuto;
 static FAutoConsoleVariableRef CVarFireHoldAuto(
-	TEXT("lambda.firehold.auto"),
+	TEXT("firehold.auto"),
 	GFireHoldAuto,
 	TEXT("\"<seconds> [start_delay_s] [alt]\": hold the trigger down for that long; \"alt\" holds the second one"));
 
 static FString GFireAuto;
 static FAutoConsoleVariableRef CVarFireAuto(
-	TEXT("lambda.fire.auto"),
+	TEXT("fire.auto"),
 	GFireAuto,
 	TEXT("\"<shots> [interval_s] [start_delay_s]\": fire the active weapon that many times from Tick, screenshot each"));
 
@@ -127,7 +127,7 @@ static FAutoConsoleVariableRef CVarFireAuto(
  */
 static bool GLambdaViewModelFirstPerson = true;
 static FAutoConsoleVariableRef CVarLambdaViewModelFirstPerson(
-	TEXT("lambda.viewmodel.firstperson"),
+	TEXT("viewmodel.firstperson"),
 	GLambdaViewModelFirstPerson,
 	TEXT("Draw the view model through UE's first-person primitive path"));
 
@@ -747,7 +747,7 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 		ActiveWeapon->ItemPostFrame();
 	}
 
-	// lambda.pitchsweep.auto: drag the view up or down at a steady rate, as a player would with the mouse.
+	// pitchsweep.auto: drag the view up or down at a steady rate, as a player would with the mouse.
 	if (SweepSeconds > 0.0f)
 	{
 		if (SweepDelay > 0.0f)
@@ -795,7 +795,7 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 		}
 	}
 
-	// lambda.slot.auto: a scripted press of the slot key plus the confirming attack.
+	// slot.auto: a scripted press of the slot key plus the confirming attack.
 	if (AutoSlotDelay > 0.0f)
 	{
 		AutoSlotDelay -= DeltaSeconds;
@@ -809,7 +809,7 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 		}
 	}
 
-	// lambda.walk.auto: walk forward, so what the player bumps into can be tested.
+	// walk.auto: walk forward, so what the player bumps into can be tested.
 	if (AutoWalkSeconds > 0.0f)
 	{
 		if (AutoWalkDelay > 0.0f)
@@ -823,7 +823,7 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 		}
 	}
 
-	// lambda.propcarry.auto: grab the prop ahead, hold it, then throw it.
+	// propcarry.auto: grab the prop ahead, hold it, then throw it.
 	if (AutoCarryGrabTimer > 0.0f)
 	{
 		AutoCarryGrabTimer -= DeltaSeconds;
@@ -831,7 +831,7 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 		{
 			if (GEngine)
 			{
-				GEngine->Exec(GetWorld(), TEXT("lambda.prop_list"));
+				GEngine->Exec(GetWorld(), TEXT("prop_list"));
 			}
 			TogglePropCarry();
 			// Look somewhere once it is in hand: level by default, or wherever the third argument asks for.
@@ -867,7 +867,7 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 
 	UpdateMuzzleFlash();
 
-	// Scripted-launch aids (lambda.npc_create.auto / lambda.decaltest.auto): -ExecCmds applies its cvars *after*
+	// Scripted-launch aids (npc_create.auto / decaltest.auto): -ExecCmds applies its cvars *after*
 	// BeginPlay, so they are read here, once, two seconds into play.
 	if (!bAutoCommandsRun)
 	{
@@ -976,7 +976,7 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 		}
 	}
 
-	// lambda.firehold.auto: the trigger simply stays down, so an automatic weapon runs as it would in the hand.
+	// firehold.auto: the trigger simply stays down, so an automatic weapon runs as it would in the hand.
 	if (AutoFireHoldLeft > 0.0f)
 	{
 		if (AutoFireHoldDelay > 0.0f)
@@ -1004,7 +1004,7 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 		}
 	}
 
-	// lambda.fire.auto: a one-frame trigger pull per shot (the pistol is semi-automatic), screenshot shortly after.
+	// fire.auto: a one-frame trigger pull per shot (the pistol is semi-automatic), screenshot shortly after.
 	if (AutoFireShotsLeft > 0 || AutoFireShotTaken > 0)
 	{
 		AutoFireTimer += DeltaSeconds;
@@ -1015,7 +1015,7 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 		}
 		if (AutoFireShotsLeft > 0 && AutoFireTimer >= 0.0f)
 		{
-			// aim at whatever lambda.npc_create.auto spawned, so the scripted shots land on it - or on its corpse
+			// aim at whatever npc_create.auto spawned, so the scripted shots land on it - or on its corpse
 			if (AutoFireTarget.IsValid() && Controller)
 			{
 				FVector Eye;
@@ -1506,7 +1506,7 @@ void ALambdaCharacter::Input_Quit()
 // inspect. Setting this holds it on screen for that many seconds instead.
 static float GMuzzleFlashHoldTime = 0.0f;
 static FAutoConsoleVariableRef CVarMuzzleFlashHoldTime(
-	TEXT("lambda.muzzleflash.holdtime"),
+	TEXT("muzzleflash.holdtime"),
 	GMuzzleFlashHoldTime,
 	TEXT("Seconds to keep the muzzle flash sprite on screen (0 = Source's 0.01s)"));
 
