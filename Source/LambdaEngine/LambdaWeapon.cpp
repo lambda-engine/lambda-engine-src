@@ -71,6 +71,8 @@ void ALambdaWeapon::WeaponSound(ESourceWeaponSound Sound)
 	{
 	case ESourceWeaponSound::Empty:		Key = TEXT("empty"); break;
 	case ESourceWeaponSound::Single:	Key = TEXT("single_shot"); break;
+	case ESourceWeaponSound::Double:	Key = TEXT("double_shot"); break;
+	case ESourceWeaponSound::Burst:		Key = TEXT("burst"); break;
 	case ESourceWeaponSound::Reload:	Key = TEXT("reload"); break;
 	case ESourceWeaponSound::Special1:	Key = TEXT("special1"); break;
 	case ESourceWeaponSound::Special2:	Key = TEXT("special2"); break;
@@ -111,8 +113,15 @@ bool ALambdaWeapon::SendWeaponAnim(const FString& ActivityName)
 	// CBaseCombatWeapon::SendWeaponAnim -> SetIdealActivity: play the sequence, then set the time at which the
 	// weapon falls back to its idle animation.
 	ALambdaCharacter* WeaponOwner = OwningCharacter.Get();
-	if (!WeaponOwner || !WeaponOwner->SendViewModelAnim(ActivityName))
+	if (!WeaponOwner)
 	{
+		return false;
+	}
+	if (!WeaponOwner->SendViewModelAnim(ActivityName))
+	{
+		// The model has no sequence for that activity. Not fatal - the weapon keeps whatever it was playing -
+		// but it means a weapon is asking for an animation its view model has not got, which is worth saying.
+		UE_LOG(LogLambda, Verbose, TEXT("%s: view model has no activity '%s'"), *WeaponInfo.ClassName, *ActivityName);
 		return false;
 	}
 	SetWeaponIdleTime(GetCurrentTime() + SequenceDuration());
@@ -149,6 +158,8 @@ void ALambdaWeapon::Holster()
 	// Nothing is being held down any more by the time it comes back out.
 	bAttackHeld = false;
 	bAttackPressedThisFrame = false;
+	bAttack2Held = false;
+	bAttack2PressedThisFrame = false;
 	bReloadHeld = false;
 	bInReload = false;
 }
@@ -179,6 +190,17 @@ void ALambdaWeapon::ItemPostFrame()
 	}
 
 	const float Now = GetCurrentTime();
+
+	// m_fFireDuration: how long the trigger has been down. The machine guns read it to work out how far the
+	// view has climbed, so it has to be kept whether or not this weapon cares.
+	if (bAttackHeld)
+	{
+		FireDuration += GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.0f;
+	}
+	else
+	{
+		FireDuration = 0.0f;
+	}
 
 	// Finish a reload that is in flight (Source drives this off the view-model animation).
 	if (bInReload && Now >= ReloadFinishTime)
@@ -215,6 +237,11 @@ void ALambdaWeapon::ItemPostFrame()
 		}
 	}
 
+	if (bAttack2Held && NextSecondaryAttack <= Now)
+	{
+		SecondaryAttack();
+	}
+
 	// Reload pressed
 	if (bReloadHeld && UsesClipsForAmmo1() && !bInReload)
 	{
@@ -222,12 +249,13 @@ void ALambdaWeapon::ItemPostFrame()
 	}
 
 	// No buttons down: let the weapon drift back to its idle animation.
-	if (!bAttackHeld && !bReloadHeld && !bInReload)
+	if (!bAttackHeld && !bAttack2Held && !bReloadHeld && !bInReload)
 	{
 		WeaponIdle();
 	}
 
 	bAttackPressedThisFrame = false;
+	bAttack2PressedThisFrame = false;
 }
 
 void ALambdaWeapon::PrimaryAttack()
@@ -554,4 +582,405 @@ void ALambdaWeaponPistol::ItemPostFrame()
 	{
 		DryFire();
 	}
+}
+
+// =====================================================================================================================
+// weapon_smg1 - CWeaponSMG1 on CHLMachineGun
+// =====================================================================================================================
+
+FVector ALambdaWeaponSMG1::GetBulletSpread() const
+{
+	// VECTOR_CONE_5DEGREES (basecombatweapon_shared.h)
+	return FVector(0.04362f, 0.04362f, 0.04362f);
+}
+
+FString ALambdaWeaponSMG1::GetPrimaryAttackActivity() const
+{
+	// CWeaponSMG1::GetPrimaryAttackActivity: the first shots walk up a ladder of recoil animations so a burst
+	// does not play the same frame over and over.
+	if (NumShotsFired < 2)
+	{
+		return TEXT("ACT_VM_PRIMARYATTACK");
+	}
+	if (NumShotsFired < 3)
+	{
+		return TEXT("ACT_VM_RECOIL1");
+	}
+	if (NumShotsFired < 4)
+	{
+		return TEXT("ACT_VM_RECOIL2");
+	}
+	return TEXT("ACT_VM_RECOIL3");
+}
+
+void ALambdaWeaponSMG1::PrimaryAttack()
+{
+	// CHLMachineGun::PrimaryAttack counts the shot before it picks the animation, which is what makes the ladder
+	// above advance. The firing itself - one shot per fire-rate interval elapsed, so the rate does not depend on
+	// the frame rate - is the base class's.
+	++NumShotsFired;
+	Super::PrimaryAttack();
+	AddViewKick();
+}
+
+void ALambdaWeaponSMG1::AddViewKick()
+{
+	// CHLMachineGun::DoMachineGunKick. The kick grows with how long the trigger has been held rather than with
+	// the number of rounds gone, and stops growing at SLIDE_LIMIT.
+	ALambdaCharacter* WeaponOwner = GetOwningCharacter();
+	if (!WeaponOwner)
+	{
+		return;
+	}
+
+	constexpr float KICK_MIN_X = 0.2f;	// degrees
+	constexpr float KICK_MIN_Y = 0.2f;
+	constexpr float KICK_MIN_Z = 0.1f;
+
+	const float Duration = FMath::Min(FireDuration, SLIDE_LIMIT);
+	const float KickPerc = SLIDE_LIMIT > 0.0f ? Duration / SLIDE_LIMIT : 0.0f;
+
+	FVector Scratch;
+	Scratch.X = -(KICK_MIN_X + (MAX_VERTICAL_KICK * KickPerc));
+	Scratch.Y = -(KICK_MIN_Y + (MAX_VERTICAL_KICK * KickPerc)) / 3.0f;
+	Scratch.Z = KICK_MIN_Z + (MAX_VERTICAL_KICK * KickPerc) / 8.0f;
+
+	// Wibble left and right, wobble up and down.
+	if (FMath::RandRange(-1, 1) >= 0)
+	{
+		Scratch.Y *= -1.0f;
+	}
+	if (FMath::RandRange(-1, 1) >= 0)
+	{
+		Scratch.Z *= -1.0f;
+	}
+
+	// UTIL_ClipPunchAngleOffset holds the total punch inside QAngle(24, 3, 1).
+	// NOTE from the original: the 0.5 is tuned to match the old effect from before the punch was simulated.
+	WeaponOwner->ViewPunch(FRotator(Scratch.X * 0.5f, Scratch.Y * 0.5f, Scratch.Z * 0.5f));
+}
+
+void ALambdaWeaponSMG1::ItemPostFrame()
+{
+	// CHLMachineGun::ItemPostFrame: let go of the trigger and the recoil ladder starts again from the bottom.
+	if (!bAttackHeld)
+	{
+		NumShotsFired = 0;
+	}
+	Super::ItemPostFrame();
+}
+
+// =====================================================================================================================
+// weapon_shotgun - CWeaponShotgun
+// =====================================================================================================================
+
+void ALambdaWeaponShotgun::InitializeFromScript(const FString& InClassName)
+{
+	Super::InitializeFromScript(InClassName);
+	// sk_plr_num_shotgun_pellets / _double (hl2_gamerules.cpp), overridable from skill.cfg like every other one.
+	NumPellets = FMath::RoundToInt(FSourceAmmoDef::Get().GetSkillValue(TEXT("sk_plr_num_shotgun_pellets"), 7.0f));
+	NumPelletsDouble = FMath::RoundToInt(FSourceAmmoDef::Get().GetSkillValue(TEXT("sk_plr_num_shotgun_pellets_double"), 12.0f));
+}
+
+FVector ALambdaWeaponShotgun::GetBulletSpread() const
+{
+	// VECTOR_CONE_10DEGREES (basecombatweapon_shared.h)
+	return FVector(0.08716f, 0.08716f, 0.08716f);
+}
+
+void ALambdaWeaponShotgun::FillClip()
+{
+	ALambdaCharacter* WeaponOwner = GetOwningCharacter();
+	if (!WeaponOwner)
+	{
+		return;
+	}
+	if (WeaponOwner->GetAmmoCount(WeaponInfo.PrimaryAmmo) > 0 && Clip1 < WeaponInfo.ClipSize)
+	{
+		++Clip1;
+		WeaponOwner->RemoveAmmo(WeaponInfo.PrimaryAmmo, 1);
+	}
+}
+
+bool ALambdaWeaponShotgun::StartReload()
+{
+	ALambdaCharacter* WeaponOwner = GetOwningCharacter();
+	if (!WeaponOwner)
+	{
+		return false;
+	}
+	if (WeaponOwner->GetAmmoCount(WeaponInfo.PrimaryAmmo) <= 0 || Clip1 >= WeaponInfo.ClipSize)
+	{
+		return false;
+	}
+
+	// An empty tube has to be pumped once the shells are in before anything will fire.
+	if (Clip1 <= 0)
+	{
+		bNeedPump = true;
+	}
+
+	SendWeaponAnim(TEXT("ACT_SHOTGUN_RELOAD_START"));
+	// Bodygroup 1 is the shell in the loader's hand, shown for as long as the reload runs.
+	if (ALambdaCharacter* ShellOwner = GetOwningCharacter())
+	{
+		if (USourceStudioModelComponent* ViewModel = ShellOwner->GetViewModelMesh())
+		{
+			ViewModel->SetBodygroup(1, 0);
+		}
+	}
+
+	NextPrimaryAttack = GetCurrentTime() + SequenceDuration();
+	bInReload = true;
+	return true;
+}
+
+bool ALambdaWeaponShotgun::Reload()
+{
+	// CWeaponShotgun::Reload: one shell, then back to ItemPostFrame to decide whether to go round again.
+	ALambdaCharacter* WeaponOwner = GetOwningCharacter();
+	if (!WeaponOwner)
+	{
+		return false;
+	}
+	if (WeaponOwner->GetAmmoCount(WeaponInfo.PrimaryAmmo) <= 0 || Clip1 >= WeaponInfo.ClipSize)
+	{
+		return false;
+	}
+
+	FillClip();
+	WeaponSound(ESourceWeaponSound::Reload);
+	SendWeaponAnim(TEXT("ACT_VM_RELOAD"));
+	NextPrimaryAttack = GetCurrentTime() + SequenceDuration();
+	return true;
+}
+
+void ALambdaWeaponShotgun::FinishReload()
+{
+	if (ALambdaCharacter* ShellOwner = GetOwningCharacter())
+	{
+		if (USourceStudioModelComponent* ViewModel = ShellOwner->GetViewModelMesh())
+		{
+			ViewModel->SetBodygroup(1, 1);	// put the loose shell away
+		}
+	}
+	bInReload = false;
+	SendWeaponAnim(TEXT("ACT_SHOTGUN_RELOAD_FINISH"));
+	NextPrimaryAttack = GetCurrentTime() + SequenceDuration();
+}
+
+void ALambdaWeaponShotgun::Pump()
+{
+	bNeedPump = false;
+	WeaponSound(ESourceWeaponSound::Special1);
+	SendWeaponAnim(TEXT("ACT_SHOTGUN_PUMP"));
+	NextPrimaryAttack = GetCurrentTime() + SequenceDuration();
+}
+
+void ALambdaWeaponShotgun::DryFire()
+{
+	WeaponSound(ESourceWeaponSound::Empty);
+	SendWeaponAnim(TEXT("ACT_VM_DRYFIRE"));
+	NextPrimaryAttack = GetCurrentTime() + SequenceDuration();
+}
+
+/** The pellet damage both attacks deal, from the ammo table's sk_plr_dmg_buckshot. */
+static float ShotgunPelletDamage(const FSourceWeaponInfo& Info)
+{
+	if (const FSourceAmmoType* Ammo = FSourceAmmoDef::Get().Find(Info.PrimaryAmmo))
+	{
+		return Ammo->PlayerDamage;
+	}
+	return 0.0f;
+}
+
+void ALambdaWeaponShotgun::PrimaryAttack()
+{
+	ALambdaCharacter* WeaponOwner = GetOwningCharacter();
+	if (!WeaponOwner)
+	{
+		return;
+	}
+
+	// The sound goes before the round comes out of the tube.
+	WeaponSound(ESourceWeaponSound::Single);
+	WeaponOwner->DoMuzzleFlash();
+	SendWeaponAnim(TEXT("ACT_VM_PRIMARYATTACK"));
+
+	// Nothing fires again until the firing animation has run out.
+	NextPrimaryAttack = GetCurrentTime() + SequenceDuration();
+	Clip1 -= 1;
+
+	const float Damage = ShotgunPelletDamage(WeaponInfo);
+	const FVector Spread = GetBulletSpread();
+	for (int32 i = 0; i < NumPellets; ++i)
+	{
+		FireBullet(Damage, Spread);
+	}
+
+	WeaponOwner->ViewPunch(FRotator(FMath::FRandRange(-2.0f, -1.0f), FMath::FRandRange(-2.0f, 2.0f), 0.0f));
+
+	// Pump, so long as there is anything left to chamber.
+	if (Clip1)
+	{
+		bNeedPump = true;
+	}
+}
+
+void ALambdaWeaponShotgun::SecondaryAttack()
+{
+	ALambdaCharacter* WeaponOwner = GetOwningCharacter();
+	if (!WeaponOwner)
+	{
+		return;
+	}
+
+	WeaponSound(ESourceWeaponSound::Double);
+	WeaponOwner->DoMuzzleFlash();
+	SendWeaponAnim(TEXT("ACT_VM_SECONDARYATTACK"));
+
+	NextPrimaryAttack = GetCurrentTime() + SequenceDuration();
+	Clip1 -= 2;	// both barrels come out of the one tube
+
+	const float Damage = ShotgunPelletDamage(WeaponInfo);
+	const FVector Spread = GetBulletSpread();
+	for (int32 i = 0; i < NumPelletsDouble; ++i)
+	{
+		FireBullet(Damage, Spread);
+	}
+
+	WeaponOwner->ViewPunch(FRotator(FMath::FRandRange(-5.0f, 5.0f), 0.0f, 0.0f));
+
+	if (Clip1)
+	{
+		bNeedPump = true;
+	}
+}
+
+void ALambdaWeaponShotgun::ItemPostFrame()
+{
+	// CWeaponShotgun::ItemPostFrame, which the shotgun owns outright rather than sharing with the base: the
+	// reload is a loop it has to be able to break out of, and the pump has to happen between shots.
+	ALambdaCharacter* WeaponOwner = GetOwningCharacter();
+	if (!WeaponOwner || bHolstered)
+	{
+		return;
+	}
+	const float Now = GetCurrentTime();
+
+	if (bInReload)
+	{
+		// One in the tube is enough: pulling the trigger cuts the reload short and fires.
+		if (bAttackHeld && Clip1 >= 1)
+		{
+			bInReload = false;
+			bNeedPump = false;
+			bDelayedFire1 = true;
+		}
+		else if (bAttack2Held && Clip1 >= 2)
+		{
+			bInReload = false;
+			bNeedPump = false;
+			bDelayedFire2 = true;
+		}
+		else if (NextPrimaryAttack <= Now)
+		{
+			if (WeaponOwner->GetAmmoCount(WeaponInfo.PrimaryAmmo) <= 0)
+			{
+				FinishReload();
+				return;
+			}
+			if (Clip1 < WeaponInfo.ClipSize)
+			{
+				Reload();	// round again, one more shell
+				return;
+			}
+			FinishReload();
+			return;
+		}
+	}
+	else if (USourceStudioModelComponent* ViewModel = WeaponOwner->GetViewModelMesh())
+	{
+		ViewModel->SetBodygroup(1, 1);	// no reload running, so no loose shell
+	}
+
+	if (bNeedPump && NextPrimaryAttack <= Now)
+	{
+		Pump();
+		return;
+	}
+
+	// Both barrels shares the primary's timer and the primary's shells.
+	if ((bDelayedFire2 || bAttack2Held) && NextPrimaryAttack <= Now)
+	{
+		bDelayedFire2 = false;
+
+		if (Clip1 <= 1 && UsesClipsForAmmo1())
+		{
+			// One shell left is a single shot, not a double.
+			if (Clip1 == 1)
+			{
+				PrimaryAttack();
+			}
+			else if (!WeaponOwner->GetAmmoCount(WeaponInfo.PrimaryAmmo))
+			{
+				DryFire();
+			}
+			else
+			{
+				StartReload();
+			}
+		}
+		else
+		{
+			if (bAttack2PressedThisFrame)
+			{
+				NextPrimaryAttack = Now;
+			}
+			SecondaryAttack();
+		}
+	}
+	else if ((bDelayedFire1 || bAttackHeld) && NextPrimaryAttack <= Now)
+	{
+		bDelayedFire1 = false;
+		if (Clip1 <= 0 && UsesClipsForAmmo1())
+		{
+			if (!WeaponOwner->GetAmmoCount(WeaponInfo.PrimaryAmmo))
+			{
+				DryFire();
+			}
+			else
+			{
+				StartReload();
+			}
+		}
+		else
+		{
+			if (bAttackPressedThisFrame)
+			{
+				NextPrimaryAttack = Now;
+			}
+			PrimaryAttack();
+		}
+	}
+
+	if (bReloadHeld && UsesClipsForAmmo1() && !bInReload)
+	{
+		StartReload();
+	}
+	else if (!bAttackHeld && !bAttack2Held)
+	{
+		// Nothing held: top the tube up on its own once the firing delay has passed, then idle.
+		if (Clip1 <= 0 && NextPrimaryAttack < Now && StartReload())
+		{
+			return;
+		}
+		if (!bInReload)
+		{
+			WeaponIdle();
+		}
+	}
+
+	bAttackPressedThisFrame = false;
+	bAttack2PressedThisFrame = false;
 }

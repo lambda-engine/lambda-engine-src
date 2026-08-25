@@ -105,6 +105,15 @@ static FAutoConsoleVariableRef CVarPropCarryAuto(
 	GPropCarryAuto,
 	TEXT("\"<grab_delay_s> [throw_delay_s]\": pick up the prop ahead, then throw it"));
 
+// lambda.firehold.auto "<seconds> [start_delay_s]" holds the trigger down, which is the only way to see what an
+// automatic weapon does - lambda.fire.auto pulls and releases once per shot, so a machine gun never gets past its
+// first round of recoil.
+static FString GFireHoldAuto;
+static FAutoConsoleVariableRef CVarFireHoldAuto(
+	TEXT("lambda.firehold.auto"),
+	GFireHoldAuto,
+	TEXT("\"<seconds> [start_delay_s] [alt]\": hold the trigger down for that long; \"alt\" holds the second one"));
+
 static FString GFireAuto;
 static FAutoConsoleVariableRef CVarFireAuto(
 	TEXT("lambda.fire.auto"),
@@ -241,7 +250,11 @@ void ALambdaCharacter::BeginPlay()
 	// are implemented these come from the map instead.
 	GiveWeapon(TEXT("weapon_crowbar"));
 	GiveWeapon(TEXT("weapon_pistol"));
+	GiveWeapon(TEXT("weapon_smg1"));
+	GiveWeapon(TEXT("weapon_shotgun"));
 	GiveAmmo(TEXT("Pistol"), 68);
+	GiveAmmo(TEXT("SMG1"), 135);
+	GiveAmmo(TEXT("Buckshot"), 30);
 
 	FirstPersonCamera->FirstPersonFieldOfView = Settings.ViewModelFOV;
 	FirstPersonCamera->FirstPersonScale = Settings.ViewModelFirstPersonScale;
@@ -276,6 +289,7 @@ void ALambdaCharacter::BuildInputAssets()
 	SprintAction = MakeAction(TEXT("IA_Sprint"), EInputActionValueType::Boolean);
 	UseAction = MakeAction(TEXT("IA_Use"), EInputActionValueType::Boolean);
 	AttackAction = MakeAction(TEXT("IA_Attack"), EInputActionValueType::Boolean);
+	Attack2Action = MakeAction(TEXT("IA_Attack2"), EInputActionValueType::Boolean);
 	ReloadAction = MakeAction(TEXT("IA_Reload"), EInputActionValueType::Boolean);
 	QuitAction = MakeAction(TEXT("IA_Quit"), EInputActionValueType::Boolean);
 
@@ -317,6 +331,7 @@ void ALambdaCharacter::BuildInputAssets()
 	MappingContext->MapKey(SprintAction, EKeys::LeftShift);
 	MappingContext->MapKey(UseAction, EKeys::E);
 	MappingContext->MapKey(AttackAction, EKeys::LeftMouseButton);
+	MappingContext->MapKey(Attack2Action, EKeys::RightMouseButton);
 	MappingContext->MapKey(ReloadAction, EKeys::R);
 	// Escape is not bound here: it belongs to the pause menu, which the viewport client opens with it.
 	// Quitting is what the menu's QUIT does. The action is left in place for anyone who wants to bind one.
@@ -373,6 +388,7 @@ void ALambdaCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 	EIC->BindAction(SprintAction, ETriggerEvent::Completed, this, &ALambdaCharacter::Input_SprintEnd);
 	EIC->BindAction(UseAction, ETriggerEvent::Started, this, &ALambdaCharacter::Input_Use);
 	EIC->BindAction(AttackAction, ETriggerEvent::Started, this, &ALambdaCharacter::Input_AttackStart);
+	EIC->BindAction(Attack2Action, ETriggerEvent::Started, this, &ALambdaCharacter::Input_Attack2Start);
 	EIC->BindAction(SlotActions[0], ETriggerEvent::Started, this, &ALambdaCharacter::Input_Slot1);
 	EIC->BindAction(SlotActions[1], ETriggerEvent::Started, this, &ALambdaCharacter::Input_Slot2);
 	EIC->BindAction(SlotActions[2], ETriggerEvent::Started, this, &ALambdaCharacter::Input_Slot3);
@@ -382,6 +398,7 @@ void ALambdaCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 	EIC->BindAction(InvNextAction, ETriggerEvent::Started, this, &ALambdaCharacter::Input_InvNext);
 	EIC->BindAction(InvPrevAction, ETriggerEvent::Started, this, &ALambdaCharacter::Input_InvPrev);
 	EIC->BindAction(AttackAction, ETriggerEvent::Completed, this, &ALambdaCharacter::Input_AttackStop);
+	EIC->BindAction(Attack2Action, ETriggerEvent::Completed, this, &ALambdaCharacter::Input_Attack2Stop);
 	EIC->BindAction(ReloadAction, ETriggerEvent::Started, this, &ALambdaCharacter::Input_ReloadStart);
 	EIC->BindAction(ReloadAction, ETriggerEvent::Completed, this, &ALambdaCharacter::Input_ReloadStop);
 	EIC->BindAction(QuitAction, ETriggerEvent::Started, this, &ALambdaCharacter::Input_Quit);
@@ -930,6 +947,14 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 				// Source pitch: positive looks down, so the view can be aimed under the horizon for a test.
 				AutoCarryLookPitch = Parts.Num() > 2 ? -FCString::Atof(*Parts[2]) : 0.0f;
 			}
+			if (!GFireHoldAuto.IsEmpty())
+			{
+				TArray<FString> Parts;
+				GFireHoldAuto.ParseIntoArrayWS(Parts);
+				AutoFireHoldLeft = Parts.Num() > 0 ? FCString::Atof(*Parts[0]) : 1.0f;
+				AutoFireHoldDelay = Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : 2.0f;
+				bAutoFireHoldAlt = Parts.Num() > 2 && Parts[2].Equals(TEXT("alt"), ESearchCase::IgnoreCase);
+			}
 			if (!GFireAuto.IsEmpty())
 			{
 				TArray<FString> Parts;
@@ -948,6 +973,34 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 		if (DecalTestScreenshotTimer <= 0.0f)
 		{
 			FScreenshotRequest::RequestScreenshot(TEXT("decaltest.png"), false, false);
+		}
+	}
+
+	// lambda.firehold.auto: the trigger simply stays down, so an automatic weapon runs as it would in the hand.
+	if (AutoFireHoldLeft > 0.0f)
+	{
+		if (AutoFireHoldDelay > 0.0f)
+		{
+			AutoFireHoldDelay -= DeltaSeconds;
+		}
+		else if (ActiveWeapon)
+		{
+			if (!bAutoFireHolding)
+			{
+				bAutoFireHolding = true;
+				(bAutoFireHoldAlt ? ActiveWeapon->bAttack2PressedThisFrame : ActiveWeapon->bAttackPressedThisFrame) = true;
+				UE_LOG(LogLambda, Display, TEXT("firehold.auto: %s trigger down for %.2fs"),
+					bAutoFireHoldAlt ? TEXT("second") : TEXT("first"), AutoFireHoldLeft);
+			}
+			(bAutoFireHoldAlt ? ActiveWeapon->bAttack2Held : ActiveWeapon->bAttackHeld) = true;
+			AutoFireHoldLeft -= DeltaSeconds;
+			if (AutoFireHoldLeft <= 0.0f)
+			{
+				ActiveWeapon->bAttackHeld = false;
+				ActiveWeapon->bAttack2Held = false;
+				bAutoFireHolding = false;
+				UE_LOG(LogLambda, Display, TEXT("firehold.auto: trigger released, clip %d"), ActiveWeapon->GetClip1());
+			}
 		}
 	}
 
@@ -1192,6 +1245,14 @@ ALambdaWeapon* ALambdaCharacter::GiveWeapon(const FString& WeaponClassName)
 	{
 		WeaponClass = ALambdaWeaponCrowbar::StaticClass();
 	}
+	else if (WeaponClassName.Equals(TEXT("weapon_smg1"), ESearchCase::IgnoreCase))
+	{
+		WeaponClass = ALambdaWeaponSMG1::StaticClass();
+	}
+	else if (WeaponClassName.Equals(TEXT("weapon_shotgun"), ESearchCase::IgnoreCase))
+	{
+		WeaponClass = ALambdaWeaponShotgun::StaticClass();
+	}
 
 	FActorSpawnParameters Params;
 	Params.Owner = this;
@@ -1366,6 +1427,23 @@ void ALambdaCharacter::RemoveAmmo(const FString& AmmoType, int32 Count)
 	if (int32* Current = AmmoCounts.Find(AmmoType.ToLower()))
 	{
 		*Current = FMath::Max(0, *Current - Count);
+	}
+}
+
+void ALambdaCharacter::Input_Attack2Start()
+{
+	if (ActiveWeapon)
+	{
+		ActiveWeapon->bAttack2Held = true;
+		ActiveWeapon->bAttack2PressedThisFrame = true;
+	}
+}
+
+void ALambdaCharacter::Input_Attack2Stop()
+{
+	if (ActiveWeapon)
+	{
+		ActiveWeapon->bAttack2Held = false;
 	}
 }
 

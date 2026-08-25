@@ -142,6 +142,8 @@ protected:
 	/** Throws the carried prop (player_throwforce, scaled by its mass). Returns false when nothing is carried. */
 	bool ThrowCarriedProp();
 	void Input_AttackStart();
+	void Input_Attack2Start();
+	void Input_Attack2Stop();
 	void Input_AttackStop();
 	void Input_ReloadStart();
 	void Input_ReloadStop();
@@ -193,6 +195,11 @@ protected:
 	float AutoFireScreenshotTimer = 0.0f;
 	float AutoFireFinalTimer = 0.0f;
 	bool AutoFirePulse = false;
+	/** lambda.firehold.auto: how much longer to keep the trigger down, and how long until it goes down. */
+	float AutoFireHoldLeft = 0.0f;
+	float AutoFireHoldDelay = 0.0f;
+	bool bAutoFireHolding = false;
+	bool bAutoFireHoldAlt = false;
 	TWeakObjectPtr<AActor> AutoFireTarget;
 	/** The prop the player is carrying (CPlayerPickupController's grab controller), and how it is held. */
 	TWeakObjectPtr<class ASourcePropPhysics> CarriedProp;
@@ -256,6 +263,10 @@ protected:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UInputAction> AttackAction;
+
+	/** IN_ATTACK2 - the shotgun's both barrels, and whatever else takes a right click. */
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> Attack2Action;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UInputAction> ReloadAction;
