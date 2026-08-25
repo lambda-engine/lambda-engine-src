@@ -69,9 +69,11 @@ namespace
 			BarBackBrush = FSlateColorBrush(GBarBack);
 			BarFillBrush = FSlateColorBrush(GBarFill);
 
-			UFont* Font = FLambdaFonts::GetSchemeFont();
-			const FSlateFontInfo StatusFont = Font ? FSlateFontInfo(Font, 15) : FCoreStyle::GetDefaultFontStyle("Regular", 15);
-			const FSlateFontInfo TitleFont = Font ? FSlateFontInfo(Font, 30) : FCoreStyle::GetDefaultFontStyle("Regular", 30);
+			// The same faces the menu is written in, so the two screens read as one thing.
+			UFont* Status = FLambdaFonts::GetMenuFont();
+			UFont* Title = FLambdaFonts::GetTitleFont();
+			const FSlateFontInfo StatusFont = Status ? FSlateFontInfo(Status, 15) : FCoreStyle::GetDefaultFontStyle("Regular", 15);
+			const FSlateFontInfo TitleFont = Title ? FSlateFontInfo(Title, 30) : FCoreStyle::GetDefaultFontStyle("Regular", 30);
 
 			TSharedRef<SVerticalBox> Column = SNew(SVerticalBox);
 
@@ -96,7 +98,7 @@ namespace
 					SNew(STextBlock)
 					.Text(FText::FromString(GameName.ToUpper()))
 					.Font(TitleFont)
-					.ColorAndOpacity(FSlateColor(GBarFill))
+					.ColorAndOpacity(FSlateColor(FLinearColor::White))
 				];
 			}
 

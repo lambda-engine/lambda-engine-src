@@ -13,9 +13,10 @@
 #include "Kismet/GameplayStatics.h"
 
 // SourceScheme.res again: the menu is written in the same off-white, and whatever the mouse is over goes gold.
+// The game's name is plain white, and stands apart from the items by its face and its size rather than its colour.
 FLinearColor ULambdaMainMenu::ItemColour()     { return FLinearColor(216 / 255.0f, 222 / 255.0f, 211 / 255.0f, 1.0f); }	// BaseText
 FLinearColor ULambdaMainMenu::SelectedColour() { return FLinearColor(196 / 255.0f, 181 / 255.0f,  80 / 255.0f, 1.0f); }	// BrightControlText
-FLinearColor ULambdaMainMenu::TitleColour()    { return FLinearColor(1.0f, 176 / 255.0f, 0.0f, 1.0f); }
+FLinearColor ULambdaMainMenu::TitleColour()    { return FLinearColor::White; }
 
 void ULambdaMainMenu::Initialize(FSubsystemCollectionBase& Collection)
 {

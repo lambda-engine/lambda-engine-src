@@ -206,12 +206,19 @@ void ALambdaHUD::DrawMainMenu(ULambdaMainMenu* Menu, float W, float H)
 	// The mod's own name, from gameinfo.txt's "game" key - what Source titles a mod with everywhere else.
 	const FString GameName = FLambdaFileSystem::Get().GetGameName();
 	const float TitleHeight = 44.0f * Scale;
+	UFont* TitleFont = FLambdaFonts::GetTitleFont();
 	DrawTextAtHeight(GameName.IsEmpty() ? TEXT("LAMBDA ENGINE") : GameName.ToUpper(),
-		ULambdaMainMenu::TitleColour(), 32.0f * Scale, 48.0f * Scale, MenuFont, TitleHeight);
+		ULambdaMainMenu::TitleColour(), 32.0f * Scale, 48.0f * Scale,
+		TitleFont ? TitleFont : MenuFont, TitleHeight);
 
 	// The items, down the bottom left, the way the old menu reads.
 	const float ItemHeight = 22.0f * Scale;
 	const float TextHeight = ItemHeight * 0.8f;
+	UFont* ItemFont = FLambdaFonts::GetMenuFont();
+	if (!ItemFont)
+	{
+		ItemFont = MenuFont;
+	}
 	TArray<FLambdaMenuItem>& Items = Menu->GetMutableItems();
 	float Y = H - 40.0f * Scale - Items.Num() * ItemHeight;
 
@@ -219,7 +226,7 @@ void ALambdaHUD::DrawMainMenu(ULambdaMainMenu* Menu, float W, float H)
 	{
 		const bool bSelected = (i == Menu->GetSelected());
 		const float X = 32.0f * Scale;
-		const FVector2D Size = MeasureTextAtHeight(Items[i].Label, MenuFont, TextHeight);
+		const FVector2D Size = MeasureTextAtHeight(Items[i].Label, ItemFont, TextHeight);
 
 		// Remember where it went, so the mouse lands on what was drawn.
 		Items[i].Bounds = FBox2D(FVector2D(X, Y), FVector2D(X + FMath::Max(Size.X, 120.0f * Scale), Y + Size.Y));
@@ -230,7 +237,7 @@ void ALambdaHUD::DrawMainMenu(ULambdaMainMenu* Menu, float W, float H)
 			DrawRect(ULambdaMainMenu::SelectedColour(), X - 10.0f * Scale, Y, 3.0f * Scale, Size.Y);
 		}
 		DrawTextAtHeight(Items[i].Label, bSelected ? ULambdaMainMenu::SelectedColour() : ULambdaMainMenu::ItemColour(),
-			X, Y, MenuFont, TextHeight);
+			X, Y, ItemFont, TextHeight);
 		Y += ItemHeight;
 	}
 

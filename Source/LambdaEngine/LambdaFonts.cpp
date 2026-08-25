@@ -7,20 +7,23 @@
 #include "Engine/FontFace.h"
 #include "UObject/Package.h"
 
-UFont* FLambdaFonts::GetSchemeFont()
+UFont* FLambdaFonts::Get(const FString& FileName)
 {
-	static TObjectPtr<UFont> Font = nullptr;
-	static bool bTried = false;
-	if (bTried)
+	static TMap<FString, TObjectPtr<UFont>> Cache;
+	const FString Key = FileName.ToLower();
+	if (TObjectPtr<UFont>* Found = Cache.Find(Key))
 	{
-		return Font;
+		return *Found;
 	}
-	bTried = true;
+	// Whatever happens below happens once: a face that is not there is remembered as not there rather than
+	// looked for again on every map load.
+	Cache.Add(Key, nullptr);
 
 	TArray<uint8> FontData;
-	if (!FLambdaFileSystem::Get().ReadFile(TEXT("resource/din1451alt.ttf"), FontData) || FontData.Num() == 0)
+	const FString Path = FString::Printf(TEXT("resource/%s"), *FileName);
+	if (!FLambdaFileSystem::Get().ReadFile(Path, FontData) || FontData.Num() == 0)
 	{
-		UE_LOG(LogLambda, Log, TEXT("UI: no resource/din1451alt.ttf in the game directory; falling back to the engine font"));
+		UE_LOG(LogLambda, Log, TEXT("UI: no %s in the game directory"), *Path);
 		return nullptr;
 	}
 
@@ -28,18 +31,42 @@ UFont* FLambdaFonts::GetSchemeFont()
 	Face->LoadingPolicy = EFontLoadingPolicy::Inline;
 	Face->FontFaceData = FFontFaceData::MakeFontFaceData(MoveTemp(FontData));
 
-	UFont* NewFont = NewObject<UFont>(GetTransientPackage());
-	NewFont->FontCacheType = EFontCacheType::Runtime;
-	FTypefaceEntry& Entry = NewFont->GetMutableInternalCompositeFont().DefaultTypeface.Fonts.AddDefaulted_GetRef();
+	UFont* Font = NewObject<UFont>(GetTransientPackage());
+	Font->FontCacheType = EFontCacheType::Runtime;
+	FTypefaceEntry& Entry = Font->GetMutableInternalCompositeFont().DefaultTypeface.Fonts.AddDefaulted_GetRef();
 	Entry.Name = TEXT("Regular");
 	Entry.Font = FFontData(Face);
-	NewFont->LegacyFontSize = 31;	// HudTextLarge's "tall", which is what the HUD's numbers are drawn at
+	Font->LegacyFontSize = 31;	// HudTextLarge's "tall"; anything drawn through DrawTextAtHeight asks for its own
 
-	// Rooted: it outlives every world, and nothing else holds a reference to it.
+	// Rooted: they outlive every world, and nothing else holds a reference to them.
 	Face->AddToRoot();
-	NewFont->AddToRoot();
-	Font = NewFont;
+	Font->AddToRoot();
+	Cache.Add(Key, Font);
 
-	UE_LOG(LogLambda, Log, TEXT("UI: using the scheme font resource/din1451alt.ttf"));
+	UE_LOG(LogLambda, Log, TEXT("UI: loaded %s"), *Path);
 	return Font;
+}
+
+UFont* FLambdaFonts::GetSchemeFont()
+{
+	return Get(TEXT("din1451alt.ttf"));
+}
+
+UFont* FLambdaFonts::GetTitleFont()
+{
+	// IBM Plex Mono for the game's name. The scheme's face stands in if the mod has not got it.
+	if (UFont* Font = Get(TEXT("IBMPlexMono-Bold.ttf")))
+	{
+		return Font;
+	}
+	return GetSchemeFont();
+}
+
+UFont* FLambdaFonts::GetMenuFont()
+{
+	if (UFont* Font = Get(TEXT("IBMPlexSans-Regular.ttf")))
+	{
+		return Font;
+	}
+	return GetSchemeFont();
 }
