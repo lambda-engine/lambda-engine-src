@@ -27,7 +27,7 @@ class LAMBDAENGINE_API ALambdaCharacter : public ACharacter, public ISourcePlaye
 	GENERATED_BODY()
 
 public:
-	ALambdaCharacter();
+	ALambdaCharacter(const FObjectInitializer& ObjectInitializer);
 
 	virtual void BeginPlay() override;
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
@@ -99,6 +99,20 @@ public:
 
 	/** The material library the loaded map built, used to resolve $surfaceprop at a bullet impact. */
 	ULambdaMaterialLibrary* GetWorldMaterialLibrary() const;
+
+	/**
+	 * CBasePlayer::UpdateStepSound: decides whether this frame is a footfall, and if so what it lands on.
+	 * Steps are timed rather than driven by the animation - Source counts down a few hundred milliseconds
+	 * between them, shorter when running.
+	 */
+	void UpdateStepSound(float DeltaSeconds);
+	/** CBasePlayer::PlayStepSound: the surface names the sound, alternating feet. */
+	void PlayStepSound(const FString& SurfaceProp, float Volume);
+
+	/** m_flStepSoundTime, in milliseconds, exactly as Source keeps it. */
+	float StepSoundTime = 0.0f;
+	/** m_nStepside. */
+	bool bStepSide = false;
 
 	/**
 	 * Dev aid: stamps a row of impact decals on the wall ahead and moves the player to a fixed viewpoint at

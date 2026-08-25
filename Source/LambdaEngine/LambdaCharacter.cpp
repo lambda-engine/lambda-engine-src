@@ -9,6 +9,7 @@
 #include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "LambdaCharacterMovement.h"
 #include "GameFramework/PlayerController.h"
 #include "InputAction.h"
 #include "InputActionValue.h"
@@ -32,6 +33,9 @@ void ALambdaCharacterAddPickupHistory(TArray<ALambdaCharacter::FPickupEvent>& Hi
 #include "Core/LambdaSourceSettings.h"
 #include "World/SourceBSPWorldActor.h"
 #include "Kismet/GameplayStatics.h"
+#include "Materials/SourceSurfaceProps.h"
+#include "Audio/LambdaSoundLibrary.h"
+#include "Audio/SourceSoundScript.h"
 #include "Engine/Engine.h"
 #include "Rendering/SourceStudioModelComponent.h"
 #include "Rendering/SourceRagdoll.h"
@@ -131,7 +135,9 @@ static FAutoConsoleVariableRef CVarLambdaViewModelFirstPerson(
 	GLambdaViewModelFirstPerson,
 	TEXT("Draw the view model through UE's first-person primitive path"));
 
-ALambdaCharacter::ALambdaCharacter()
+ALambdaCharacter::ALambdaCharacter(const FObjectInitializer& ObjectInitializer)
+	// Quake's movement in place of Unreal's: see ULambdaCharacterMovement.
+	: Super(ObjectInitializer.SetDefaultSubobjectClass<ULambdaCharacterMovement>(ACharacter::CharacterMovementComponentName))
 {
 	PrimaryActorTick.bCanEverTick = true;
 
@@ -221,10 +227,13 @@ void ALambdaCharacter::ApplySourceMovementSettings()
 	Move->MaxStepHeight = StepUnits * Scale;
 	Move->SetWalkableFloorZ(0.7f);								// Source: surfaces with normal.z < 0.7 are not walkable
 	Move->JumpZVelocity = FMath::Sqrt(2.0f * GravityCm * JumpHeightUnits * Scale);	// HL2: sqrt(2 * g * 21)
-	Move->AirControl = 0.3f;
-	Move->MaxAcceleration = WalkSpeedCm * 10.0f;				// sv_accelerate 10
-	Move->BrakingDecelerationWalking = WalkSpeedCm * 6.0f;
-	Move->GroundFriction = 8.0f;
+	// Movement is Quake's now (ULambdaCharacterMovement), so the numbers Unreal would use to shape acceleration
+	// and braking no longer apply: sv_accelerate, sv_friction and sv_stopspeed do that instead. MaxAcceleration
+	// survives only as the scale the input vector is read back out of, so it wants to be exactly the top speed.
+	Move->AirControl = 0.0f;
+	Move->MaxAcceleration = WalkSpeedCm;
+	Move->BrakingDecelerationWalking = 0.0f;
+	Move->GroundFriction = 0.0f;
 	Move->bUseFlatBaseForFloorChecks = true;					// Source uses a box hull: stand on edges like HL2
 	Move->PerchRadiusThreshold = 0.0f;
 	Move->NavAgentProps.bCanCrouch = true;
@@ -740,6 +749,8 @@ bool ALambdaCharacter::ThrowCarriedProp()
 void ALambdaCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+
+	UpdateStepSound(DeltaSeconds);
 
 	// CBasePlayer::ItemPostFrame drives the active weapon every frame.
 	if (ActiveWeapon)
@@ -1836,4 +1847,127 @@ AActor* ALambdaCharacter::NPCCreate(const FString& ClassName, float MaxDistanceC
 	AActor* NPC = BSPWorld->CreateNPC(ClassName, Spot, Yaw);
 	UE_LOG(LogLambda, Display, TEXT("npc_create %s: %s"), *ClassName, NPC ? *NPC->GetActorLocation().ToString() : TEXT("failed"));
 	return NPC;
+}
+
+void ALambdaCharacter::UpdateStepSound(float DeltaSeconds)
+{
+	// CBasePlayer::UpdateStepSound. The clock is in milliseconds because Source's is.
+	if (StepSoundTime > 0.0f)
+	{
+		StepSoundTime = FMath::Max(0.0f, StepSoundTime - 1000.0f * DeltaSeconds);
+	}
+	if (StepSoundTime > 0.0f)
+	{
+		return;
+	}
+
+	const UCharacterMovementComponent* Move = GetCharacterMovement();
+	if (!Move)
+	{
+		return;
+	}
+
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+	const float Speed = Move->Velocity.Size();
+	const float GroundSpeed = Move->Velocity.Size2D();
+	const bool bDucking = bIsCrouched;
+
+	// GetStepSoundVelocities: how fast counts as walking, and how fast counts as running.
+	const float VelWalk = (bDucking ? 60.0f : 90.0f) * Scale;
+	const float VelRun = (bDucking ? 80.0f : 220.0f) * Scale;
+
+	// You must be on the ground, moving along it, and moving fast enough to be worth a sound.
+	if (Speed < VelWalk || GroundSpeed <= 0.0001f || !Move->IsMovingOnGround())
+	{
+		return;
+	}
+
+	const bool bWalking = Speed < VelRun;
+	StepSoundTime = bWalking ? 400.0f : 300.0f;
+	if (bDucking)
+	{
+		StepSoundTime += 100.0f;
+	}
+
+	// What we are standing on. Unreal's own floor result cannot answer this: it is a sweep, and a sweep does not
+	// come back with the face it touched unless it was asked to, so its FaceIndex is always none and every step
+	// would be the default surface. Source works the surface out with its own trace in CategorizePosition; this
+	// is that trace.
+	FString SurfaceProp;
+	if (UWorld* World = GetWorld())
+	{
+		const FVector Feet = GetActorLocation() - FVector(0.0f, 0.0f, GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
+		FCollisionQueryParams Params(SCENE_QUERY_STAT(FootstepSurface), /*bTraceComplex=*/ true, this);
+		Params.bReturnFaceIndex = true;
+
+		FHitResult Hit;
+		if (World->LineTraceSingleByChannel(Hit, Feet + FVector(0.0f, 0.0f, 8.0f * Scale),
+			Feet - FVector(0.0f, 0.0f, 16.0f * Scale), ECC_Visibility, Params))
+		{
+			if (const USourceBrushMeshComponent* FloorMesh = Cast<USourceBrushMeshComponent>(Hit.GetComponent()))
+			{
+				if (Hit.FaceIndex != INDEX_NONE)
+				{
+					if (ULambdaMaterialLibrary* Materials = GetWorldMaterialLibrary())
+					{
+						SurfaceProp = Materials->GetSurfaceProp(FloorMesh->GetMaterialNameForFaceIndex(Hit.FaceIndex));
+					}
+				}
+			}
+		}
+	}
+	if (SurfaceProp.IsEmpty())
+	{
+		SurfaceProp = TEXT("default");
+	}
+
+	// The volumes Source picks per game material: most surfaces are quiet, dirt a little louder, a vent louder
+	// still because it booms.
+	float Volume = bWalking ? 0.2f : 0.5f;
+	switch (FSourceSurfaceProps::Get().GetGameMaterial(SurfaceProp))
+	{
+	case 'D':	// CHAR_TEX_DIRT
+		Volume = bWalking ? 0.25f : 0.55f;
+		break;
+	case 'V':	// CHAR_TEX_VENT
+		Volume = bWalking ? 0.4f : 0.7f;
+		break;
+	default:
+		break;
+	}
+	if (bDucking)
+	{
+		Volume *= 0.65f;
+	}
+
+	UE_LOG(LogLambda, Verbose, TEXT("footstep: %s at %.0f u/s (%s)"), *SurfaceProp, Speed / Scale,
+		bWalking ? TEXT("walking") : TEXT("running"));
+	PlayStepSound(SurfaceProp, Volume);
+}
+
+void ALambdaCharacter::PlayStepSound(const FString& SurfaceProp, float Volume)
+{
+	// CBasePlayer::PlayStepSound: the surface says what each foot sounds like, and the feet alternate.
+	const FSourceSurfaceProp* Prop = FSourceSurfaceProps::Get().Find(SurfaceProp);
+	if (!Prop)
+	{
+		return;
+	}
+	const FString& SoundName = bStepSide ? Prop->StepLeftSound : Prop->StepRightSound;
+	bStepSide = !bStepSide;
+	if (SoundName.IsEmpty())
+	{
+		return;
+	}
+
+	float ScriptVolume = 1.0f, Pitch = 1.0f;
+	if (ULambdaSoundWave* Wave = FLambdaSoundCache::Get().CreateWaveResolved(this, SoundName, false, ScriptVolume, Pitch))
+	{
+		// Source passes its own volume rather than the script's here, and the script's soundlevel decides how
+		// far it carries.
+		const FSourceSoundScriptEntry* Entry = FSourceSoundScripts::Get().Find(SoundName);
+		USoundAttenuation* Attenuation = FLambdaSoundCache::Get().GetAttenuationForSoundLevel(Entry ? Entry->SoundLevel : 75.0f);
+		UGameplayStatics::SpawnSoundAtLocation(this, Wave, GetActorLocation(), FRotator::ZeroRotator,
+			Volume, Pitch, 0.0f, Attenuation);
+	}
 }
