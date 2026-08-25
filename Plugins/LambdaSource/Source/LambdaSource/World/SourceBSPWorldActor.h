@@ -120,6 +120,25 @@ private:
 	/** Spawns the actor for a brush entity ("model" "*N"), choosing the class from its classname. */
 	void SpawnBrushEntity(const FSourceEntity& Entity, int32 ModelIndex);
 	void SpawnEntities();
+	/**
+	 * Puts a navmesh over the map that has just been built.
+	 *
+	 * Source's NPCs walk a node graph the mapper placed by hand, compiled into an .ain beside the BSP. Nothing
+	 * here is compiled ahead of time and most maps have no nodes in them, so navigation is generated from the
+	 * geometry instead, once, after it exists.
+	 */
+	void BuildNavigation();
+
+	/** Registers the player pawn as a navigation invoker, once there is one. */
+	void RegisterPlayerAsNavInvoker();
+	bool bNavigationReady = false;
+	bool bPlayerRegisteredAsInvoker = false;
+	bool bReportedNavTiles = false;
+	float NavReportCountdown = 3.0f;
+
+	/** How far around an invoker navigation is generated, and the distance at which it is dropped again. */
+	static constexpr float NavInvokerGenerationRadius = 6000.0f;	// cm
+	static constexpr float NavInvokerRemovalRadius = 9000.0f;
 	void SpawnPlayerStart(const FSourceEntity& Entity);
 	void SpawnPointLight(const FSourceEntity& Entity);
 	void SpawnSpotLight(const FSourceEntity& Entity);

@@ -7,6 +7,8 @@
 #include "Sound/SoundAttenuation.h"
 #include "Core/LambdaSourceModule.h"
 #include "Core/LambdaSourceSettings.h"
+#include "NavigationSystem.h"
+#include "NavigationPath.h"
 #include "World/SourceBSPWorldActor.h"
 #include "Weapons/SourceAmmoDef.h"
 #include "Core/SourceCoordinates.h"
@@ -101,6 +103,7 @@ void ASourceNPCBase::InitializeFromEntity(const FSourceEntity& InEntity, ASource
 
 bool ASourceNPCBase::SetModel(const FString& ModelPath)
 {
+	RegisterAsNavInvoker();
 	if (!Model)
 	{
 		return false;
@@ -736,4 +739,94 @@ FVector ASourceNPCBase::CalcDamageForceVector(float Damage, const FVector& Given
 	FVector Force = GetActorLocation() - Attacker->GetActorLocation();
 	Force.Normalize();
 	return Force * ForceScale * 2.54f;	// kg*cm/s
+}
+
+void ASourceNPCBase::RegisterAsNavInvoker()
+{
+	// So that a route exists under an NPC that is far from the player - navigation is generated around whoever
+	// asks for it, and an NPC pathing home is asking.
+	if (UWorld* World = GetWorld())
+	{
+		if (UNavigationSystemV1* NavSys = FNavigationSystem::GetCurrent<UNavigationSystemV1>(World))
+		{
+			NavSys->RegisterNavigationInvoker(this, 2000.0f, 3500.0f);
+		}
+	}
+}
+
+void ASourceNPCBase::ClearPath()
+{
+	PathPoints.Reset();
+	PathCorner = 0;
+	NextRepathTime = 0.0f;
+}
+
+bool ASourceNPCBase::NavigateTo(const FVector& Goal)
+{
+	UWorld* World = GetWorld();
+	const float Now = World ? World->GetTimeSeconds() : 0.0f;
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+
+	// How near a corner counts as reached, and how far the goal may drift before the route is stale. Both in
+	// Hammer units so they read the way the rest of the AI does.
+	const float CornerReached = 24.0f * Scale;
+	const float GoalMoved = 48.0f * Scale;
+
+	const bool bStale = PathPoints.Num() == 0
+		|| Now >= NextRepathTime
+		|| FVector::DistSquared2D(Goal, PathGoal) > FMath::Square(GoalMoved);
+
+	if (bStale)
+	{
+		PathPoints.Reset();
+		PathCorner = 0;
+		PathGoal = Goal;
+		// Half a second is enough that a walking enemy does not outrun the route, and rare enough that a room
+		// full of NPCs is not re-planning every frame.
+		NextRepathTime = Now + 0.5f;
+
+		if (UNavigationSystemV1* NavSys = World ? FNavigationSystem::GetCurrent<UNavigationSystemV1>(World) : nullptr)
+		{
+			if (UNavigationPath* Path = NavSys->FindPathToLocationSynchronously(World, GetActorLocation(), Goal, this))
+			{
+				if (Path->IsValid() && !Path->IsPartial() && Path->PathPoints.Num() > 1)
+				{
+					PathPoints = Path->PathPoints;
+					// The first point is where we already are.
+					PathCorner = 1;
+				}
+				UE_LOG(LogLambdaSource, Verbose, TEXT("%s: route to %s - %d corners%s"), *GetClassName(),
+					*Goal.ToCompactString(), Path->PathPoints.Num(),
+					Path->IsPartial() ? TEXT(" (partial, ignored)") : TEXT(""));
+			}
+		}
+	}
+
+	// Walk the corners we have already reached.
+	while (PathPoints.IsValidIndex(PathCorner)
+		&& FVector::DistSquared2D(GetActorLocation(), PathPoints[PathCorner]) < FMath::Square(CornerReached))
+	{
+		++PathCorner;
+	}
+
+	if (PathPoints.IsValidIndex(PathCorner))
+	{
+		FVector Dir = PathPoints[PathCorner] - GetActorLocation();
+		Dir.Z = 0.0f;
+		if (Dir.Normalize())
+		{
+			SetMoveDirection(Dir);
+			return true;
+		}
+	}
+
+	// No navmesh, no route, or the route has run out: head straight at it, which is what this did before there
+	// was any navigation at all.
+	FVector Straight = Goal - GetActorLocation();
+	Straight.Z = 0.0f;
+	if (Straight.Normalize())
+	{
+		SetMoveDirection(Straight);
+	}
+	return false;
 }

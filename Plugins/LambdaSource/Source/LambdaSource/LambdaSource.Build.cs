@@ -16,7 +16,9 @@ public class LambdaSource : ModuleRules
 			"CoreUObject",
 			"Engine",
 			"DeveloperSettings",
-			"ProceduralMeshComponent"
+			"ProceduralMeshComponent",
+			// NPCs walk on a navmesh built from the BSP at load; NavigationSystem is where that lives.
+			"NavigationSystem"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[]

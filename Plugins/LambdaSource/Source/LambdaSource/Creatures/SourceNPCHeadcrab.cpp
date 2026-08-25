@@ -233,7 +233,7 @@ void ASourceNPCHeadcrab::NPCThink()
 
 	case EAttackCondition::TooFar:
 	case EAttackCondition::Blocked:
-		// SCHED_CHASE_ENEMY - in a straight line; pathfinding is not ported.
+		// SCHED_CHASE_ENEMY
 		ChaseEnemy();
 		break;
 
@@ -252,14 +252,11 @@ void ASourceNPCHeadcrab::ChaseEnemy()
 	{
 		return;
 	}
+	// SCHED_CHASE_ENEMY: at the enemy if we can see him, otherwise at where he was last seen - and around
+	// whatever is in between, which is what the navmesh is for.
 	const FVector Goal = FVisible(Target) ? Target->GetActorLocation() : LastKnownEnemyPos;
-	FVector Dir = Goal - GetActorLocation();
-	Dir.Z = 0.0f;
-	if (Dir.Normalize())
-	{
-		SetActivity(TEXT("ACT_RUN"));
-		SetMoveDirection(Dir);
-	}
+	SetActivity(TEXT("ACT_RUN"));
+	NavigateTo(Goal);
 }
 
 void ASourceNPCHeadcrab::BackAwayFromEnemy()

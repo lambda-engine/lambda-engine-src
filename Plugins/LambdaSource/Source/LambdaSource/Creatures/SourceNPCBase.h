@@ -140,6 +140,21 @@ public:
 	 * frame, so a think-rate request would brake between thinks; Tick re-applies this every frame. Zero stops.
 	 */
 	void SetMoveDirection(const FVector& WorldDir) { MoveDirection = WorldDir.GetSafeNormal2D(); }
+	/**
+	 * Heads for a place rather than in a direction: asks the navmesh for a route and steers at the next corner
+	 * of it, so the NPC goes around what is in the way instead of into it.
+	 *
+	 * This is the one part of the AI that is not Source's. Source routes through the node graph a mapper placed
+	 * (CAI_Network); we load maps nobody placed nodes in, so the route comes from a navmesh built from the
+	 * geometry. Everything deciding *where* to go is still the ported AI - this only answers "which way now".
+	 *
+	 * Falls back to walking straight at the goal when there is no navmesh or no route to be had.
+	 */
+	bool NavigateTo(const FVector& Goal);
+	/** Throws away the route being followed, so the next NavigateTo starts again. */
+	void ClearPath();
+	/** Asks for navigation to be generated around this NPC as well as around the player. */
+	void RegisterAsNavInvoker();
 	void StopMoving();
 
 protected:
@@ -233,6 +248,12 @@ private:
 
 	FString CurrentActivity;
 	FVector MoveDirection = FVector::ZeroVector;
+
+	/** The route being followed, the corner of it being steered at, and when to ask for a fresh one. */
+	TArray<FVector> PathPoints;
+	int32 PathCorner = 0;
+	FVector PathGoal = FVector::ZeroVector;
+	float NextRepathTime = 0.0f;
 	float IdealYaw = 0.0f;
 	float ThinkAccumulator = 0.0f;
 	float HullHalfHeightCm = 0.0f;

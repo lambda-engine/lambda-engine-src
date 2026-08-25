@@ -8,6 +8,8 @@
 #include "Entities/SourcePropPhysics.h"
 #include "FileSystem/LambdaFileSystem.h"
 #include "Core/LambdaLoadProgress.h"
+#include "NavigationSystem.h"
+#include "NavMesh/RecastNavMesh.h"
 #include "Rendering/SourceSkeletalMesh.h"
 #include "Materials/LambdaMaterialLibrary.h"
 #include "Core/LambdaSourceModule.h"
@@ -119,6 +121,9 @@ bool ASourceBSPWorldActor::LoadBSPFile(const FString& RelativePath)
 	BuildWorldGeometry();
 	FLambdaLoadProgress::SetStage(ELambdaLoadStage::SpawningEntities);
 	SpawnEntities();
+
+	// Nothing was navigable until the geometry above existed, so navigation is generated now.
+	BuildNavigation();
 
 	// Source precaches decals in LevelInitPreEntity and impact sounds with the surface properties; doing it here
 	// keeps the first shot from building all of it inside one frame.
@@ -851,6 +856,27 @@ void ASourceBSPWorldActor::ResolveTargets(const FString& Target, AActor* Activat
 void ASourceBSPWorldActor::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	if (bNavigationReady && !bPlayerRegisteredAsInvoker)
+	{
+		RegisterPlayerAsNavInvoker();
+	}
+	// Generation runs in the background after the invoker registers, so what came of it is worth saying once.
+	if (bPlayerRegisteredAsInvoker && !bReportedNavTiles)
+	{
+		NavReportCountdown -= DeltaSeconds;
+		if (NavReportCountdown <= 0.0f)
+		{
+			bReportedNavTiles = true;
+			UNavigationSystemV1* NavSys = FNavigationSystem::GetCurrent<UNavigationSystemV1>(GetWorld());
+			ARecastNavMesh* Recast = NavSys ? Cast<ARecastNavMesh>(NavSys->GetDefaultNavDataInstance(FNavigationSystem::DontCreate)) : nullptr;
+			ANavigationData* AnyData = NavSys ? NavSys->GetDefaultNavDataInstance(FNavigationSystem::DontCreate) : nullptr;
+			UE_LOG(LogLambdaSource, Log, TEXT("Navigation: nav data %s (%s), %d tiles, navmesh %s"),
+				AnyData ? *AnyData->GetName() : TEXT("none"),
+				AnyData ? *AnyData->GetClass()->GetName() : TEXT("-"),
+				Recast ? Recast->GetNavMeshTilesCount() : -1,
+				Recast ? (Recast->HasValidNavmesh() ? TEXT("valid") : TEXT("EMPTY")) : TEXT("not a recast mesh"));
+		}
+	}
 
 	if (EventQueue.Num() == 0)
 	{
@@ -885,4 +911,56 @@ void ASourceBSPWorldActor::Tick(float DeltaSeconds)
 			Target->AcceptInput(Event.Input, Event.Activator.Get(), Event.Caller.Get(), Event.Parameter);
 		}
 	}
+}
+
+void ASourceBSPWorldActor::BuildNavigation()
+{
+	UWorld* World = GetWorld();
+	UNavigationSystemV1* NavSys = World ? FNavigationSystem::GetCurrent<UNavigationSystemV1>(World) : nullptr;
+	if (!NavSys)
+	{
+		UE_LOG(LogLambdaSource, Log, TEXT("Navigation: no navigation system in this world; NPCs walk in straight lines"));
+		return;
+	}
+
+	// Generated around invokers rather than inside a bounds volume. A bounds volume is a brush, an editor-built
+	// thing that is awkward to conjure at runtime; invokers are what the navigation system offers for worlds
+	// that are made while they run, and this map is made after the level has loaded.
+	ANavigationData* NavData = NavSys->GetDefaultNavDataInstance(FNavigationSystem::DontCreate);
+	if (!NavData)
+	{
+		// Nothing was navigable when the world was initialised, so no navigation data was made for it. Ask for
+		// it now that there is a map to walk on.
+		NavSys->OnNavigationBoundsUpdated(nullptr);
+		NavData = NavSys->GetDefaultNavDataInstance(FNavigationSystem::Create);
+	}
+	UE_LOG(LogLambdaSource, Log, TEXT("Navigation: data %s"), NavData ? *NavData->GetName() : TEXT("could not be created"));
+	if (!NavData)
+	{
+		return;
+	}
+
+	bNavigationReady = true;
+	RegisterPlayerAsNavInvoker();
+}
+
+void ASourceBSPWorldActor::RegisterPlayerAsNavInvoker()
+{
+	UWorld* World = GetWorld();
+	UNavigationSystemV1* NavSys = World ? FNavigationSystem::GetCurrent<UNavigationSystemV1>(World) : nullptr;
+	if (!NavSys || bPlayerRegisteredAsInvoker)
+	{
+		return;
+	}
+	APlayerController* PC = World->GetFirstPlayerController();
+	APawn* Pawn = PC ? PC->GetPawn() : nullptr;
+	if (!Pawn)
+	{
+		return;	// spawned after the map is built on the first load; Tick keeps trying
+	}
+	// Navigation is only needed where the player is: he is the only thing anything paths towards.
+	NavSys->RegisterNavigationInvoker(Pawn, NavInvokerGenerationRadius, NavInvokerRemovalRadius);
+	bPlayerRegisteredAsInvoker = true;
+	UE_LOG(LogLambdaSource, Log, TEXT("Navigation: generating around the player (%.0f cm, dropped beyond %.0f cm)"),
+		NavInvokerGenerationRadius, NavInvokerRemovalRadius);
 }
