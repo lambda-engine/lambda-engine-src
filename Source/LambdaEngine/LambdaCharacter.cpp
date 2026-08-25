@@ -318,7 +318,8 @@ void ALambdaCharacter::BuildInputAssets()
 	MappingContext->MapKey(UseAction, EKeys::E);
 	MappingContext->MapKey(AttackAction, EKeys::LeftMouseButton);
 	MappingContext->MapKey(ReloadAction, EKeys::R);
-	MappingContext->MapKey(QuitAction, EKeys::Escape);
+	// Escape is not bound here: it belongs to the pause menu, which the viewport client opens with it.
+	// Quitting is what the menu's QUIT does. The action is left in place for anyone who wants to bind one.
 	static const FKey SlotKeys[5] = { EKeys::One, EKeys::Two, EKeys::Three, EKeys::Four, EKeys::Five };
 	for (int32 i = 0; i < 5; ++i)
 	{

@@ -157,12 +157,22 @@ FString ALambdaHUD::AmmoIconName(const FString& AmmoType)
 	return FString::Printf(TEXT("vgui/hud/%s"), Found ? **Found : TEXT("ammo_9mm"));
 }
 
+UFont* ALambdaHUD::UIFont() const
+{
+	// SchemeFont is loaded from the game directory at runtime, so it is a vector face Slate rasterises at
+	// whatever size is asked for. The engine's own is a baked bitmap: blow it up and it looks it.
+	return SchemeFont ? SchemeFont.Get() : HudFont.Get();
+}
+
 void ALambdaHUD::DrawMainMenu(ULambdaMainMenu* Menu, float W, float H)
 {
-	if (!Menu || !Menu->IsActive() || !HudFont)
+	UFont* MenuFont = UIFont();
+	if (!Menu || !Menu->IsActive() || !MenuFont)
 	{
 		return;
 	}
+	// The controller may not have existed when the menu opened, so the cursor is settled here.
+	Menu->TickInputState();
 	// No 3D behind it yet, so it sits on black.
 	DrawRect(FLinearColor(0.02f, 0.02f, 0.02f, 1.0f), 0.0f, 0.0f, W, H);
 
@@ -171,9 +181,9 @@ void ALambdaHUD::DrawMainMenu(ULambdaMainMenu* Menu, float W, float H)
 	// The game's name, where Source puts the logo.
 	const float TitleHeight = 44.0f * Scale;
 	float Unused = 0.0f, FontHeight = 0.0f;
-	GetTextSize(TEXT("Wg"), Unused, FontHeight, HudFont, 1.0f);
+	GetTextSize(TEXT("Wg"), Unused, FontHeight, MenuFont, 1.0f);
 	const float TitleScale = FontHeight > 0.0f ? TitleHeight / FontHeight : 1.0f;
-	DrawText(TEXT("LAMBDA ENGINE"), ULambdaMainMenu::TitleColour(), 32.0f * Scale, 48.0f * Scale, HudFont, TitleScale);
+	DrawText(TEXT("LAMBDA ENGINE"), ULambdaMainMenu::TitleColour(), 32.0f * Scale, 48.0f * Scale, MenuFont, TitleScale);
 
 	// The items, down the bottom left, the way the old menu reads.
 	const float ItemHeight = 22.0f * Scale;
@@ -187,7 +197,7 @@ void ALambdaHUD::DrawMainMenu(ULambdaMainMenu* Menu, float W, float H)
 		const float X = 32.0f * Scale;
 
 		float TextW = 0.0f, TextH = 0.0f;
-		GetTextSize(Items[i].Label, TextW, TextH, HudFont, ItemScale);
+		GetTextSize(Items[i].Label, TextW, TextH, MenuFont, ItemScale);
 
 		// Remember where it went, so a click lands on what was drawn.
 		Items[i].Bounds = FBox2D(FVector2D(X, Y), FVector2D(X + FMath::Max(TextW, 120.0f * Scale), Y + TextH));
@@ -198,14 +208,15 @@ void ALambdaHUD::DrawMainMenu(ULambdaMainMenu* Menu, float W, float H)
 			DrawRect(ULambdaMainMenu::SelectedColour(), X - 10.0f * Scale, Y, 3.0f * Scale, TextH);
 		}
 		DrawText(Items[i].Label, bSelected ? ULambdaMainMenu::SelectedColour() : ULambdaMainMenu::ItemColour(),
-			X, Y, HudFont, ItemScale);
+			X, Y, MenuFont, ItemScale);
 		Y += ItemHeight;
 	}
 }
 
 void ALambdaHUD::DrawConsole(ULambdaConsole* Console, float W, float H)
 {
-	if (!Console || !Console->IsOpen() || !HudFont)
+	UFont* MenuFont = UIFont();
+	if (!Console || !Console->IsOpen() || !MenuFont)
 	{
 		return;
 	}
@@ -216,7 +227,7 @@ void ALambdaHUD::DrawConsole(ULambdaConsole* Console, float W, float H)
 	DrawRect(FLinearColor(0.0f, 0.0f, 0.0f, 0.9f), 0.0f, PanelH, W, 2.0f);
 
 	float Unused = 0.0f, LineHeight = 0.0f;
-	GetTextSize(TEXT("Wg"), Unused, LineHeight, HudFont, 1.0f);
+	GetTextSize(TEXT("Wg"), Unused, LineHeight, MenuFont, 1.0f);
 	LineHeight = FMath::Max(LineHeight, 12.0f);
 
 	const float Margin = 8.0f;
@@ -226,7 +237,7 @@ void ALambdaHUD::DrawConsole(ULambdaConsole* Console, float W, float H)
 	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 	const bool bCaret = FMath::Fmod(Now, 1.0f) < 0.5f;
 	const FString Entry = FString::Printf(TEXT("] %s%s"), *Console->GetInput(), bCaret ? TEXT("_") : TEXT(""));
-	DrawText(Entry, ULambdaConsole::EchoColour(), Margin, EntryY, HudFont, 1.0f);
+	DrawText(Entry, ULambdaConsole::EchoColour(), Margin, EntryY, MenuFont, 1.0f);
 
 	// What it has said, newest at the bottom, oldest scrolling off the top.
 	const TArray<FLambdaConsoleLine>& Lines = Console->GetLines();
@@ -236,7 +247,7 @@ void ALambdaHUD::DrawConsole(ULambdaConsole* Console, float W, float H)
 	{
 		if (Lines.IsValidIndex(i))
 		{
-			DrawText(Lines[i].Text, Lines[i].Color, Margin, Y, HudFont, 1.0f);
+			DrawText(Lines[i].Text, Lines[i].Color, Margin, Y, MenuFont, 1.0f);
 		}
 		Y -= LineHeight;
 	}
@@ -246,8 +257,8 @@ void ALambdaHUD::DrawConsole(ULambdaConsole* Console, float W, float H)
 	{
 		const FString Note = FString::Printf(TEXT("-- scrolled back %d lines --"), Console->GetScrollBack());
 		float NoteW = 0.0f, NoteH = 0.0f;
-		GetTextSize(Note, NoteW, NoteH, HudFont, 1.0f);
-		DrawText(Note, ULambdaConsole::WarningColour(), W - NoteW - Margin, EntryY, HudFont, 1.0f);
+		GetTextSize(Note, NoteW, NoteH, MenuFont, 1.0f);
+		DrawText(Note, ULambdaConsole::WarningColour(), W - NoteW - Margin, EntryY, MenuFont, 1.0f);
 	}
 }
 

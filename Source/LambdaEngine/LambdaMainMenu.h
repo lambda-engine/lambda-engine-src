@@ -11,6 +11,7 @@ struct FLambdaMenuItem
 	FString Command;		// what it does
 	bool bOnlyInGame = false;	// hidden until there is a game to go back to
 	bool bNotMulti = false;
+	int32 InGameOrder = 0;
 
 	/** Where it was last drawn, so a click can be matched to it. */
 	FBox2D Bounds = FBox2D(ForceInit);
@@ -34,8 +35,15 @@ public:
 	virtual void Deinitialize() override;
 
 	bool IsActive() const { return bActive; }
+	/** True when it came up over a running game, which is the only time there is anything to go back to. */
+	bool IsPauseMenu() const { return bPauseMenu; }
+	/** The menu the game starts on. */
 	void Show();
+	/** The same menu over a running game, which stops while it is up - Source pauses single player too. */
+	void ShowPauseMenu();
 	void Hide();
+	/** Keeps the cursor and the input state right; the controller does not exist yet when the menu first opens. */
+	void TickInputState();
 
 	/** The items that should be on screen right now (OnlyInGame ones are not, out of a game). */
 	const TArray<FLambdaMenuItem>& GetItems() const { return Items; }
@@ -56,13 +64,14 @@ public:
 	static FLinearColor TitleColour();
 
 private:
-	void LoadItems();
+	void LoadItems(bool bInGame);
+	void SetPaused(bool bPaused);
 	/** Looks a "#GameUI_..." label up in the game directory's localisation file. */
 	static FString ResolveLabel(const FString& Label);
 
 	TArray<FLambdaMenuItem> Items;
 	int32 Selected = 0;
 	bool bActive = false;
+	bool bPauseMenu = false;
 
-	TSharedPtr<class FLambdaMenuInput> InputProcessor;
 };

@@ -7,8 +7,6 @@
 #include "SourceKeyValues.h"
 
 #include "Engine/GameInstance.h"
-#include "Framework/Application/IInputProcessor.h"
-#include "Framework/Application/SlateApplication.h"
 #include "GameFramework/PlayerController.h"
 #include "GameMapsSettings.h"
 #include "Kismet/GameplayStatics.h"
@@ -18,127 +16,84 @@ FLinearColor ULambdaMainMenu::ItemColour()     { return FLinearColor(216 / 255.0
 FLinearColor ULambdaMainMenu::SelectedColour() { return FLinearColor(196 / 255.0f, 181 / 255.0f,  80 / 255.0f, 1.0f); }	// BrightControlText
 FLinearColor ULambdaMainMenu::TitleColour()    { return FLinearColor(1.0f, 176 / 255.0f, 0.0f, 1.0f); }
 
-/** Mouse and keys for the menu. Sits behind the console, which takes the keyboard first when it is open. */
-class FLambdaMenuInput : public IInputProcessor
-{
-public:
-	explicit FLambdaMenuInput(ULambdaMainMenu* InMenu) : Menu(InMenu) {}
-
-	virtual void Tick(const float, FSlateApplication&, TSharedRef<ICursor>) override {}
-
-	virtual bool HandleKeyDownEvent(FSlateApplication&, const FKeyEvent& KeyEvent) override
-	{
-		ULambdaMainMenu* M = Menu.Get();
-		if (!M || !M->IsActive() || IsConsoleOpen(M))
-		{
-			return false;
-		}
-		const FKey Key = KeyEvent.GetKey();
-		if (Key == EKeys::Up)    { M->MoveSelection(-1); return true; }
-		if (Key == EKeys::Down)  { M->MoveSelection(+1); return true; }
-		if (Key == EKeys::Enter) { M->Activate();        return true; }
-		return false;
-	}
-
-	virtual bool HandleMouseMoveEvent(FSlateApplication& SlateApp, const FPointerEvent& MouseEvent) override
-	{
-		ULambdaMainMenu* M = Menu.Get();
-		if (M && M->IsActive() && !IsConsoleOpen(M))
-		{
-			M->SelectAt(ToViewport(SlateApp, MouseEvent));
-		}
-		return false;
-	}
-
-	virtual bool HandleMouseButtonDownEvent(FSlateApplication& SlateApp, const FPointerEvent& MouseEvent) override
-	{
-		ULambdaMainMenu* M = Menu.Get();
-		if (!M || !M->IsActive() || IsConsoleOpen(M) || MouseEvent.GetEffectingButton() != EKeys::LeftMouseButton)
-		{
-			return false;
-		}
-		if (M->SelectAt(ToViewport(SlateApp, MouseEvent)))
-		{
-			M->Activate();
-			return true;
-		}
-		return false;
-	}
-
-private:
-	static bool IsConsoleOpen(ULambdaMainMenu* M)
-	{
-		const ULambdaConsole* Console = M->GetGameInstance() ? M->GetGameInstance()->GetSubsystem<ULambdaConsole>() : nullptr;
-		return Console && Console->IsOpen();
-	}
-
-	/** Slate gives desktop pixels; the menu was drawn in the game window's. */
-	static FVector2D ToViewport(FSlateApplication& SlateApp, const FPointerEvent& MouseEvent)
-	{
-		const FVector2D Screen = MouseEvent.GetScreenSpacePosition();
-		TSharedPtr<SWindow> Window = SlateApp.GetActiveTopLevelWindow();
-		if (Window.IsValid())
-		{
-			const FGeometry& Geometry = Window->GetWindowGeometryInScreen();
-			return (Screen - Geometry.GetAbsolutePosition()) / Geometry.Scale;
-		}
-		return Screen;
-	}
-
-	TWeakObjectPtr<ULambdaMainMenu> Menu;
-};
-
 void ULambdaMainMenu::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
-	if (FSlateApplication::IsInitialized())
-	{
-		InputProcessor = MakeShared<FLambdaMenuInput>(this);
-		// Behind the console, which is registered at 0 and swallows the keyboard while it is open.
-		FSlateApplication::Get().RegisterInputPreProcessor(InputProcessor, 1);
-	}
 }
 
 void ULambdaMainMenu::Deinitialize()
 {
-	if (InputProcessor.IsValid() && FSlateApplication::IsInitialized())
-	{
-		FSlateApplication::Get().UnregisterInputPreProcessor(InputProcessor);
-	}
-	InputProcessor.Reset();
 	Super::Deinitialize();
 }
 
 void ULambdaMainMenu::Show()
 {
-	LoadItems();
+	bPauseMenu = false;
+	LoadItems(/*bInGame=*/ false);
 	Selected = 0;
 	bActive = true;
-
-	if (UGameInstance* Instance = GetGameInstance())
-	{
-		if (APlayerController* PC = Instance->GetFirstLocalPlayerController())
-		{
-			PC->bShowMouseCursor = true;
-			PC->SetIgnoreLookInput(true);
-			PC->SetIgnoreMoveInput(true);
-		}
-	}
+	TickInputState();
 	UE_LOG(LogLambda, Log, TEXT("Main menu: %d items"), Items.Num());
+}
+
+void ULambdaMainMenu::ShowPauseMenu()
+{
+	bPauseMenu = true;
+	LoadItems(/*bInGame=*/ true);
+	Selected = 0;
+	bActive = true;
+	SetPaused(true);
+	TickInputState();
+	UE_LOG(LogLambda, Log, TEXT("Pause menu: %d items"), Items.Num());
 }
 
 void ULambdaMainMenu::Hide()
 {
+	const bool bWasPaused = bPauseMenu;
 	bActive = false;
-	if (UGameInstance* Instance = GetGameInstance())
+	bPauseMenu = false;
+	if (bWasPaused)
 	{
-		if (APlayerController* PC = Instance->GetFirstLocalPlayerController())
+		SetPaused(false);
+	}
+	TickInputState();
+}
+
+void ULambdaMainMenu::SetPaused(bool bPaused)
+{
+	if (UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr)
+	{
+		UGameplayStatics::SetGamePaused(World, bPaused);
+	}
+}
+
+void ULambdaMainMenu::TickInputState()
+{
+	UGameInstance* Instance = GetGameInstance();
+	APlayerController* PC = Instance ? Instance->GetFirstLocalPlayerController() : nullptr;
+	if (!PC)
+	{
+		// The menu can open before there is a controller to show a cursor on; the HUD calls back every frame.
+		return;
+	}
+	if (PC->bShowMouseCursor != bActive)
+	{
+		PC->bShowMouseCursor = bActive;
+		// Without this the cursor is drawn but the game keeps swallowing the mouse, so nothing can be clicked.
+		if (bActive)
 		{
-			PC->bShowMouseCursor = false;
-			PC->SetIgnoreLookInput(false);
-			PC->SetIgnoreMoveInput(false);
+			FInputModeGameAndUI Mode;
+			Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+			Mode.SetHideCursorDuringCapture(false);
+			PC->SetInputMode(Mode);
+		}
+		else
+		{
+			PC->SetInputMode(FInputModeGameOnly());
 		}
 	}
+	PC->SetIgnoreLookInput(bActive);
+	PC->SetIgnoreMoveInput(bActive);
 }
 
 void ULambdaMainMenu::MoveSelection(int32 Delta)
@@ -222,7 +177,7 @@ void ULambdaMainMenu::RunCommand(const FString& Command)
 	}
 }
 
-void ULambdaMainMenu::LoadItems()
+void ULambdaMainMenu::LoadItems(bool bInGame)
 {
 	Items.Reset();
 
@@ -245,12 +200,13 @@ void ULambdaMainMenu::LoadItems()
 			Item.Command = Entry.GetString(TEXT("command"));
 			Item.bOnlyInGame = Entry.GetString(TEXT("OnlyInGame")) == TEXT("1");
 			Item.bNotMulti = Entry.GetString(TEXT("notmulti")) == TEXT("1");
+			Item.InGameOrder = FCString::Atoi(*Entry.GetString(TEXT("InGameOrder")));
 
 			// Not in a game, so the ones that only make sense in one are left out - and the console-only and
 			// VR entries with them, which this engine has nothing to say about.
 			const bool bConsoleOnly = Entry.GetString(TEXT("ConsoleOnly")) == TEXT("1");
 			const bool bVR = !Entry.GetString(TEXT("OnlyWhenVREnabled")).IsEmpty();
-			if (Item.bOnlyInGame || bConsoleOnly || bVR || Item.Command.IsEmpty() || Item.Label.IsEmpty())
+			if ((Item.bOnlyInGame && !bInGame) || bConsoleOnly || bVR || Item.Command.IsEmpty() || Item.Label.IsEmpty())
 			{
 				continue;
 			}
@@ -258,9 +214,19 @@ void ULambdaMainMenu::LoadItems()
 		}
 	}
 
+	// In a game the file says what order to put them in, and Resume belongs at the top.
+	if (bInGame)
+	{
+		Items.Sort([](const FLambdaMenuItem& A, const FLambdaMenuItem& B) { return A.InGameOrder < B.InGameOrder; });
+	}
+
 	if (Items.Num() == 0)
 	{
-		// Nothing to read, so the menu is the one Half-Life 2 has out of a game.
+		// Nothing to read, so the menu is the one Half-Life 2 has.
+		if (bInGame)
+		{
+			Items.Add({ TEXT("RESUME GAME"), TEXT("ResumeGame") });
+		}
 		Items.Add({ TEXT("NEW GAME"), TEXT("OpenNewGameDialog") });
 		Items.Add({ TEXT("LOAD GAME"), TEXT("OpenLoadGameDialog") });
 		Items.Add({ TEXT("OPTIONS"), TEXT("OpenOptionsDialog") });

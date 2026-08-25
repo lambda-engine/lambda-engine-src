@@ -71,7 +71,6 @@ private:
 	int32 ScrollBack = 0;
 	bool bOpen = false;
 
-	TSharedPtr<class FLambdaConsoleInput> InputProcessor;
 
 	/** How many lines are kept before the oldest are forgotten. */
 	static constexpr int32 MaxLines = 1024;

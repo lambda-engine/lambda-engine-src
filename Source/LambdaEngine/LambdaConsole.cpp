@@ -4,8 +4,6 @@
 
 #include "Engine/Engine.h"
 #include "Engine/GameInstance.h"
-#include "Framework/Application/IInputProcessor.h"
-#include "Framework/Application/SlateApplication.h"
 #include "GameMapsSettings.h"
 #include "Kismet/GameplayStatics.h"
 
@@ -15,134 +13,15 @@ FLinearColor ULambdaConsole::EchoColour()       { return FLinearColor(196 / 255.
 FLinearColor ULambdaConsole::WarningColour()    { return FLinearColor(1.0f, 0.35f, 0.25f, 1.0f); }
 FLinearColor ULambdaConsole::BackgroundColour() { return FLinearColor( 62 / 255.0f,  70 / 255.0f,  55 / 255.0f, 0.93f); }	// WindowBG
 
-/**
- * Takes the keyboard while the console is open.
- *
- * Slate hands an input processor key presses but not typed characters, so the character is taken off the key
- * event where the platform put one, and worked out from the key itself where it did not.
- */
-class FLambdaConsoleInput : public IInputProcessor
-{
-public:
-	explicit FLambdaConsoleInput(ULambdaConsole* InConsole) : Console(InConsole) {}
-
-	virtual void Tick(const float, FSlateApplication&, TSharedRef<ICursor>) override {}
-
-	virtual bool HandleKeyDownEvent(FSlateApplication&, const FKeyEvent& KeyEvent) override
-	{
-		ULambdaConsole* C = Console.Get();
-		if (!C)
-		{
-			return false;
-		}
-		const FKey Key = KeyEvent.GetKey();
-
-		// The key under Escape opens and closes it, as it always has.
-		if (Key == EKeys::Tilde)
-		{
-			C->Toggle();
-			return true;
-		}
-		if (!C->IsOpen())
-		{
-			return false;
-		}
-
-		// From here the console has the keyboard, and nothing it sees reaches the game.
-		if (Key == EKeys::Escape)          { C->SetOpen(false); return true; }
-		if (Key == EKeys::Enter)           { C->Submit();       return true; }
-		if (Key == EKeys::BackSpace)       { C->Backspace();    return true; }
-		if (Key == EKeys::Up)              { C->HistoryBack();  return true; }
-		if (Key == EKeys::Down)            { C->HistoryForward(); return true; }
-		if (Key == EKeys::PageUp)          { C->Scroll(+5);     return true; }
-		if (Key == EKeys::PageDown)        { C->Scroll(-5);     return true; }
-
-		const TCHAR Character = CharacterFor(KeyEvent);
-		if (Character != 0)
-		{
-			C->TypeCharacter(Character);
-		}
-		return true;
-	}
-
-	virtual bool HandleKeyUpEvent(FSlateApplication&, const FKeyEvent&) override
-	{
-		return Console.IsValid() && Console->IsOpen();
-	}
-
-	virtual bool HandleMouseWheelOrGestureEvent(FSlateApplication&, const FPointerEvent& WheelEvent, const FPointerEvent*) override
-	{
-		if (Console.IsValid() && Console->IsOpen())
-		{
-			Console->Scroll(WheelEvent.GetWheelDelta() > 0 ? 3 : -3);
-			return true;
-		}
-		return false;
-	}
-
-private:
-	/** What this key press should put in the entry box, or 0 for keys that type nothing. */
-	static TCHAR CharacterFor(const FKeyEvent& KeyEvent)
-	{
-		// The platform usually says, and it has already applied shift and the keyboard layout.
-		const TCHAR FromPlatform = (TCHAR)KeyEvent.GetCharacter();
-		if (FromPlatform >= 32 && FromPlatform < 127)
-		{
-			return FromPlatform;
-		}
-
-		// It does not always say, so the common keys are worked out from the key itself. A console that can be
-		// typed into with a map name is enough for now.
-		const FKey Key = KeyEvent.GetKey();
-		const bool bShift = KeyEvent.IsShiftDown();
-		const FString Name = Key.GetFName().ToString();
-		if (Name.Len() == 1)
-		{
-			const TCHAR C = Name[0];
-			if (C >= TEXT('A') && C <= TEXT('Z'))
-			{
-				return bShift ? C : (TCHAR)(C - TEXT('A') + TEXT('a'));
-			}
-			if (C >= TEXT('0') && C <= TEXT('9'))
-			{
-				return C;
-			}
-		}
-		if (Key == EKeys::SpaceBar)     { return TEXT(' '); }
-		if (Key == EKeys::Underscore)   { return TEXT('_'); }
-		if (Key == EKeys::Hyphen)       { return bShift ? TEXT('_') : TEXT('-'); }
-		if (Key == EKeys::Period)       { return TEXT('.'); }
-		if (Key == EKeys::Slash)        { return TEXT('/'); }
-		if (Key == EKeys::Backslash)    { return TEXT('\\'); }
-		if (Key == EKeys::Semicolon)    { return TEXT(';'); }
-		if (Key == EKeys::Quote)        { return TEXT('"'); }
-		return 0;
-	}
-
-	TWeakObjectPtr<ULambdaConsole> Console;
-};
-
 void ULambdaConsole::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
-
-	if (FSlateApplication::IsInitialized())
-	{
-		InputProcessor = MakeShared<FLambdaConsoleInput>(this);
-		// Ahead of everything: the console takes the keyboard off the game while it is open.
-		FSlateApplication::Get().RegisterInputPreProcessor(InputProcessor, 0);
-	}
 
 	ColorPrint(EchoColour(), TEXT("Lambda Engine console. Type 'map <name>' to load a map."));
 }
 
 void ULambdaConsole::Deinitialize()
 {
-	if (InputProcessor.IsValid() && FSlateApplication::IsInitialized())
-	{
-		FSlateApplication::Get().UnregisterInputPreProcessor(InputProcessor);
-	}
-	InputProcessor.Reset();
 	Super::Deinitialize();
 }
 

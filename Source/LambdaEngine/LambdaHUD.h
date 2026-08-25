@@ -22,6 +22,8 @@ protected:
 	void DrawCrosshair(float CenterX, float CenterY);
 	/** Source's main menu: the game's name, and what you can do about it, down the bottom left. */
 	void DrawMainMenu(class ULambdaMainMenu* Menu, float W, float H);
+	/** The face the menu and console are written in: the scheme's own, which is a real font and scales cleanly. */
+	UFont* UIFont() const;
 	/** Source's console: a panel over the top of the screen with what it has said, and the line being typed. */
 	void DrawConsole(class ULambdaConsole* Console, float W, float H);
 	void DrawPanel(float X, float Y, float W, float H);
