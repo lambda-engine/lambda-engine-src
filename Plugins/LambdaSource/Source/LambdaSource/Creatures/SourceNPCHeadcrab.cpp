@@ -123,6 +123,13 @@ ASourceNPCHeadcrab::EAttackCondition ASourceNPCHeadcrab::RangeAttack1Conditions(
 	{
 		return EAttackCondition::Blocked;
 	}
+	// Seeing him is not the same as being able to reach him: keep walking until the body is round the corner
+	// too, rather than leaping into it. Blocked, not TooClose - Source backs away here, but Source's crab has no
+	// route to walk and ours does, so walking on is both better and what the chase is already for.
+	if (!HasRoomToLeap())
+	{
+		return EAttackCondition::Blocked;
+	}
 	return EAttackCondition::CanAttack;
 }
 
@@ -485,4 +492,40 @@ void ASourceNPCHeadcrab::OnTakeDamage_Alive(float Damage, AActor* Attacker, cons
 	{
 		SetActivity(TEXT("ACT_FLINCH"));
 	}
+}
+
+bool ASourceNPCHeadcrab::HasRoomToLeap() const
+{
+	const UWorld* World = GetWorld();
+	const UCapsuleComponent* Capsule = GetCapsuleComponent();
+	if (!World || !Capsule || !Enemy.IsValid())
+	{
+		return true;
+	}
+
+	FVector Towards = Enemy->GetActorLocation() - GetActorLocation();
+	Towards.Z = 0.0f;
+	if (!Towards.Normalize())
+	{
+		return true;
+	}
+
+	// One hull width is what it takes to be clear of a corner the crab is still hugging.
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+	const float Clearance = HEADCRAB_LEAP_CLEARANCE * Scale;
+
+	const FVector Start = GetActorLocation();
+	const FVector End = Start + Towards * Clearance;
+
+	// Swept slightly slimmer than the crab really is: a hull the exact width of the mover reports a hit on
+	// whatever it is already brushing against, which at a corner is the corner, and it would never come free.
+	const FCollisionShape Shape = FCollisionShape::MakeCapsule(
+		Capsule->GetScaledCapsuleRadius() * 0.8f, Capsule->GetScaledCapsuleHalfHeight() * 0.8f);
+
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(HeadcrabLeapRoom), /*bTraceComplex=*/ false, this);
+	Params.AddIgnoredActor(Enemy.Get());
+
+	FHitResult Hit;
+	const bool bBlocked = World->SweepSingleByChannel(Hit, Start, End, FQuat::Identity, ECC_Visibility, Shape, Params);
+	return !bBlocked;
 }

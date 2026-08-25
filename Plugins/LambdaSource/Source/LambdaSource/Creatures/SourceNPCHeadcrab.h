@@ -42,6 +42,16 @@ protected:
 	/** CBaseHeadcrab::RangeAttack1Conditions, reduced to the answer the schedule needs. */
 	enum class EAttackCondition : uint8 { CanAttack, NotFacing, TooClose, TooFar, Blocked, NotReady };
 	EAttackCondition RangeAttack1Conditions(float FlDot, float FlDistUnits) const;
+	/**
+	 * Whether there is room to launch: the crab's own hull swept the first part of the way to its enemy.
+	 *
+	 * CBaseHeadcrab::RangeAttack1Conditions does this with an eight unit hull trace, and only when the enemy is
+	 * higher up than the crab. Eight units is enough to catch a crab jammed against something, which is what it
+	 * was for. It is not enough for a crab that has just come round a corner: its eyes clear the corner before
+	 * its body does, so it leaps, clips the corner and lands nowhere. Ours sweeps a hull's width, and does it
+	 * whichever way the enemy is, so the crab keeps walking until it has actually rounded the corner.
+	 */
+	bool HasRoomToLeap() const;
 
 	/** CBaseHeadcrab::JumpAttack + Leap: launch at a world position (the enemy's eyes) or hop randomly. */
 	void JumpAttack(bool bRandomJump, const FVector& WorldPos);
@@ -63,6 +73,9 @@ protected:
 	// npc_headcrab.cpp
 	static constexpr float HEADCRAB_MIN_JUMP_DIST = 48.0f;
 	static constexpr float HEADCRAB_MAX_JUMP_DIST = 256.0f;
+
+	/** How far ahead the crab must be able to move its own body before it will leap. */
+	static constexpr float HEADCRAB_LEAP_CLEARANCE = 24.0f;
 	static constexpr float HEADCRAB_IGNORE_WORLD_COLLISION_TIME = 0.5f;
 	/** GetEnemies()->SetFreeKnowledgeDuration(5.0): how long it keeps an enemy it cannot see. */
 	static constexpr float ENEMY_FREE_KNOWLEDGE = 5.0f;
