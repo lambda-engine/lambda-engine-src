@@ -175,8 +175,6 @@ void ALambdaHUD::DrawMainMenu(ULambdaMainMenu* Menu, float W, float H)
 	{
 		return;
 	}
-	// The controller may not have existed when the menu opened, so the cursor is settled here.
-	Menu->TickInputState();
 	if (Menu->IsPauseMenu())
 	{
 		// Over a running game the game stays visible, dimmed, the way pausing looks in Source.
@@ -454,6 +452,13 @@ void ALambdaHUD::DrawHUD()
 	UGameInstance* Instance = GetGameInstance();
 	ULambdaConsole* Console = Instance ? Instance->GetSubsystem<ULambdaConsole>() : nullptr;
 	ULambdaMainMenu* Menu = Instance ? Instance->GetSubsystem<ULambdaMainMenu>() : nullptr;
+
+	// Every frame, not only while the menu is up: this is what puts the input mode back after a level change,
+	// when the controller is a new one and the movie player has had the viewport. It acts only on a change.
+	if (Menu)
+	{
+		Menu->TickInputState();
+	}
 
 	// The HUD belongs to the game, so the game UI covers it rather than sharing the screen with it - Source hides
 	// every hud element while it is up. The frame counter above is the engine's, and stays.

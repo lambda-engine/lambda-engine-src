@@ -8,6 +8,7 @@
 #include "SourcePropPhysics.h"
 #include "LambdaFileSystem.h"
 #include "LambdaLoadProgress.h"
+#include "SourceSkeletalMesh.h"
 #include "LambdaMaterialLibrary.h"
 #include "LambdaSourceModule.h"
 #include "LambdaSourceSettings.h"
@@ -155,6 +156,10 @@ void ASourceBSPWorldActor::ClearMap()
 	BSP.Reset();
 	LoadedMapName.Reset();
 	MaterialLibrary = nullptr;
+	// The models built for the last map are cached across the whole process, but the materials on them belong to
+	// the library above, which has just been let go. Keeping the meshes would keep meshes whose materials are
+	// about to be collected, and a model whose materials have gone is drawn in the default grey.
+	FSourceSkeletalMesh::FlushCache();
 	UnhandledEntityCounts.Reset();
 	Stats = FSourceBSPLoadStats();
 	bSpawnedSkyLight = false;
