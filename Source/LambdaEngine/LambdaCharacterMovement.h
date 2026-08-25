@@ -35,6 +35,15 @@ public:
 	 */
 	virtual void CalcVelocity(float DeltaTime, float Friction, bool bFluid, float BrakingDeceleration) override;
 
+	/**
+	 * CGameMovement::CheckJumpButton: a ducked player may jump.
+	 *
+	 * Unreal bans it twice over - once on the character (CanJumpInternal) and once here, where CanAttemptJump
+	 * refuses while bWantsToCrouch. Source refuses only while the unduck transition is running, and has a branch
+	 * specifically for jumping while ducked.
+	 */
+	virtual bool CanAttemptJump() const override;
+
 	/** m_surfaceFriction: how slippery what we are standing on is. Ice would lower it; nothing does yet. */
 	float SurfaceFriction = 1.0f;
 

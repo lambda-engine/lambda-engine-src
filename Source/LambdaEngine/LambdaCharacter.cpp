@@ -2146,3 +2146,9 @@ void ALambdaCharacter::UpdateEyeHeight(float DeltaSeconds)
 	const float HalfHeight = GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
 	FirstPersonCamera->SetRelativeLocation(FVector(0.0f, 0.0f, EyeAboveFeetCm - HalfHeight));
 }
+
+bool ALambdaCharacter::CanJumpInternal_Implementation() const
+{
+	// Everything Unreal asks except being crouched, which Source allows.
+	return JumpIsAllowedInternal();
+}

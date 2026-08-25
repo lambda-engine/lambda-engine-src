@@ -155,6 +155,15 @@ public:
 	virtual void OnStartCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust) override;
 	virtual void OnEndCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust) override;
 
+	/**
+	 * CGameMovement::CheckJumpButton: a ducked player may jump.
+	 *
+	 * Unreal forbids it outright - CanJumpInternal_Implementation is "return !IsCrouched() && ...". Source only
+	 * refuses while the unduck transition is still running, and has a branch specifically for jumping while
+	 * ducked, which sets the jump velocity rather than adding to it.
+	 */
+	virtual bool CanJumpInternal_Implementation() const override;
+
 protected:
 	void Input_Use();
 	/** CPlayerPickupController: picks up the physics prop in front of the player, or drops the carried one. */

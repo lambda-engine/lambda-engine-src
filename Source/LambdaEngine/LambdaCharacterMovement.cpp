@@ -40,7 +40,17 @@ ULambdaCharacterMovement::ULambdaCharacterMovement()
 	// scale the wish direction we read back out of it.
 	AirControlBoostMultiplier = 1.0f;
 	AirControlBoostVelocityThreshold = 0.0f;
+
+	// Unreal will not let a crouched character walk off a ledge. Source has no such rule - duck at the edge of a
+	// drop in Half-Life and you go over it - so the rule goes.
+	bCanWalkOffLedgesWhenCrouching = true;
 	bMaintainHorizontalGroundVelocity = true;
+}
+
+bool ULambdaCharacterMovement::CanAttemptJump() const
+{
+	// Unreal's, less the "and not crouching" it adds.
+	return IsJumpAllowed() && (IsMovingOnGround() || IsFalling());
 }
 
 void ULambdaCharacterMovement::CalcVelocity(float DeltaTime, float Friction, bool bFluid, float BrakingDeceleration)
