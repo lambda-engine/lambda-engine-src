@@ -109,6 +109,13 @@ static FAutoConsoleVariableRef CVarCrouchAuto(
 	GCrouchAuto,
 	TEXT("\"<seconds> [delay_s]\": hold duck for that long"));
 
+static FString GJumpAuto;
+static FAutoConsoleVariableRef CVarJumpAuto(
+	TEXT("jump.auto"),
+	GJumpAuto,
+	TEXT("\"<delay_s> [duck_after_s]\": jump, optionally duck that long after leaving the ground, and report "
+		 "how high the feet got - which is how a plain jump and a crouch jump are measured"));
+
 static FString GPropCarryAuto;
 static FAutoConsoleVariableRef CVarPropCarryAuto(
 	TEXT("propcarry.auto"),
@@ -837,6 +844,41 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 		}
 	}
 
+	// jump.auto: jump, optionally duck in mid air, and report how high the feet reached.
+	if (bAutoJumpArmed)
+	{
+		const float Scale = ULambdaSourceSettings::Get().UnitScale;
+		const float FeetZ = GetActorLocation().Z - GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+		if (AutoJumpDelay > 0.0f)
+		{
+			AutoJumpDelay -= DeltaSeconds;
+			AutoJumpStartFeetZ = FeetZ;
+			AutoJumpPeakFeetZ = FeetZ;
+			if (AutoJumpDelay <= 0.0f)
+			{
+				Jump();
+				AutoJumpElapsed = 0.0f;
+			}
+		}
+		else
+		{
+			AutoJumpElapsed += DeltaSeconds;
+			AutoJumpPeakFeetZ = FMath::Max(AutoJumpPeakFeetZ, FeetZ);
+			if (AutoJumpDuckAfter >= 0.0f && AutoJumpElapsed >= AutoJumpDuckAfter && !bIsCrouched)
+			{
+				Crouch();
+			}
+			// Back on the ground, so the jump is over and worth reporting.
+			if (AutoJumpElapsed > 0.2f && GetCharacterMovement() && GetCharacterMovement()->IsMovingOnGround())
+			{
+				bAutoJumpArmed = false;
+				UE_LOG(LogLambda, Display, TEXT("jump.auto: feet reached %.1f units above where they started%s"),
+					(AutoJumpPeakFeetZ - AutoJumpStartFeetZ) / Scale,
+					AutoJumpDuckAfter >= 0.0f ? TEXT(" (ducked in mid air)") : TEXT(""));
+			}
+		}
+	}
+
 	// crouch.auto: hold duck, so the ducked hull and view can be tested.
 	if (AutoCrouchSeconds > 0.0f)
 	{
@@ -989,6 +1031,14 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 				GWalkAuto.ParseIntoArrayWS(Parts);
 				AutoWalkSeconds = Parts.Num() > 0 ? FCString::Atof(*Parts[0]) : 2.0f;
 				AutoWalkDelay = Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : 2.0f;
+			}
+			if (!GJumpAuto.IsEmpty())
+			{
+				TArray<FString> Parts;
+				GJumpAuto.ParseIntoArrayWS(Parts);
+				AutoJumpDelay = Parts.Num() > 0 ? FCString::Atof(*Parts[0]) : 1.0f;
+				AutoJumpDuckAfter = Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : -1.0f;
+				bAutoJumpArmed = true;
 			}
 			if (!GCrouchAuto.IsEmpty())
 			{
@@ -2034,12 +2084,13 @@ void ALambdaCharacter::OnStartCrouch(float HalfHeightAdjust, float ScaledHalfHei
 {
 	Super::OnStartCrouch(HalfHeightAdjust, ScaledHalfHeightAdjust);
 
-	// On the ground Unreal has already done what Source does - shrunk the capsule and dropped its centre so the
-	// feet stay put. In the air Source does the opposite, and this undoes Unreal's drop and applies the lift:
-	// twice the adjustment, which is the whole difference between the two hulls.
+	// On the ground Unreal does what Source does: shrink the capsule and drop its centre so the feet stay put.
+	// In the air it keeps the centre instead (bCrouchMaintainsBaseLocation is set false for every movement mode
+	// but walking), so the feet already come up by half the hull difference on their own. Source lifts them by
+	// the whole of it, so what is owed is the other half - one adjustment, not two.
 	if (GetCharacterMovement() && GetCharacterMovement()->IsFalling())
 	{
-		AddActorWorldOffset(FVector(0.0f, 0.0f, 2.0f * ScaledHalfHeightAdjust), /*bSweep=*/ false);
+		AddActorWorldOffset(FVector(0.0f, 0.0f, ScaledHalfHeightAdjust), /*bSweep=*/ false);
 	}
 }
 
@@ -2047,10 +2098,11 @@ void ALambdaCharacter::OnEndCrouch(float HalfHeightAdjust, float ScaledHalfHeigh
 {
 	Super::OnEndCrouch(HalfHeightAdjust, ScaledHalfHeightAdjust);
 
-	// FinishUnDuck: standing up in mid air puts the feet back down where they would have been.
+	// FinishUnDuck: standing up in mid air puts the feet back where they would have been, and again Unreal has
+	// already done half of it by growing the capsule around a fixed centre.
 	if (GetCharacterMovement() && GetCharacterMovement()->IsFalling())
 	{
-		AddActorWorldOffset(FVector(0.0f, 0.0f, -2.0f * ScaledHalfHeightAdjust), /*bSweep=*/ false);
+		AddActorWorldOffset(FVector(0.0f, 0.0f, -ScaledHalfHeightAdjust), /*bSweep=*/ false);
 	}
 }
 
@@ -2067,9 +2119,14 @@ void ALambdaCharacter::UpdateEyeHeight(float DeltaSeconds)
 	const float DuckEyeCm = 28.0f * Scale;
 	const float TargetCm = bIsCrouched ? DuckEyeCm : StandEyeCm;
 
-	if (EyeAboveFeetCm < 0.0f)
+	// "Finish ducking immediately if duck time is over or not on ground" (CGameMovement::Duck). In the air the
+	// duck is instant, and it has to be: ducking off the ground lifts the feet by the whole hull difference at
+	// once, and only an equally instant drop in the view offset leaves the head where it was. Easing it is what
+	// makes the view jump - the feet move now and the eye follows over the next four tenths of a second.
+	const bool bInAir = GetCharacterMovement() && GetCharacterMovement()->IsFalling();
+	if (EyeAboveFeetCm < 0.0f || bInAir)
 	{
-		EyeAboveFeetCm = TargetCm;	// first frame: start where we are, do not sweep up from the floor
+		EyeAboveFeetCm = TargetCm;
 	}
 	else
 	{

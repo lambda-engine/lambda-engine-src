@@ -270,6 +270,12 @@ protected:
 
 	float AutoCrouchSeconds = 0.0f;
 	float AutoCrouchDelay = 0.0f;
+	bool bAutoJumpArmed = false;
+	float AutoJumpDelay = 0.0f;
+	float AutoJumpDuckAfter = -1.0f;
+	float AutoJumpElapsed = 0.0f;
+	float AutoJumpStartFeetZ = 0.0f;
+	float AutoJumpPeakFeetZ = 0.0f;
 	float DecalTestScreenshotTimer = 0.0f;
 	bool bAutoFireAimHead = false;
 	/** m_Local.m_vecPunchAngle / m_vecPunchAngleVel (pitch, yaw, roll degrees). */
