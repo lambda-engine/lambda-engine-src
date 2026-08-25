@@ -15,6 +15,7 @@
 #include "LambdaCharacter.h"
 #include "SourceDecalScript.h"
 #include "SourceSurfaceProps.h"
+#include "LambdaLoadingScreen.h"
 
 DEFINE_LOG_CATEGORY(LogLambda);
 
@@ -71,6 +72,9 @@ void FLambdaEngineModule::StartupModule()
 {
 	UE_LOG(LogLambda, Log, TEXT("LambdaEngine game module started"));
 	TranslateSourceLauncherArgs();
+	// Armed before the engine loads its first level, so the game's startup is covered rather than showing black
+	// until the menu appears.
+	FLambdaLoadingScreen::Arm();
 }
 
 void FLambdaEngineModule::ShutdownModule()
@@ -97,6 +101,7 @@ static void LambdaMapCommand(const TArray<FString>& Args, UWorld* World)
 	const FString MapName = Args[0];
 	const FString EntryMap = UGameMapsSettings::GetGameDefaultMap();
 	UE_LOG(LogLambda, Log, TEXT("lambda.map: reloading '%s' with Source map '%s'"), *EntryMap, *MapName);
+	FLambdaLoadingScreen::Arm();
 	UGameplayStatics::OpenLevel(World, FName(*EntryMap), true, FString::Printf(TEXT("map=%s"), *MapName));
 }
 

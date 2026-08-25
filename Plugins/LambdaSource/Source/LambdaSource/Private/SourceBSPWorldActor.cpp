@@ -7,6 +7,7 @@
 #include "SourcePropData.h"
 #include "SourcePropPhysics.h"
 #include "LambdaFileSystem.h"
+#include "LambdaLoadProgress.h"
 #include "LambdaMaterialLibrary.h"
 #include "LambdaSourceModule.h"
 #include "LambdaSourceSettings.h"
@@ -75,12 +76,18 @@ bool ASourceBSPWorldActor::LoadBSPFile(const FString& RelativePath)
 	const double StartTime = FPlatformTime::Seconds();
 	ClearMap();
 
+	// Everything below reports to the loading screen as it goes, the way Source's progress points drive its
+	// loading dialog. The screen is drawn on another thread, so it keeps moving while this blocks.
+	FLambdaLoadProgress::Begin(FPaths::GetBaseFilename(RelativePath));
+	FLambdaLoadProgress::SetStage(ELambdaLoadStage::ReadingMap);
+
 	// Read via the virtual file system so the map can come from a loose game dir OR a mounted VPK.
 	TArray<uint8> BSPBytes;
 	if (!FLambdaFileSystem::Get().ReadFile(RelativePath, BSPBytes))
 	{
 		UE_LOG(LogLambdaSource, Error, TEXT("BSP not found: '%s' (mounts: %s)"), *RelativePath,
 			*FString::Join(FLambdaFileSystem::Get().GetMountDescriptions(), TEXT("; ")));
+		FLambdaLoadProgress::End();
 		return false;
 	}
 
@@ -89,6 +96,7 @@ bool ASourceBSPWorldActor::LoadBSPFile(const FString& RelativePath)
 	if (!NewBSP->LoadFromMemory(MoveTemp(BSPBytes), &Error))
 	{
 		UE_LOG(LogLambdaSource, Error, TEXT("Failed to load BSP '%s': %s"), *RelativePath, *Error);
+		FLambdaLoadProgress::End();
 		return false;
 	}
 
@@ -106,11 +114,14 @@ bool ASourceBSPWorldActor::LoadBSPFile(const FString& RelativePath)
 	Stats.NumFaces = BSP->Faces.Num();
 	Stats.NumEntities = BSP->Entities.Num();
 
+	FLambdaLoadProgress::SetStage(ELambdaLoadStage::BuildingWorld);
 	BuildWorldGeometry();
+	FLambdaLoadProgress::SetStage(ELambdaLoadStage::SpawningEntities);
 	SpawnEntities();
 
 	// Source precaches decals in LevelInitPreEntity and impact sounds with the surface properties; doing it here
 	// keeps the first shot from building all of it inside one frame.
+	FLambdaLoadProgress::SetStage(ELambdaLoadStage::Precaching);
 	SourceImpact::Precache(MaterialLibrary, this);
 
 	Stats.NumMaterials = MaterialLibrary->GetNumMaterials();
@@ -121,6 +132,7 @@ bool ASourceBSPWorldActor::LoadBSPFile(const FString& RelativePath)
 		*LoadedMapName, Stats.LoadTimeSeconds, Stats.NumFaces, Stats.NumRenderedFaces, Stats.NumCollisionOnlyFaces, Stats.NumSkippedFaces, Stats.NumDisplacementFaces,
 		Stats.NumVertices, Stats.NumTriangles, Stats.NumSections, Stats.NumMaterials, Stats.NumTextures, Stats.NumEntities, Stats.NumLights, Stats.NumPlayerStarts, Stats.NumBrushEntities);
 	LogUnhandledEntities();
+	FLambdaLoadProgress::End();
 	return true;
 }
 
@@ -250,8 +262,12 @@ void ASourceBSPWorldActor::SpawnEntities()
 		}
 	}
 
+	const int32 NumEntities = FMath::Max(1, BSP->Entities.Num());
 	for (int32 EntityIndex = 0; EntityIndex < BSP->Entities.Num(); ++EntityIndex)
 	{
+		// This is where the models are loaded and the materials compiled, so it is where the bar spends most of
+		// its time. Reporting per entity is what keeps it moving instead of sitting still and then jumping.
+		FLambdaLoadProgress::SetStageFraction((float)EntityIndex / (float)NumEntities);
 		if (TemplatedEntities.Contains(EntityIndex))
 		{
 			continue;

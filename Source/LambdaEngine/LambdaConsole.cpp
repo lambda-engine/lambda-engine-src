@@ -1,6 +1,7 @@
 #include "LambdaConsole.h"
 
 #include "LambdaEngine.h"
+#include "LambdaLoadingScreen.h"
 
 #include "Engine/Engine.h"
 #include "Engine/GameInstance.h"
@@ -157,6 +158,7 @@ void ULambdaConsole::Execute(const FString& CommandLine)
 		Print(FString::Printf(TEXT("Loading map '%s'..."), *MapName));
 		SetOpen(false);
 		const FString EntryMap = UGameMapsSettings::GetGameDefaultMap();
+		FLambdaLoadingScreen::Arm();
 		UGameplayStatics::OpenLevel(World, FName(*EntryMap), true, FString::Printf(TEXT("map=%s"), *MapName));
 		return;
 	}

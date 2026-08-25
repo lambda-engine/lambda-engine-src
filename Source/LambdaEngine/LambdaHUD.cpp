@@ -12,6 +12,10 @@
 #include "LambdaMainMenu.h"
 #include "Engine/GameInstance.h"
 #include "Engine/FontFace.h"
+#include "EngineFontServices.h"
+#include "Fonts/FontMeasure.h"
+#include "LambdaFonts.h"
+#include "LambdaUITextures.h"
 
 ALambdaHUD::ALambdaHUD()
 {
@@ -20,35 +24,35 @@ ALambdaHUD::ALambdaHUD()
 
 void ALambdaHUD::LoadSchemeFont()
 {
-	// ClientScheme's CustomFontFiles: the scheme ships the face it wants next to the .res that names it, and the
-	// HUD fonts are all "Alte DIN 1451 Mittelschrift". Loaded from the game directory the same way as every other
-	// piece of game content, so a mod can drop its own face in and the HUD picks it up.
-	if (SchemeFont || SchemeFontFace)
+	// The scheme's face, shared with the loading screen and kept across map loads - see FLambdaFonts.
+	SchemeFont = FLambdaFonts::GetSchemeFont();
+}
+
+void ALambdaHUD::DrawTextAtHeight(const FString& Text, const FLinearColor& Colour, float X, float Y, UFont* Font, float PixelHeight)
+{
+	if (!Canvas || !Font || Text.IsEmpty())
 	{
 		return;
 	}
-	TArray<uint8> FontData;
-	const FLambdaFileSystem& Files = FLambdaFileSystem::Get();
-	if (!Files.ReadFile(TEXT("resource/din1451alt.ttf"), FontData) || FontData.Num() == 0)
+	const FSlateFontInfo Info(Font, FMath::Max(1, FMath::RoundToInt(PixelHeight)));
+	FCanvasTextItem Item(FVector2D(X, Y), FText::FromString(Text), Info, Colour);
+	Item.EnableShadow(FLinearColor::Transparent);
+	Canvas->DrawItem(Item);
+}
+
+FVector2D ALambdaHUD::MeasureTextAtHeight(const FString& Text, UFont* Font, float PixelHeight) const
+{
+	if (!Font || Text.IsEmpty() || !FEngineFontServices::IsInitialized())
 	{
-		return;
+		return FVector2D::ZeroVector;
 	}
-	UFontFace* Face = NewObject<UFontFace>(this);
-	Face->LoadingPolicy = EFontLoadingPolicy::Inline;
-	Face->FontFaceData = FFontFaceData::MakeFontFaceData(MoveTemp(FontData));
-
-	UFont* Font = NewObject<UFont>(this);
-	Font->FontCacheType = EFontCacheType::Runtime;
-	FTypefaceEntry& Entry = Font->CompositeFont.DefaultTypeface.Fonts.AddDefaulted_GetRef();
-	Entry.Name = TEXT("Regular");
-	Entry.Font = FFontData(Face);
-	Font->LegacyFontSize = 31;	// HudTextLarge's "tall"
-
-	SchemeFontFace = Face;
-	SchemeFont = Font;
-	// Only the number fields take it. Black Mesa sets DIN on the HUD's numerals and leaves the smaller captions
-	// to another face, and letting it loose on everything just makes the labels enormous.
-	UE_LOG(LogLambda, Log, TEXT("HUD: using the scheme font resource/din1451alt.ttf for the number fields"));
+	const TSharedPtr<FSlateFontMeasure> Measure = FEngineFontServices::Get().GetFontMeasure();
+	if (!Measure.IsValid())
+	{
+		return FVector2D::ZeroVector;
+	}
+	const FSlateFontInfo Info(Font, FMath::Max(1, FMath::RoundToInt(PixelHeight)));
+	return FVector2D(Measure->Measure(Text, Info));
 }
 
 void ALambdaHUD::DrawPanel(float X, float Y, float W, float H)
@@ -173,23 +177,41 @@ void ALambdaHUD::DrawMainMenu(ULambdaMainMenu* Menu, float W, float H)
 	}
 	// The controller may not have existed when the menu opened, so the cursor is settled here.
 	Menu->TickInputState();
-	// Over a running game the game stays visible, dimmed, the way pausing looks in Source. On the main menu
-	// there is no game behind it and nothing yet to put there, so it sits on black.
-	DrawRect(Menu->IsPauseMenu() ? FLinearColor(0.0f, 0.0f, 0.0f, 0.6f) : FLinearColor(0.02f, 0.02f, 0.02f, 1.0f),
-		0.0f, 0.0f, W, H);
+	if (Menu->IsPauseMenu())
+	{
+		// Over a running game the game stays visible, dimmed, the way pausing looks in Source.
+		DrawRect(FLinearColor(0.0f, 0.0f, 0.0f, 0.6f), 0.0f, 0.0f, W, H);
+	}
+	else
+	{
+		// The menu's own background: console/background01, _widescreen for the wide one, which is what Source
+		// calls it (engine/cl_main.cpp, CL_GetStartupImage). Stretched to fill, over black in case it is missing
+		// or does not reach the corners.
+		DrawRect(FLinearColor(0.02f, 0.02f, 0.02f, 1.0f), 0.0f, 0.0f, W, H);
+		UTexture2D* Background = FLambdaUITextures::Get(TEXT("console/background01_widescreen"));
+		if (!Background)
+		{
+			Background = FLambdaUITextures::Get(TEXT("console/background01"));
+		}
+		if (Background && Canvas)
+		{
+			Canvas->SetDrawColor(FColor::White);
+			Canvas->DrawTile(Background, 0.0f, 0.0f, W, H, 0.0f, 0.0f,
+				Background->GetSizeX(), Background->GetSizeY(), BLEND_Opaque);
+		}
+	}
 
 	const float Scale = H / 480.0f;
 
-	// The game's name, where Source puts the logo.
+	// The mod's own name, from gameinfo.txt's "game" key - what Source titles a mod with everywhere else.
+	const FString GameName = FLambdaFileSystem::Get().GetGameName();
 	const float TitleHeight = 44.0f * Scale;
-	float Unused = 0.0f, FontHeight = 0.0f;
-	GetTextSize(TEXT("Wg"), Unused, FontHeight, MenuFont, 1.0f);
-	const float TitleScale = FontHeight > 0.0f ? TitleHeight / FontHeight : 1.0f;
-	DrawText(TEXT("LAMBDA ENGINE"), ULambdaMainMenu::TitleColour(), 32.0f * Scale, 48.0f * Scale, MenuFont, TitleScale);
+	DrawTextAtHeight(GameName.IsEmpty() ? TEXT("LAMBDA ENGINE") : GameName.ToUpper(),
+		ULambdaMainMenu::TitleColour(), 32.0f * Scale, 48.0f * Scale, MenuFont, TitleHeight);
 
 	// The items, down the bottom left, the way the old menu reads.
 	const float ItemHeight = 22.0f * Scale;
-	const float ItemScale = FontHeight > 0.0f ? (ItemHeight * 0.8f) / FontHeight : 1.0f;
+	const float TextHeight = ItemHeight * 0.8f;
 	TArray<FLambdaMenuItem>& Items = Menu->GetMutableItems();
 	float Y = H - 40.0f * Scale - Items.Num() * ItemHeight;
 
@@ -197,20 +219,18 @@ void ALambdaHUD::DrawMainMenu(ULambdaMainMenu* Menu, float W, float H)
 	{
 		const bool bSelected = (i == Menu->GetSelected());
 		const float X = 32.0f * Scale;
+		const FVector2D Size = MeasureTextAtHeight(Items[i].Label, MenuFont, TextHeight);
 
-		float TextW = 0.0f, TextH = 0.0f;
-		GetTextSize(Items[i].Label, TextW, TextH, MenuFont, ItemScale);
-
-		// Remember where it went, so a click lands on what was drawn.
-		Items[i].Bounds = FBox2D(FVector2D(X, Y), FVector2D(X + FMath::Max(TextW, 120.0f * Scale), Y + TextH));
+		// Remember where it went, so the mouse lands on what was drawn.
+		Items[i].Bounds = FBox2D(FVector2D(X, Y), FVector2D(X + FMath::Max(Size.X, 120.0f * Scale), Y + Size.Y));
 
 		if (bSelected)
 		{
 			// Source marks the one you are on with a bar down its left.
-			DrawRect(ULambdaMainMenu::SelectedColour(), X - 10.0f * Scale, Y, 3.0f * Scale, TextH);
+			DrawRect(ULambdaMainMenu::SelectedColour(), X - 10.0f * Scale, Y, 3.0f * Scale, Size.Y);
 		}
-		DrawText(Items[i].Label, bSelected ? ULambdaMainMenu::SelectedColour() : ULambdaMainMenu::ItemColour(),
-			X, Y, MenuFont, ItemScale);
+		DrawTextAtHeight(Items[i].Label, bSelected ? ULambdaMainMenu::SelectedColour() : ULambdaMainMenu::ItemColour(),
+			X, Y, MenuFont, TextHeight);
 		Y += ItemHeight;
 	}
 

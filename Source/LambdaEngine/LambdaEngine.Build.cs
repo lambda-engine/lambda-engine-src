@@ -20,6 +20,8 @@ public class LambdaEngine : ModuleRules
 		});
 
 		// SlateCore: the runtime font face the HUD builds from the scheme's own .ttf (FFontFaceData/FFontData).
-		PrivateDependencyModuleNames.AddRange(new string[] { "SlateCore", "Slate" });
+		// MoviePlayer: the loading screen, which has to be drawn on its own thread because the map load blocks
+		// the game thread from start to finish.
+		PrivateDependencyModuleNames.AddRange(new string[] { "SlateCore", "Slate", "MoviePlayer" });
 	}
 }

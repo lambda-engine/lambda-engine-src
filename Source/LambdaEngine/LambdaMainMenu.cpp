@@ -3,6 +3,7 @@
 #include "LambdaConsole.h"
 #include "LambdaEngine.h"
 #include "LambdaFileSystem.h"
+#include "LambdaLoadingScreen.h"
 #include "LambdaSourceSettings.h"
 #include "SourceKeyValues.h"
 
@@ -157,6 +158,7 @@ void ULambdaMainMenu::RunCommand(const FString& Command)
 		Hide();
 		if (World)
 		{
+			FLambdaLoadingScreen::Arm();
 			const FString EntryMap = UGameMapsSettings::GetGameDefaultMap();
 			UGameplayStatics::OpenLevel(World, FName(*EntryMap), true, FString::Printf(TEXT("map=%s"), *Map));
 		}

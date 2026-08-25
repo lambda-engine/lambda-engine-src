@@ -24,6 +24,16 @@ protected:
 	void DrawMainMenu(class ULambdaMainMenu* Menu, float W, float H);
 	/** The face the menu and console are written in: the scheme's own, which is a real font and scales cleanly. */
 	UFont* UIFont() const;
+	/**
+	 * Draws text with the glyphs rasterised at the height asked for.
+	 *
+	 * DrawText's scale is not a size: Canvas rasterises a runtime font once at its LegacyFontSize and then
+	 * magnifies the result (FCanvasSimpleTextItem::DrawStringInternal_RuntimeCache passes only the DPI scale to
+	 * the font cache), so anything drawn bigger than 31px was a blown-up bitmap. This asks for the size instead.
+	 */
+	void DrawTextAtHeight(const FString& Text, const FLinearColor& Colour, float X, float Y, UFont* Font, float PixelHeight);
+	/** What DrawTextAtHeight would take up, for laying out and for knowing what the mouse is over. */
+	FVector2D MeasureTextAtHeight(const FString& Text, UFont* Font, float PixelHeight) const;
 	/** Where the mouse was last frame, so hovering only takes the selection when the mouse actually moves. */
 	FVector2D LastMenuMouse = FVector2D::ZeroVector;
 	/** Source's console: a panel over the top of the screen with what it has said, and the line being typed. */
@@ -62,8 +72,6 @@ protected:
 	/** Black Mesa's own face, loaded from the game directory at startup; null falls back to the engine font. */
 	UPROPERTY(Transient)
 	TObjectPtr<UFont> SchemeFont;
-	UPROPERTY(Transient)
-	TObjectPtr<class UFontFace> SchemeFontFace;
 	void LoadSchemeFont();
 	UPROPERTY(Transient)
 	TWeakObjectPtr<class ULambdaMaterialLibrary> Materials;
