@@ -13,8 +13,16 @@ player actually runs, and is where packaging puts the built game.
 lambda-engine-src/            this repository - the Unreal project
   LambdaEngine.uproject
   GameDir.txt                 where the game repository is on this machine (see below)
-  Source/LambdaEngine/        game module: ALambdaGameMode, ALambdaCharacter (HL2-style FPS), console commands
-  Plugins/LambdaSource/       Source-format runtime: BSP/VMT/VTF/KeyValues/VPK parsers, virtual file system, world actor
+  Source/LambdaEngine/        game module: ALambdaGameMode, ALambdaCharacter (HL2-style FPS), weapons, HUD, menu
+  Plugins/LambdaSource/       the Source-format runtime, in folders named after what they do:
+    Core/                     module, settings, stats, unit/axis conversion
+    FileSystem/               the virtual file system and its VPK archives
+    Formats/                  BSP, MDL, VTF, PHY, WAV, KeyValues readers
+    Materials/  Audio/        VMT -> material, soundscripts, surface properties, decal scripts
+    World/                    the BSP world actor, geometry building, entity parsing and I/O
+    Entities/  Creatures/     brush and point entities; the NPCs
+    Weapons/  Gameplay/       weapon scripts, ammo table, damage, view punch
+    Rendering/                studio models, runtime skeletal meshes, ragdolls, decals, particles
   Config/  Content/
   Build/Windows/              Application.ico - the icon compiled into the packaged exe
   Tools/                      dev scripts: GenerateProjectFiles / Build / CreateAssets / Editor / Env
