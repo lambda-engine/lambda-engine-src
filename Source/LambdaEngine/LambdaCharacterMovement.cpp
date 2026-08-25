@@ -25,8 +25,21 @@ static FAutoConsoleVariableRef CVarSvAirSpeedCap(TEXT("sv_airspeedcap"), SvAirSp
 
 ULambdaCharacterMovement::ULambdaCharacterMovement()
 {
-	// Unreal's own air steering would fight ours, and its braking never runs because friction replaces it.
-	AirControl = 0.0f;
+	// Full air control, which sounds like the opposite of what a Quake port wants and is not.
+	//
+	// PhysFalling does not hand CalcVelocity the player's actual input: it works out
+	// GetFallingLateralAcceleration - the input scaled by AirControl - and substitutes that for Acceleration
+	// while CalcVelocity runs. Setting AirControl to zero, on the reasoning that our own air acceleration
+	// replaces Unreal's, therefore fed the wish direction nothing at all, and there was no air movement of any
+	// kind: jump and hold forward and you went straight up and came straight back down.
+	//
+	// So the input is passed through whole and QuakeAirAccelerate does the limiting, which is where the limit
+	// belongs - sv_airspeedcap is what says how much of it counts.
+	AirControl = 1.0f;
+	// And passed through unchanged: Unreal boosts air control below a speed threshold, which would quietly
+	// scale the wish direction we read back out of it.
+	AirControlBoostMultiplier = 1.0f;
+	AirControlBoostVelocityThreshold = 0.0f;
 	bMaintainHorizontalGroundVelocity = true;
 }
 

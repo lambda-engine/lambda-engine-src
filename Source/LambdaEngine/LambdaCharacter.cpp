@@ -249,7 +249,6 @@ void ALambdaCharacter::ApplySourceMovementSettings()
 	// Movement is Quake's now (ULambdaCharacterMovement), so the numbers Unreal would use to shape acceleration
 	// and braking no longer apply: sv_accelerate, sv_friction and sv_stopspeed do that instead. MaxAcceleration
 	// survives only as the scale the input vector is read back out of, so it wants to be exactly the top speed.
-	Move->AirControl = 0.0f;
 	Move->MaxAcceleration = WalkSpeedCm;
 	Move->BrakingDecelerationWalking = 0.0f;
 	Move->GroundFriction = 0.0f;
@@ -854,16 +853,22 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 			AutoJumpDelay -= DeltaSeconds;
 			AutoJumpStartFeetZ = FeetZ;
 			AutoJumpPeakFeetZ = FeetZ;
+			AutoJumpPeakAirSpeed = 0.0f;
 			if (AutoJumpDelay <= 0.0f)
 			{
 				Jump();
 				AutoJumpElapsed = 0.0f;
+				AutoJumpSpeedAtLaunch = GetCharacterMovement() ? GetCharacterMovement()->Velocity.Size2D() : 0.0f;
 			}
 		}
 		else
 		{
 			AutoJumpElapsed += DeltaSeconds;
 			AutoJumpPeakFeetZ = FMath::Max(AutoJumpPeakFeetZ, FeetZ);
+			if (GetCharacterMovement() && GetCharacterMovement()->IsFalling())
+			{
+				AutoJumpPeakAirSpeed = FMath::Max(AutoJumpPeakAirSpeed, GetCharacterMovement()->Velocity.Size2D());
+			}
 			if (AutoJumpDuckAfter >= 0.0f && AutoJumpElapsed >= AutoJumpDuckAfter && !bIsCrouched)
 			{
 				Crouch();
@@ -872,8 +877,8 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 			if (AutoJumpElapsed > 0.2f && GetCharacterMovement() && GetCharacterMovement()->IsMovingOnGround())
 			{
 				bAutoJumpArmed = false;
-				UE_LOG(LogLambda, Display, TEXT("jump.auto: feet reached %.1f units above where they started%s"),
-					(AutoJumpPeakFeetZ - AutoJumpStartFeetZ) / Scale,
+				UE_LOG(LogLambda, Display, TEXT("jump.auto: feet reached %.1f units above where they started, %.0f u/s at launch, fastest in the air %.0f u/s%s"),
+					(AutoJumpPeakFeetZ - AutoJumpStartFeetZ) / Scale, AutoJumpSpeedAtLaunch / Scale, AutoJumpPeakAirSpeed / Scale,
 					AutoJumpDuckAfter >= 0.0f ? TEXT(" (ducked in mid air)") : TEXT(""));
 			}
 		}
