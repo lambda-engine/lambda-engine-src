@@ -24,6 +24,8 @@ protected:
 	void DrawMainMenu(class ULambdaMainMenu* Menu, float W, float H);
 	/** The face the menu and console are written in: the scheme's own, which is a real font and scales cleanly. */
 	UFont* UIFont() const;
+	/** Where the mouse was last frame, so hovering only takes the selection when the mouse actually moves. */
+	FVector2D LastMenuMouse = FVector2D::ZeroVector;
 	/** Source's console: a panel over the top of the screen with what it has said, and the line being typed. */
 	void DrawConsole(class ULambdaConsole* Console, float W, float H);
 	void DrawPanel(float X, float Y, float W, float H);

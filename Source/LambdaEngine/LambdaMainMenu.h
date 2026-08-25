@@ -73,5 +73,8 @@ private:
 	int32 Selected = 0;
 	bool bActive = false;
 	bool bPauseMenu = false;
+	/** What the controller has actually been told, so it is told only when it changes. */
+	bool bInputStateApplied = false;
+	TWeakObjectPtr<APlayerController> LastController;
 
 };

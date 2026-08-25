@@ -73,27 +73,35 @@ void ULambdaMainMenu::TickInputState()
 	APlayerController* PC = Instance ? Instance->GetFirstLocalPlayerController() : nullptr;
 	if (!PC)
 	{
-		// The menu can open before there is a controller to show a cursor on; the HUD calls back every frame.
+		// The menu can open before there is a controller to show a cursor on; the HUD calls back every frame
+		// until there is one.
 		return;
 	}
-	if (PC->bShowMouseCursor != bActive)
+	if (bInputStateApplied == bActive && PC == LastController.Get())
 	{
-		PC->bShowMouseCursor = bActive;
-		// Without this the cursor is drawn but the game keeps swallowing the mouse, so nothing can be clicked.
-		if (bActive)
-		{
-			FInputModeGameAndUI Mode;
-			Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-			Mode.SetHideCursorDuringCapture(false);
-			PC->SetInputMode(Mode);
-		}
-		else
-		{
-			PC->SetInputMode(FInputModeGameOnly());
-		}
+		return;
 	}
-	PC->SetIgnoreLookInput(bActive);
-	PC->SetIgnoreMoveInput(bActive);
+	bInputStateApplied = bActive;
+	LastController = PC;
+
+	PC->bShowMouseCursor = bActive;
+	if (bActive)
+	{
+		// The cursor alone is not enough: without this the game still swallows the mouse and nothing can be
+		// clicked.
+		FInputModeGameAndUI Mode;
+		Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+		Mode.SetHideCursorDuringCapture(false);
+		PC->SetInputMode(Mode);
+		PC->SetIgnoreLookInput(true);
+		PC->SetIgnoreMoveInput(true);
+	}
+	else
+	{
+		PC->SetInputMode(FInputModeGameOnly());
+		// Cleared rather than decremented, so the player gets his hands back whatever happened while it was up.
+		PC->ResetIgnoreInputFlags();
+	}
 }
 
 void ULambdaMainMenu::MoveSelection(int32 Delta)
@@ -292,3 +300,33 @@ FString ULambdaMainMenu::ResolveLabel(const FString& Label)
 	// No localisation to hand: show the token without its marker rather than nothing at all.
 	return Token;
 }
+
+// The two commands Source drives the menu with (engine/vgui_baseui_interface.cpp). Escape runs gameui_activate
+// there too - sys_mainwind.cpp does exactly that - so the key and the command go the same way in.
+static ULambdaMainMenu* GetMenu(UWorld* World)
+{
+	UGameInstance* Instance = World ? World->GetGameInstance() : nullptr;
+	return Instance ? Instance->GetSubsystem<ULambdaMainMenu>() : nullptr;
+}
+
+static FAutoConsoleCommandWithWorld GLambdaGameUIActivate(
+	TEXT("gameui_activate"),
+	TEXT("Shows the game UI"),
+	FConsoleCommandWithWorldDelegate::CreateStatic([](UWorld* World)
+	{
+		if (ULambdaMainMenu* Menu = GetMenu(World))
+		{
+			Menu->ShowPauseMenu();
+		}
+	}));
+
+static FAutoConsoleCommandWithWorld GLambdaGameUIHide(
+	TEXT("gameui_hide"),
+	TEXT("Hides the game UI"),
+	FConsoleCommandWithWorldDelegate::CreateStatic([](UWorld* World)
+	{
+		if (ULambdaMainMenu* Menu = GetMenu(World))
+		{
+			Menu->Hide();
+		}
+	}));

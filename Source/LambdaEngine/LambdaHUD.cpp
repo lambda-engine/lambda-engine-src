@@ -173,8 +173,10 @@ void ALambdaHUD::DrawMainMenu(ULambdaMainMenu* Menu, float W, float H)
 	}
 	// The controller may not have existed when the menu opened, so the cursor is settled here.
 	Menu->TickInputState();
-	// No 3D behind it yet, so it sits on black.
-	DrawRect(FLinearColor(0.02f, 0.02f, 0.02f, 1.0f), 0.0f, 0.0f, W, H);
+	// Over a running game the game stays visible, dimmed, the way pausing looks in Source. On the main menu
+	// there is no game behind it and nothing yet to put there, so it sits on black.
+	DrawRect(Menu->IsPauseMenu() ? FLinearColor(0.0f, 0.0f, 0.0f, 0.6f) : FLinearColor(0.02f, 0.02f, 0.02f, 1.0f),
+		0.0f, 0.0f, W, H);
 
 	const float Scale = H / 480.0f;
 
@@ -210,6 +212,21 @@ void ALambdaHUD::DrawMainMenu(ULambdaMainMenu* Menu, float W, float H)
 		DrawText(Items[i].Label, bSelected ? ULambdaMainMenu::SelectedColour() : ULambdaMainMenu::ItemColour(),
 			X, Y, MenuFont, ItemScale);
 		Y += ItemHeight;
+	}
+
+	// Whatever the mouse is over is what is selected - but only once it has moved, or it would fight the arrow
+	// keys for the selection every frame.
+	if (APlayerController* PC = GetOwningPlayerController())
+	{
+		FVector2D Mouse;
+		if (PC->GetMousePosition(Mouse.X, Mouse.Y))
+		{
+			if (!LastMenuMouse.Equals(Mouse, 0.5f))
+			{
+				LastMenuMouse = Mouse;
+				Menu->SelectAt(Mouse);
+			}
+		}
 	}
 }
 
@@ -390,8 +407,6 @@ void ALambdaHUD::DrawHUD()
 	const float W = Canvas->ClipX;
 	const float H = Canvas->ClipY;
 
-	DrawCrosshair(W * 0.5f, H * 0.5f);
-
 	// cl_showfps, top right: the frame time is smoothed over ~half a second so the number reads steadily.
 	const float FrameTime = GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.0f;
 	SmoothedFrameTime = SmoothedFrameTime <= 0.0f ? FrameTime : FMath::Lerp(SmoothedFrameTime, FrameTime, 0.05f);
@@ -413,13 +428,16 @@ void ALambdaHUD::DrawHUD()
 	ULambdaConsole* Console = Instance ? Instance->GetSubsystem<ULambdaConsole>() : nullptr;
 	ULambdaMainMenu* Menu = Instance ? Instance->GetSubsystem<ULambdaMainMenu>() : nullptr;
 
-	// On the menu there is no game to draw a HUD over.
+	// The HUD belongs to the game, so the game UI covers it rather than sharing the screen with it - Source hides
+	// every hud element while it is up. The frame counter above is the engine's, and stays.
 	if (Menu && Menu->IsActive())
 	{
 		DrawMainMenu(Menu, W, H);
 		DrawConsole(Console, W, H);
 		return;
 	}
+
+	DrawCrosshair(W * 0.5f, H * 0.5f);
 
 	ALambdaCharacter* Player = Cast<ALambdaCharacter>(GetOwningPawn());
 	if (!Player)
