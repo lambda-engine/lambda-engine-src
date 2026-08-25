@@ -105,7 +105,8 @@ that declares it — see `lambda-engine/README.md`.
 
 * `-sourcemap=<name>` — BSP to load (`lambda/maps/<name>.bsp`). Not `-map=` (engine-reserved).
 * `-gamedir=<path>` — extra loose content root, searched first.
-* console `lambda.map <name>` — load another map; `lambda.maps` — list available maps across all mounts.
+* console `map <name>` — load another map; `maps` — list available maps across all mounts. The full command
+  list is in the game repository's README, and any of them can be given on the command line with `+` in front.
 
 ## What is implemented
 
