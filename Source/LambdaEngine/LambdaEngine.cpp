@@ -15,6 +15,7 @@
 #include "LambdaCharacter.h"
 #include "Materials/SourceDecalScript.h"
 #include "Materials/SourceSurfaceProps.h"
+#include "LambdaConsole.h"
 #include "LambdaLoadingScreen.h"
 
 DEFINE_LOG_CATEGORY(LogLambda);
@@ -28,43 +29,131 @@ namespace
 	 * it and exit. The game module loads before StartGameInstance runs, so the tokens are rewritten here into the
 	 * -sourcemap= switch the rest of the game already understands.
 	 */
+	/** Everything a "+command" on the command line asked for, in the order it was written. */
+	TArray<FString> GStartupCommands;
+
+	/**
+	 * Source-style launcher arguments. Anything written "+command arg arg" is a console command to run once the
+	 * game is up, exactly as typing it would - "lambda.exe +map startup +lambda.give weapon_smg1" starts on
+	 * startup.bsp with an SMG. A command runs to the end of the line or to the next token beginning with + or -.
+	 *
+	 * They have to be taken off the command line rather than left on it. UGameInstance::GetMapOverrideName reads
+	 * the first token that does not begin with '-' as a UE map to travel to, so a leftover "+map" would be read
+	 * as a map called "+map", fail to browse to it and quit. The game module loads before StartGameInstance runs,
+	 * which is what makes here the place to do it.
+	 *
+	 * "+map" is the one that cannot simply be queued: the map has to be known while the world is being made, long
+	 * before there is a console to type into, so it becomes the -sourcemap= switch the rest of the game reads.
+	 */
 	void TranslateSourceLauncherArgs()
 	{
 		const FString CmdLine = FCommandLine::Get();
 
-		// Find "+map" standing alone as a token.
-		int32 TokenStart = INDEX_NONE;
-		for (int32 i = 0; i + 4 <= CmdLine.Len(); ++i)
+		// Split into tokens, keeping quoted runs together.
+		TArray<FString> Tokens;
 		{
-			if ((i == 0 || FChar::IsWhitespace(CmdLine[i - 1]))
-				&& FCString::Strnicmp(*CmdLine + i, TEXT("+map"), 4) == 0
-				&& (i + 4 == CmdLine.Len() || FChar::IsWhitespace(CmdLine[i + 4])))
+			FString Current;
+			bool bInQuotes = false;
+			for (int32 i = 0; i < CmdLine.Len(); ++i)
 			{
-				TokenStart = i;
-				break;
+				const TCHAR Ch = CmdLine[i];
+				if (Ch == TEXT('"'))
+				{
+					bInQuotes = !bInQuotes;
+					Current.AppendChar(Ch);
+				}
+				else if (!bInQuotes && FChar::IsWhitespace(Ch))
+				{
+					if (!Current.IsEmpty())
+					{
+						Tokens.Add(Current);
+						Current.Reset();
+					}
+				}
+				else
+				{
+					Current.AppendChar(Ch);
+				}
+			}
+			if (!Current.IsEmpty())
+			{
+				Tokens.Add(Current);
 			}
 		}
-		if (TokenStart == INDEX_NONE)
+
+		FString MapName;
+		TArray<FString> Kept;
+		for (int32 i = 0; i < Tokens.Num(); ++i)
+		{
+			if (!Tokens[i].StartsWith(TEXT("+")) || Tokens[i].Len() < 2)
+			{
+				Kept.Add(Tokens[i]);
+				continue;
+			}
+
+			// The command, and its arguments up to the next + or - token.
+			FString Command = Tokens[i].RightChop(1);
+			TArray<FString> Args;
+			while (i + 1 < Tokens.Num() && !Tokens[i + 1].StartsWith(TEXT("+")) && !Tokens[i + 1].StartsWith(TEXT("-")))
+			{
+				Args.Add(Tokens[++i].TrimQuotes());
+			}
+
+			if (Command.Equals(TEXT("map"), ESearchCase::IgnoreCase))
+			{
+				MapName = Args.Num() > 0 ? Args[0] : FString();
+				continue;
+			}
+
+			const FString Line = Args.Num() > 0
+				? FString::Printf(TEXT("%s %s"), *Command, *FString::Join(Args, TEXT(" ")))
+				: Command;
+			GStartupCommands.Add(Line);
+		}
+
+		if (MapName.IsEmpty() && GStartupCommands.Num() == 0)
 		{
 			return;
 		}
 
-		// The map name is the next token; it is taken out of the command line along with "+map" itself, or the
-		// engine would seize the now-leading bare name as its own map override.
-		int32 End = TokenStart + 4;
-		while (End < CmdLine.Len() && FChar::IsWhitespace(CmdLine[End])) { ++End; }
-		const int32 ValueStart = End;
-		while (End < CmdLine.Len() && !FChar::IsWhitespace(CmdLine[End])) { ++End; }
-		FString MapName = CmdLine.Mid(ValueStart, End - ValueStart);
-		MapName = MapName.TrimQuotes();
-
-		FString NewCmdLine = CmdLine.Left(TokenStart) + CmdLine.Mid(End);
+		FString NewCmdLine = FString::Join(Kept, TEXT(" "));
 		if (!MapName.IsEmpty())
 		{
 			NewCmdLine += FString::Printf(TEXT(" -sourcemap=%s"), *MapName);
+			UE_LOG(LogLambda, Log, TEXT("+map %s -> -sourcemap=%s"), *MapName, *MapName);
 		}
 		FCommandLine::Set(*NewCmdLine);
-		UE_LOG(LogLambda, Log, TEXT("+map %s -> -sourcemap=%s"), *MapName, *MapName);
+
+		for (const FString& Line : GStartupCommands)
+		{
+			UE_LOG(LogLambda, Log, TEXT("startup command: %s"), *Line);
+		}
+	}
+
+	/** Runs what the command line asked for, once there is a world for it to act on. */
+	void RunStartupCommands(UWorld* World)
+	{
+		if (GStartupCommands.Num() == 0 || !World)
+		{
+			return;
+		}
+		UGameInstance* Instance = World->GetGameInstance();
+		ULambdaConsole* Console = Instance ? Instance->GetSubsystem<ULambdaConsole>() : nullptr;
+		// Through the console, so a startup command is the same thing as a typed one - it reaches the console's
+		// own commands as well as every lambda.* and engine one.
+		for (const FString& Line : GStartupCommands)
+		{
+			if (Console)
+			{
+				Console->Execute(Line);
+			}
+			else if (GEngine)
+			{
+				GEngine->Exec(World, *Line);
+			}
+		}
+		// Once only: they are startup commands, not something every level change repeats.
+		GStartupCommands.Reset();
 	}
 }
 
@@ -75,6 +164,9 @@ void FLambdaEngineModule::StartupModule()
 	// Armed before the engine loads its first level, so the game's startup is covered rather than showing black
 	// until the menu appears.
 	FLambdaLoadingScreen::Arm();
+	// The command line's "+command"s run once the first world is up, which is the earliest they can act on
+	// anything (CBuf: Source pushes them into the command buffer at startup for the same reason).
+	FCoreUObjectDelegates::PostLoadMapWithWorld.AddStatic(&RunStartupCommands);
 }
 
 void FLambdaEngineModule::ShutdownModule()
