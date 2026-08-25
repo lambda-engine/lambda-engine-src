@@ -88,40 +88,93 @@ exe to pick up code or content changes — a plain `Build.bat` will not.
 The exe's icon comes from `src\Build\Windows\Application.ico` (UBT picks it up automatically); replace that file and
 repackage to change it.
 
-## Content sources (gameinfo.txt and VPK mounting)
+## Content sources
 
-Content mounts are declared in `Mods/lambda/gameinfo.txt`, Source-style — this is the single source of truth:
-
-```
-"GameInfo"
-{
-    "game"  "Lambda Mod"
-    "FileSystem"
-    {
-        "SearchPaths"
-        {
-            "game"  "|gameinfo_path|."                       // this mod's loose content (highest priority)
-            "game"  "<path>/hl2/hl2_misc_dir.vpk"            // HL2 materials/models/scripts
-            "game"  "<path>/hl2/hl2_textures_dir.vpk"        // HL2 textures
-        }
-    }
-}
-```
-
-Paths are mounted top-to-bottom and the first match wins, so your loose mod files override packaged HL2 content. A
-value ending in `.vpk` mounts an archive (point at the `_dir.vpk` of a multi-chunk set — data is streamed from the
-`_NNN.vpk` chunks, nothing is extracted); anything else mounts a loose directory. `|gameinfo_path|` expands to the
-game directory, and relative paths resolve against it.
-
-The game directory is found automatically — `<root>/Mods/<mod>` where `<root>` is the folder holding the exe when
-packaged and `../game` in the editor; any subfolder containing a `gameinfo.txt` is accepted, so the mod folder can be
-renamed freely. It can also be forced with `-gamedir=<path>`.
+Where content comes from and how mounting works is documented in the game repository, next to the `gameinfo.txt`
+that declares it — see `lambda-engine/README.md`.
 
 ### Command line / console
 
 * `-sourcemap=<name>` — BSP to load (`lambda/maps/<name>.bsp`). Not `-map=` (engine-reserved).
 * `-gamedir=<path>` — extra loose content root, searched first.
 * console `lambda.map <name>` — load another map; `lambda.maps` — list available maps across all mounts.
+
+## What is implemented
+
+Where something is a port, the Source file it came from is named beside it. "Generic" means the thing loads and
+behaves like everything else of its kind, but has nothing of its own yet.
+
+### Weapons
+
+| Weapon | Status | Notes |
+|---|---|---|
+| `weapon_crowbar` | Done | `weapon_crowbar.cpp`, `basebludgeonweapon.cpp` — ray then hull, melee shove |
+| `weapon_pistol` | Done | `weapon_pistol.cpp` — accuracy penalty per shot, dry-fire refire |
+| `weapon_smg1` | Primary only | `weapon_smg1.cpp` on `basehlcombatweapon.cpp` — 13.3hz, recoil ladder. Secondary is the grenade launcher, which needs a grenade |
+| `weapon_shotgun` | Done | `weapon_shotgun.cpp` — pump between shots, shell-at-a-time interruptible reload, both barrels on secondary |
+| anything else | Generic | any `scripts/weapon_*.txt` loads and fires on the base `CBaseCombatWeapon` behaviour |
+
+Clip sizes, ammo types, sounds and damage come from `scripts/weapon_*.txt`, `scripts/game_sounds_*.txt` and
+`cfg/skill.cfg`; only the constants that live in a weapon's own `.cpp` are in the engine.
+
+### NPCs
+
+| Entity | Status | Notes |
+|---|---|---|
+| `npc_headcrab` | Done | jump attack, ragdoll on death |
+| `npc_zombie` | Done | melee, torso/legs gibbing, slump |
+| `npc_barnacle` | Done | tongue, lift, swallow, and it will take a prop out of the player's hands |
+
+### Point entities
+
+| Entity | Status |
+|---|---|
+| `info_player_start`, `info_player_deathmatch`, `info_player_coop`, `info_player_terrorist`, `info_player_counterterrorist` | Done |
+| `light`, `light_spot`, `light_environment` | Done |
+| `prop_physics`, `prop_physics_override`, `prop_physics_multiplayer`, `physics_prop` | Done |
+| `point_template` | Done |
+| `item_ammo_*`, `item_box_*`, `item_large_box_*`, `item_rpg_round`, `item_ar2_grenade` | Done |
+| `weapon_*` lying in a map | Done — gives the weapon its script describes |
+| anything else | Counted and logged as unhandled at the end of the load |
+
+### Brush entities
+
+| Entity | Status |
+|---|---|
+| `func_button` | Done |
+| `func_door_rotating` | Done |
+| any other `"model" "*N"` entity | Geometry only — it is drawn and collides, but does nothing |
+
+### World
+
+| | Status |
+|---|---|
+| BSP v19–21 geometry, collision, brush models | Done |
+| Entity I/O (`ent_fire`, outputs, `!activator`/`!caller`) | Partial — `Use` |
+| Displacements | Not started — the faces are counted and skipped |
+| Static props (game lump) | Not started |
+| Water, 3D skybox, overlays | Not started |
+| Lightmaps | Not planned — lighting is UE5 dynamic lights |
+
+### Formats read
+
+| | Status |
+|---|---|
+| BSP (v19–21), KeyValues, VPK | Done |
+| VMT, VTF (7.0–7.5, DXT1/3/5 and the uncompressed formats) | Done |
+| MDL/VVD/VTX (v44+), PHY ledge trees | Done |
+| WAV, soundscripts (`game_sounds_*.txt`), `surfaceproperties`, `decals_subrect` | Done |
+
+### Systems
+
+| | Status |
+|---|---|
+| Runtime skeletal meshes, GPU skinning, bodygroups | Done |
+| Impact decals, blood, ragdolls, particles | Done |
+| HUD (health, suit, ammo), weapon selection | Done |
+| Main menu, pause menu, developer console, loading screen | Done — `map` is the only console command that does anything of its own |
+| Save / load | Not started |
+| Options, achievements | Not started — the menu entries say so when picked |
 
 ## Conventions
 
