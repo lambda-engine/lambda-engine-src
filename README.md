@@ -132,6 +132,7 @@ Clip sizes, ammo types, sounds and damage come from `scripts/weapon_*.txt`, `scr
 | `npc_headcrab` | Done | jump attack, ragdoll on death |
 | `npc_zombie` | Done | melee, torso/legs gibbing, slump |
 | `npc_barnacle` | Done | tongue, lift, swallow, and it will take a prop out of the player's hands |
+| `npc_antlion` | Core | chases, swipes and pounces. Burrowing, bugbait, workers, squads and flipping are not ported |
 
 ### Point entities
 

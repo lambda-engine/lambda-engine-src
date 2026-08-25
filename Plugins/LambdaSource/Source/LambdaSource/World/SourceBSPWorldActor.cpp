@@ -1,6 +1,7 @@
 #include "World/SourceBSPWorldActor.h"
 #include "Rendering/SourceImpactEffects.h"
 #include "Creatures/SourceNPCHeadcrab.h"
+#include "Creatures/SourceNPCAntlion.h"
 #include "Creatures/SourceNPCBarnacle.h"
 #include "Creatures/SourceNPCZombie.h"
 #include "Entities/SourceItem.h"
@@ -385,6 +386,10 @@ TSubclassOf<ASourceNPCBase> ASourceBSPWorldActor::NPCClassForName(const FString&
 	{
 		return ASourceNPCBarnacle::StaticClass();
 	}
+	if (ClassName.Equals(TEXT("npc_antlion"), ESearchCase::IgnoreCase))
+	{
+		return ASourceNPCAntlion::StaticClass();
+	}
 	return nullptr;
 }
 
@@ -404,7 +409,10 @@ AActor* ASourceBSPWorldActor::CreateNPC(const FString& ClassName, const FVector&
 	Entity.Pairs.Emplace(TEXT("classname"), ClassName);
 	Entity.Pairs.Emplace(TEXT("origin"), FString::Printf(TEXT("%g %g %g"), Origin.X, Origin.Y, Origin.Z));
 	// CreatePhysicsProp spawns physics props unrotated and lets them settle.
-	Entity.Pairs.Emplace(TEXT("angles"), FString::Printf(TEXT("0 %g 0"), YawDegrees));	// UE yaw -> Source yaw
+	// The caller has a UE yaw and these keyvalues are read as Source ones, so it has to be turned back into a
+	// Source yaw here - the two run opposite ways, because the conversion mirrors Y. Writing it through unchanged
+	// left every npc_create NPC facing exactly away from whoever asked for it.
+	Entity.Pairs.Emplace(TEXT("angles"), FString::Printf(TEXT("0 %g 0"), -YawDegrees));
 	return SpawnNPC(Entity, NPCClass);
 }
 
