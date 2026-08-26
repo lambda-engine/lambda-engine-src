@@ -8,8 +8,8 @@
 #include "EnhancedInputSubsystems.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
-#include "LambdaPlayerMovement.h"
-#include "Components/CapsuleComponent.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "LambdaCharacterMovement.h"
 #include "GameFramework/PlayerController.h"
 #include "InputAction.h"
 #include "InputActionValue.h"
@@ -149,7 +149,8 @@ static FAutoConsoleVariableRef CVarLambdaViewModelFirstPerson(
 	TEXT("Draw the view model through UE's first-person primitive path"));
 
 ALambdaCharacter::ALambdaCharacter(const FObjectInitializer& ObjectInitializer)
-	: Super(ObjectInitializer)
+	// Quake's movement in place of Unreal's: see ULambdaCharacterMovement.
+	: Super(ObjectInitializer.SetDefaultSubobjectClass<ULambdaCharacterMovement>(ACharacter::CharacterMovementComponentName))
 {
 	PrimaryActorTick.bCanEverTick = true;
 
@@ -159,18 +160,26 @@ ALambdaCharacter::ALambdaCharacter(const FObjectInitializer& ObjectInitializer)
 	const float HalfHeightCm = (Settings ? Settings->PlayerCapsuleHalfHeightUnits : 36.0f) * Scale;
 	const float EyeHeightCm = (Settings ? Settings->PlayerEyeHeightUnits : 64.0f) * Scale;
 
-	GetHull()->SetCapsuleSize(RadiusCm, HalfHeightCm);
+	GetCapsuleComponent()->InitCapsuleSize(RadiusCm, HalfHeightCm);
 
-	// The ducked hull and the view heights are the movement component's now; it resizes the box itself, and
-	// UpdateEyeHeight drives the eye from the feet.
+	// Unreal's own physics interaction shoves objects with a force of its own choosing; Source's player is a
+	// physics shadow that pushes what it walks into at its own walking speed, and no harder (PushPhysicsObject).
+	GetCharacterMovement()->bEnablePhysicsInteraction = false;
 	BaseEyeHeight = EyeHeightCm - HalfHeightCm;
+
+	// VEC_DUCK_HULL / VEC_DUCK_VIEW: the ducked player is 36 units tall against 72 standing, and sees from 28
+	// units up rather than 64. Both are stated from the feet, so they lose the half height to become Unreal's,
+	// which measures from the middle of the capsule.
+	const float DuckHalfHeightCm = 18.0f * Scale;		// a 36 unit hull
+	GetCharacterMovement()->SetCrouchedHalfHeight(DuckHalfHeightCm);
+	CrouchedEyeHeight = 28.0f * Scale - DuckHalfHeightCm;
 
 	bUseControllerRotationPitch = false;
 	bUseControllerRotationYaw = true;
 	bUseControllerRotationRoll = false;
 
 	FirstPersonCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FirstPersonCamera"));
-	FirstPersonCamera->SetupAttachment(GetHull());
+	FirstPersonCamera->SetupAttachment(GetCapsuleComponent());
 	FirstPersonCamera->SetRelativeLocation(FVector(0.0f, 0.0f, EyeHeightCm - HalfHeightCm));
 	FirstPersonCamera->bUsePawnControlRotation = false;	// set from the control rotation plus the punch angle each tick
 	FirstPersonCamera->FieldOfView = 90.0f;
@@ -208,6 +217,12 @@ ALambdaCharacter::ALambdaCharacter(const FObjectInitializer& ObjectInitializer)
 	// to light the room does not blow out the hands holding the gun a few centimetres away.
 	MuzzleFlashLight->SetLightingChannels(false, true, false);
 
+	// No visible body for the POC.
+	if (USkeletalMeshComponent* MeshComp = GetMesh())
+	{
+		MeshComp->SetVisibility(false);
+	}
+
 	ApplySourceMovementSettings();
 }
 
@@ -225,13 +240,21 @@ void ALambdaCharacter::ApplySourceMovementSettings()
 	SprintSpeedCm = SprintUnits * Scale;
 	const float GravityCm = GravityUnits * Scale;
 
-	// Almost none of what Unreal wanted tuning applies any more: acceleration, braking, friction, step height and
-	// the walkable slope all live in ULambdaPlayerMovement, which takes them from the Source cvars and the same
-	// settings this reads. The speed is the exception - sv_maxspeed changes when sprinting or ducking.
-	if (ULambdaPlayerMovement* Move = GetMovement())
-	{
-		Move->MaxSpeedCm = WalkSpeedCm;
-	}
+	UCharacterMovementComponent* Move = GetCharacterMovement();
+	Move->MaxWalkSpeed = WalkSpeedCm;
+	Move->MaxWalkSpeedCrouched = WalkSpeedCm * 0.33f;
+	Move->MaxStepHeight = StepUnits * Scale;
+	Move->SetWalkableFloorZ(0.7f);								// Source: surfaces with normal.z < 0.7 are not walkable
+	Move->JumpZVelocity = FMath::Sqrt(2.0f * GravityCm * JumpHeightUnits * Scale);	// HL2: sqrt(2 * g * 21)
+	// Movement is Quake's now (ULambdaCharacterMovement), so the numbers Unreal would use to shape acceleration
+	// and braking no longer apply: sv_accelerate, sv_friction and sv_stopspeed do that instead. MaxAcceleration
+	// survives only as the scale the input vector is read back out of, so it wants to be exactly the top speed.
+	Move->MaxAcceleration = WalkSpeedCm;
+	Move->BrakingDecelerationWalking = 0.0f;
+	Move->GroundFriction = 0.0f;
+	Move->bUseFlatBaseForFloorChecks = true;					// Source uses a box hull: stand on edges like HL2
+	Move->PerchRadiusThreshold = 0.0f;
+	Move->NavAgentProps.bCanCrouch = true;
 }
 
 void ALambdaCharacter::BeginPlay()
@@ -240,6 +263,15 @@ void ALambdaCharacter::BeginPlay()
 
 	const ULambdaSourceSettings& Settings = ULambdaSourceSettings::Get();
 
+	// Match Source gravity regardless of the project's DefaultGravityZ.
+	if (UWorld* World = GetWorld())
+	{
+		const float WorldGravity = FMath::Abs(World->GetGravityZ());
+		if (WorldGravity > KINDA_SMALL_NUMBER)
+		{
+			GetCharacterMovement()->GravityScale = (Settings.GravityUnits * Settings.UnitScale) / WorldGravity;
+		}
+	}
 
 	// The POC map has no weapon or ammo entities, so arm the player directly. Once item_ammo_* / weapon_* entities
 	// are implemented these come from the map instead.
@@ -408,10 +440,8 @@ void ALambdaCharacter::Input_Move(const FInputActionValue& Value)
 	const FVector2D Axis = Value.Get<FVector2D>();
 	if (Controller)
 	{
-		// The pawn does not turn - its box is axis aligned - so forward is where the view is pointing.
-		const FRotator ViewYaw(0.0f, GetControlRotation().Yaw, 0.0f);
-		AddMovementInput(ViewYaw.Vector(), Axis.Y);
-		AddMovementInput(FRotationMatrix(ViewYaw).GetUnitAxis(EAxis::Y), Axis.X);
+		AddMovementInput(GetActorForwardVector(), Axis.Y);
+		AddMovementInput(GetActorRightVector(), Axis.X);
 	}
 }
 
@@ -432,6 +462,7 @@ void ALambdaCharacter::Input_JumpStart()
 
 void ALambdaCharacter::Input_JumpEnd()
 {
+	StopJumping();
 }
 
 void ALambdaCharacter::Input_SprintStart()
@@ -442,12 +473,12 @@ void ALambdaCharacter::Input_SprintStart()
 		return;
 	}
 
-	GetMovement()->MaxSpeedCm = SprintSpeedCm;
+	GetCharacterMovement()->MaxWalkSpeed = SprintSpeedCm;
 }
 
 void ALambdaCharacter::Input_SprintEnd()
 {
-	GetMovement()->MaxSpeedCm = WalkSpeedCm;
+	GetCharacterMovement()->MaxWalkSpeed = WalkSpeedCm;
 }
 
 AActor* ALambdaCharacter::FindUseEntity() const
@@ -485,7 +516,7 @@ AActor* ALambdaCharacter::FindUseEntity() const
 	}
 
 	FVector Delta = Hit.ImpactPoint - EyeLocation;
-	const float HalfHeight = GetHullHalfHeight();
+	const float HalfHeight = GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
 	const float CenterZ = GetActorLocation().Z;
 	Delta.Z = FMath::Max(0.0, FMath::Max(CenterZ - HalfHeight - Hit.ImpactPoint.Z, Hit.ImpactPoint.Z - (CenterZ + HalfHeight)));
 	if (Delta.Size() >= UseRadius)
@@ -572,7 +603,7 @@ float ALambdaCharacter::PlayerHullRadiusCm() const
 {
 	// CollisionProp()->OBBMaxs().Length2D(): the player's box is as wide as the capsule is across, so its 2D
 	// diagonal is what a carried object has to clear.
-	const float HalfWidth = GetHull()->GetScaledCapsuleRadius();
+	const float HalfWidth = GetCapsuleComponent()->GetScaledCapsuleRadius();
 	return HalfWidth * UE_SQRT_2;
 }
 
@@ -597,7 +628,7 @@ void ALambdaCharacter::UpdatePropCarry(float DeltaSeconds)
 	UWorld* World = GetWorld();
 	// "pPlayer->GetGroundEntity() == pEntity": standing on the thing you are holding drops it. A prop taken out
 	// of the player's hands by something stronger (the barnacle) is let go of the same way.
-	const FHitResult& Floor = GetMovement()->GetFloorHit();
+	const FHitResult& Floor = GetCharacterMovement()->CurrentFloor.HitResult;
 	if (!World || Floor.GetActor() == Prop || Prop->IsCarryRevoked())
 	{
 		DropCarriedProp(false);
@@ -816,7 +847,7 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 	if (bAutoJumpArmed)
 	{
 		const float Scale = ULambdaSourceSettings::Get().UnitScale;
-		const float FeetZ = GetActorLocation().Z - GetHullHalfHeight();
+		const float FeetZ = GetActorLocation().Z - GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
 		if (AutoJumpDelay > 0.0f)
 		{
 			AutoJumpDelay -= DeltaSeconds;
@@ -827,23 +858,23 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 			{
 				Jump();
 				AutoJumpElapsed = 0.0f;
-				AutoJumpSpeedAtLaunch = GetMovement() ? GetMovement()->Velocity.Size2D() : 0.0f;
+				AutoJumpSpeedAtLaunch = GetCharacterMovement() ? GetCharacterMovement()->Velocity.Size2D() : 0.0f;
 			}
 		}
 		else
 		{
 			AutoJumpElapsed += DeltaSeconds;
 			AutoJumpPeakFeetZ = FMath::Max(AutoJumpPeakFeetZ, FeetZ);
-			if (GetMovement() && GetMovement()->IsFalling())
+			if (GetCharacterMovement() && GetCharacterMovement()->IsFalling())
 			{
-				AutoJumpPeakAirSpeed = FMath::Max(AutoJumpPeakAirSpeed, GetMovement()->Velocity.Size2D());
+				AutoJumpPeakAirSpeed = FMath::Max(AutoJumpPeakAirSpeed, GetCharacterMovement()->Velocity.Size2D());
 			}
-			if (AutoJumpDuckAfter >= 0.0f && AutoJumpElapsed >= AutoJumpDuckAfter && !IsCrouched())
+			if (AutoJumpDuckAfter >= 0.0f && AutoJumpElapsed >= AutoJumpDuckAfter && !bIsCrouched)
 			{
 				Crouch();
 			}
 			// Back on the ground, so the jump is over and worth reporting.
-			if (AutoJumpElapsed > 0.2f && GetMovement() && GetMovement()->IsMovingOnGround())
+			if (AutoJumpElapsed > 0.2f && GetCharacterMovement() && GetCharacterMovement()->IsMovingOnGround())
 			{
 				bAutoJumpArmed = false;
 				UE_LOG(LogLambda, Display, TEXT("jump.auto: feet reached %.1f units above where they started, %.0f u/s at launch, fastest in the air %.0f u/s%s"),
@@ -862,7 +893,7 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 		}
 		else
 		{
-			if (!IsCrouched())
+			if (!bIsCrouched)
 			{
 				// The resize happens in the movement update, not here, so there is nothing to report yet.
 				Crouch();
@@ -958,7 +989,7 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 				{
 					const FVector3f Source(FCString::Atof(*Parts[0]), FCString::Atof(*Parts[1]), FCString::Atof(*Parts[2]));
 					const FVector Feet = FSourceCoords::ToUE(Source, ULambdaSourceSettings::Get().UnitScale);
-					const float HalfHeight = GetHullHalfHeight();
+					const float HalfHeight = GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
 					SetActorLocation(Feet + FVector(0, 0, HalfHeight + 2.0f), false, nullptr, ETeleportType::TeleportPhysics);
 					// setang: the two extra arguments aim the view, Source-style (yaw first, then pitch). The
 					// rotation is held for a moment - a single SetControlRotation can lose to the controller's
@@ -1781,7 +1812,7 @@ void ALambdaCharacter::ViewPunch(const FRotator& AngleOffset)
 void ALambdaCharacter::VelocityPunch(const FVector& VelocityImpulse)
 {
 	// CBaseCombatCharacter::VelocityPunch: SetGroundEntity(NULL) + ApplyAbsVelocityImpulse
-	if (ULambdaPlayerMovement* M = GetMovement()) { M->Velocity = VelocityImpulse; }
+	LaunchCharacter(VelocityImpulse, false, false);
 }
 
 void ALambdaCharacter::DecayPunchAngle(float DeltaSeconds)
@@ -1933,7 +1964,7 @@ void ALambdaCharacter::UpdateStepSound(float DeltaSeconds)
 		return;
 	}
 
-	const ULambdaPlayerMovement* Move = GetMovement();
+	const UCharacterMovementComponent* Move = GetCharacterMovement();
 	if (!Move)
 	{
 		return;
@@ -1942,7 +1973,7 @@ void ALambdaCharacter::UpdateStepSound(float DeltaSeconds)
 	const float Scale = ULambdaSourceSettings::Get().UnitScale;
 	const float Speed = Move->Velocity.Size();
 	const float GroundSpeed = Move->Velocity.Size2D();
-	const bool bDucking = IsCrouched();
+	const bool bDucking = bIsCrouched;
 
 	// GetStepSoundVelocities: how fast counts as walking, and how fast counts as running.
 	const float VelWalk = (bDucking ? 60.0f : 90.0f) * Scale;
@@ -1968,7 +1999,7 @@ void ALambdaCharacter::UpdateStepSound(float DeltaSeconds)
 	FString SurfaceProp;
 	if (UWorld* World = GetWorld())
 	{
-		const FVector Feet = GetActorLocation() - FVector(0.0f, 0.0f, GetHullHalfHeight());
+		const FVector Feet = GetActorLocation() - FVector(0.0f, 0.0f, GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
 		FCollisionQueryParams Params(SCENE_QUERY_STAT(FootstepSurface), /*bTraceComplex=*/ true, this);
 		Params.bReturnFaceIndex = true;
 
@@ -2054,24 +2085,70 @@ void ALambdaCharacter::Input_CrouchEnd()
 	UnCrouch();
 }
 
+void ALambdaCharacter::OnStartCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust)
+{
+	Super::OnStartCrouch(HalfHeightAdjust, ScaledHalfHeightAdjust);
+
+	// On the ground Unreal does what Source does: shrink the capsule and drop its centre so the feet stay put.
+	// In the air it keeps the centre instead (bCrouchMaintainsBaseLocation is set false for every movement mode
+	// but walking), so the feet already come up by half the hull difference on their own. Source lifts them by
+	// the whole of it, so what is owed is the other half - one adjustment, not two.
+	if (GetCharacterMovement() && GetCharacterMovement()->IsFalling())
+	{
+		AddActorWorldOffset(FVector(0.0f, 0.0f, ScaledHalfHeightAdjust), /*bSweep=*/ false);
+		// The feet just moved the whole hull difference in one frame, so the view has to as well or the head
+		// lurches. Only here, though - a duck begun on the ground eases even if a jump interrupts it, because
+		// there the feet never moved.
+		EyeAboveFeetCm = 28.0f * ULambdaSourceSettings::Get().UnitScale;	// VEC_DUCK_VIEW
+	}
+}
+
+void ALambdaCharacter::OnEndCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust)
+{
+	Super::OnEndCrouch(HalfHeightAdjust, ScaledHalfHeightAdjust);
+
+	// FinishUnDuck: standing up in mid air puts the feet back where they would have been, and again Unreal has
+	// already done half of it by growing the capsule around a fixed centre.
+	if (GetCharacterMovement() && GetCharacterMovement()->IsFalling())
+	{
+		AddActorWorldOffset(FVector(0.0f, 0.0f, -ScaledHalfHeightAdjust), /*bSweep=*/ false);
+		EyeAboveFeetCm = 64.0f * ULambdaSourceSettings::Get().UnitScale;	// VEC_VIEW
+	}
+}
 
 void ALambdaCharacter::UpdateEyeHeight(float DeltaSeconds)
 {
-	// VEC_VIEW / VEC_DUCK_VIEW: the eye is 64 units above the feet standing and 28 ducked, and the movement
-	// component says how far between the two the duck has got. Following that rather than "am I ducked yet"
-	// is what makes the crouch answer the key straight away instead of a fifth of a second later.
+	// VEC_VIEW / VEC_DUCK_VIEW: the eye is 64 units above the feet standing and 28 ducked. Source eases between
+	// them over TIME_TO_DUCK rather than switching, and unducks faster than it ducks.
 	if (!FirstPersonCamera)
 	{
 		return;
 	}
 	const float Scale = ULambdaSourceSettings::Get().UnitScale;
-	const ULambdaPlayerMovement* Move = GetMovement();
-	const float Fraction = Move ? Move->GetDuckViewFraction() : 0.0f;
+	const float StandEyeCm = 64.0f * Scale;
+	const float DuckEyeCm = 28.0f * Scale;
+	const float TargetCm = bIsCrouched ? DuckEyeCm : StandEyeCm;
 
-	EyeAboveFeetCm = FMath::Lerp(64.0f * Scale, 28.0f * Scale, Fraction);
+	if (EyeAboveFeetCm < 0.0f)
+	{
+		EyeAboveFeetCm = TargetCm;	// first frame: start where we are, do not sweep up from the floor
+	}
+	else
+	{
+		// TIME_TO_DUCK 0.4s, TIME_TO_UNDUCK 0.2s, across the 36 units between the two.
+		const float Travel = StandEyeCm - DuckEyeCm;
+		const float Rate = Travel / (bIsCrouched ? 0.4f : 0.2f);
+		EyeAboveFeetCm = FMath::FInterpConstantTo(EyeAboveFeetCm, TargetCm, DeltaSeconds, Rate);
+	}
 
-	// Stated from the feet, so it loses the half height to become a position relative to the middle of the box -
-	// which is also what absorbs the box resizing under it, so nothing jumps.
-	FirstPersonCamera->SetRelativeLocation(FVector(0.0f, 0.0f, EyeAboveFeetCm - GetHullHalfHeight()));
+	// Stated from the feet, so it has to lose the half height to become a position relative to the middle of the
+	// capsule - which is also what absorbs the capsule resizing under it, so nothing jumps.
+	const float HalfHeight = GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+	FirstPersonCamera->SetRelativeLocation(FVector(0.0f, 0.0f, EyeAboveFeetCm - HalfHeight));
 }
 
+bool ALambdaCharacter::CanJumpInternal_Implementation() const
+{
+	// Everything Unreal asks except being crouched, which Source allows.
+	return JumpIsAllowedInternal();
+}

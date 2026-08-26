@@ -1,7 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "LambdaPlayerPawn.h"
+#include "GameFramework/Character.h"
 #include "Gameplay/SourcePlayerPunch.h"
 #include "Entities/SourceItemPickup.h"
 #include "LambdaCharacter.generated.h"
@@ -22,7 +22,7 @@ struct FInputActionValue;
  * Input is built in code (Enhanced Input) so the project needs no input assets.
  */
 UCLASS()
-class LAMBDAENGINE_API ALambdaCharacter : public ALambdaPlayerPawn, public ISourcePlayerPunch, public ISourceItemPickup
+class LAMBDAENGINE_API ALambdaCharacter : public ACharacter, public ISourcePlayerPunch, public ISourceItemPickup
 {
 	GENERATED_BODY()
 
@@ -144,7 +144,25 @@ protected:
 	void Input_CrouchEnd();
 
 public:
-	// Landing is available as ALambdaPlayerPawn::Landed when something needs it; nothing does yet.
+	/**
+	 * CGameMovement::FinishDuck / FinishUnDuck.
+	 *
+	 * Unreal keeps the feet where they are when the capsule shrinks, so ducking never buys any height. Source
+	 * does that only when standing on something: in the air it moves the origin up by the difference between the
+	 * hulls, lifting the feet and leaving the head where it was. That is crouch jumping, and it is the reason a
+	 * Half-Life player can reach a ledge a plain jump cannot.
+	 */
+	virtual void OnStartCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust) override;
+	virtual void OnEndCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust) override;
+
+	/**
+	 * CGameMovement::CheckJumpButton: a ducked player may jump.
+	 *
+	 * Unreal forbids it outright - CanJumpInternal_Implementation is "return !IsCrouched() && ...". Source only
+	 * refuses while the unduck transition is still running, and has a branch specifically for jumping while
+	 * ducked, which sets the jump velocity rather than adding to it.
+	 */
+	virtual bool CanJumpInternal_Implementation() const override;
 
 protected:
 	void Input_Use();
@@ -258,8 +276,6 @@ protected:
 	 * what makes ducking read as crouching rather than as the camera changing places.
 	 */
 	float EyeAboveFeetCm = -1.0f;
-	/** The duck change the view has already reacted to. */
-	int32 SeenDuckChangeCount = 0;
 
 	float AutoCrouchSeconds = 0.0f;
 	float AutoCrouchDelay = 0.0f;
