@@ -2,6 +2,7 @@
 #include "LambdaCharacter.h"
 #include "LambdaWeapon.h"
 #include "Weapons/SourceWeaponScript.h"
+#include "Gameplay/SourceDamage.h"
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
 #include "Engine/Font.h"
@@ -101,6 +102,31 @@ void ALambdaHUD::DrawHudIcon(const FString& TextureName, float X, float Y, float
 	}
 }
 
+void ALambdaHUD::DrawHudIconFitted(const FString& TextureName, float X, float Y, float BoxW, float BoxH,
+	const FLinearColor& Colour)
+{
+	ULambdaMaterialLibrary* Library = GetMaterials();
+	if (!Library || !Canvas)
+	{
+		return;
+	}
+	UTexture2D* Icon = Library->GetTexture(TextureName);
+	if (!Icon)
+	{
+		return;
+	}
+	const float TexW = FMath::Max(1.0f, (float)Icon->GetSizeX());
+	const float TexH = FMath::Max(1.0f, (float)Icon->GetSizeY());
+	const float Scale = FMath::Min(BoxW / TexW, BoxH / TexH);
+	const float DrawW = TexW * Scale;
+	const float DrawH = TexH * Scale;
+
+	Canvas->SetDrawColor(Colour.ToFColor(false));
+	Canvas->DrawTile(Icon, X + (BoxW - DrawW) * 0.5f, Y + (BoxH - DrawH) * 0.5f, DrawW, DrawH,
+		0.0f, 0.0f, TexW, TexH, BLEND_Translucent);
+	Canvas->SetDrawColor(FColor::White);
+}
+
 float ALambdaHUD::DrawNumberField(float RightX, float Y, int32 Value, int32 Digits, float PixelHeight,
 	const FLinearColor& Bright, const FLinearColor& Dim)
 {
@@ -143,6 +169,54 @@ float ALambdaHUD::DrawNumberField(float RightX, float Y, int32 Value, int32 Digi
  * scripts name the ammo pool the HL2 way, "Pistol", "SMG1", "AR2". This is that translation; an ammo type with no
  * icon of its own falls back to the 9mm box.
  */
+FString ALambdaHUD::WeaponIconName(const FString& ClassName)
+{
+	// The HUD art is Black Mesa's, so it is named for Half-Life's weapons; the weapon scripts are Half-Life 2's.
+	// Where the two games have the same weapon under different names, this is the bridge - the same mapping the
+	// footstep soundscript makes for surfaces. A weapon with no equivalent gets the blank slot icon rather than
+	// nothing at all, so the selection still reads as a row of weapons.
+	static const TMap<FString, FString> Icons = {
+		{ TEXT("weapon_crowbar"),	TEXT("weapon_crowbar") },
+		{ TEXT("weapon_pistol"),	TEXT("weapon_glock") },
+		{ TEXT("weapon_357"),		TEXT("weapon_357") },
+		{ TEXT("weapon_smg1"),		TEXT("weapon_mp5") },
+		{ TEXT("weapon_ar2"),		TEXT("weapon_tau") },
+		{ TEXT("weapon_shotgun"),	TEXT("weapon_shotgun") },
+		{ TEXT("weapon_crossbow"),	TEXT("weapon_crossbow") },
+		{ TEXT("weapon_rpg"),		TEXT("weapon_rpg") },
+		{ TEXT("weapon_frag"),		TEXT("weapon_frag") },
+		{ TEXT("weapon_slam"),		TEXT("weapon_tripmine") },
+		{ TEXT("weapon_bugbait"),	TEXT("weapon_snark") },
+		{ TEXT("weapon_physcannon"),TEXT("weapon_gluon") },
+	};
+	if (const FString* Found = Icons.Find(ClassName.ToLower()))
+	{
+		return FString::Printf(TEXT("vgui/hud/%s"), **Found);
+	}
+	return TEXT("vgui/hud/weapon_dummy");
+}
+
+FString ALambdaHUD::DamageTypeIconName(int32 DamageBit)
+{
+	// CHudDamageIndicator's icons: the kinds of harm that go on happening, which are the ones worth a symbol.
+	// A bullet needs no icon - you know you were shot.
+	using namespace SourceDamageType;
+	switch (DamageBit)
+	{
+	case DMG_BURN:		 return TEXT("vgui/hud/damage_burn");
+	case DMG_SLOWBURN:	 return TEXT("vgui/hud/damage_slowburn");
+	case DMG_DROWN:		 return TEXT("vgui/hud/damage_drown");
+	case DMG_FALL:		 return TEXT("vgui/hud/damage_fall");
+	case DMG_PARALYZE:	 return TEXT("vgui/hud/damage_paralyze");
+	case DMG_NERVEGAS:	 return TEXT("vgui/hud/damage_poison");
+	case DMG_POISON:	 return TEXT("vgui/hud/damage_poison");
+	case DMG_ACID:		 return TEXT("vgui/hud/damage_poison");
+	case DMG_RADIATION:	 return TEXT("vgui/hud/damage_radiation");
+	case DMG_SHOCK:		 return TEXT("vgui/hud/damage_shock");
+	default:			 return FString();
+	}
+}
+
 FString ALambdaHUD::AmmoIconName(const FString& AmmoType)
 {
 	static const TMap<FString, FString> Icons = {
@@ -350,10 +424,44 @@ void ALambdaHUD::DrawDamageIndicator(ALambdaCharacter* Player, float W, float H,
 	}
 }
 
+void ALambdaHUD::DrawDamageTypes(ALambdaCharacter* Player, float W, float H, float Now)
+{
+	// The kinds of harm that go on happening get a symbol for as long as they are happening - poison, burning,
+	// radiation. They sit above the health, which is what they are eating.
+	const int32 Bits = Player->GetDamageBits();
+	if (Bits == 0 || Now - Player->GetDamageBitsTime() > 3.0f)
+	{
+		return;
+	}
+	const float S = FMath::Max(1.0f, W / 1920.0f);
+	const float Size = 24.0f * S;
+	float Y = H - 108.0f * S;
+
+	// A gentle pulse, so an icon that is still there reads as still happening.
+	const float Pulse = 0.6f + 0.4f * FMath::Sin(Now * 6.0f);
+	const FLinearColor Colour(LowColour.R, LowColour.G, LowColour.B, Pulse);
+
+	for (int32 Bit = 0; Bit < 32; ++Bit)
+	{
+		const int32 Mask = 1 << Bit;
+		if ((Bits & Mask) == 0)
+		{
+			continue;
+		}
+		const FString Icon = DamageTypeIconName(Mask);
+		if (Icon.IsEmpty())
+		{
+			continue;
+		}
+		DrawHudIcon(Icon, 16.0f * S, Y, Size, Colour);
+		Y -= Size + 4.0f * S;
+	}
+}
+
 void ALambdaHUD::DrawWeaponSelection(ALambdaCharacter* Player, float W, float Now)
 {
-	// CHudWeaponSelection: a row of boxes along the top, one per carried weapon in bucket order, the selection
-	// drawn large with its name; the attack confirms. Numbers are the bucket keys.
+	// CHudWeaponSelection: a row of slots along the top, one per carried weapon in bucket order, each showing
+	// that weapon's icon; the selected one is lit, the rest are dim.
 	if (!Player->IsWeaponSelectionActive() || !HudFont)
 	{
 		return;
@@ -361,14 +469,21 @@ void ALambdaHUD::DrawWeaponSelection(ALambdaCharacter* Player, float W, float No
 	const TArray<TObjectPtr<ALambdaWeapon>>& Arsenal = Player->GetWeapons();
 	ALambdaWeapon* Selected = Player->GetSelectedWeapon();
 
-	const float SmallW = 90.0f, LargeW = 160.0f, BoxH = 48.0f, Gap = 8.0f;
-	float TotalW = 0.0f;
+	const float S = FMath::Max(1.0f, W / 1920.0f);
+	const float SlotW = 128.0f * S, SlotH = 80.0f * S, Gap = 6.0f * S;
+
+	int32 Count = 0;
 	for (const TObjectPtr<ALambdaWeapon>& Weapon : Arsenal)
 	{
-		TotalW += (Weapon == Selected ? LargeW : SmallW) + Gap;
+		if (Weapon) { ++Count; }
 	}
+	if (Count == 0)
+	{
+		return;
+	}
+	const float TotalW = Count * SlotW + (Count - 1) * Gap;
 	float X = (W - TotalW) * 0.5f;
-	const float Y = 36.0f;
+	const float Y = 40.0f * S;
 
 	for (const TObjectPtr<ALambdaWeapon>& Weapon : Arsenal)
 	{
@@ -377,21 +492,35 @@ void ALambdaHUD::DrawWeaponSelection(ALambdaCharacter* Player, float W, float No
 			continue;
 		}
 		const bool bSelected = Weapon == Selected;
-		const float BoxW = bSelected ? LargeW : SmallW;
-		DrawRect(bSelected ? FLinearColor(HudColour.R, HudColour.G, HudColour.B, 0.35f) : PanelColour, X, Y, BoxW, BoxH);
+		const FSourceWeaponInfo& Info = Weapon->GetWeaponInfo();
 
-		// "#HL2_Pistol" reads as PISTOL; the bucket number sits in the corner like HL2's.
-		FString Name = Weapon->GetWeaponInfo().PrintName;
+		// A dark slot behind each one. The HUD paints no panel anywhere else, but this row has to be readable
+		// over whatever the player happens to be looking at - and a bright wall swallows an amber icon whole.
+		DrawRect(FLinearColor(0.0f, 0.0f, 0.0f, bSelected ? 0.75f : 0.55f), X, Y, SlotW, SlotH);
+
+		// The icon, fitted rather than squared: these sheets are 4:1 and 2:1.
+		const float Pad = 8.0f * S;
+		DrawHudIconFitted(WeaponIconName(Info.ClassName), X + Pad, Y + Pad, SlotW - Pad * 2.0f, 40.0f * S,
+			bSelected ? HudColour : HudColourNormal);
+
+		// The bucket number in the corner, the way HL2 labels the slots.
+		DrawTextAtHeight(FString::FromInt(Info.Bucket + 1), bSelected ? HudColour : HudColourDim,
+			X + 6.0f * S, Y + 4.0f * S, UIFont(), 13.0f * S);
+
+		// "#HL2_Pistol" reads as PISTOL.
+		FString Name = Info.PrintName;
 		int32 Underscore;
 		if (Name.FindLastChar(TEXT('_'), Underscore))
 		{
 			Name = Name.Mid(Underscore + 1);
 		}
-		DrawText(FString::FromInt(Weapon->GetWeaponInfo().Bucket + 1),
-			HudColour * FLinearColor(1, 1, 1, 0.6f), X + 5.0f, Y + 3.0f, HudFont, 0.9f);
-		DrawText(Name.ToUpper(), bSelected ? HudColour : HudColour * FLinearColor(1, 1, 1, 0.7f),
-			X + 18.0f, Y + (bSelected ? 16.0f : 18.0f), HudFont, bSelected ? 1.3f : 1.0f);
-		X += BoxW + Gap;
+		Name = Name.ToUpper();
+		const float NameHeight = 14.0f * S;
+		const float NameWidth = MeasureTextAtHeight(Name, UIFont(), NameHeight).X;
+		DrawTextAtHeight(Name, bSelected ? HudColour : HudColourDim,
+			X + (SlotW - NameWidth) * 0.5f, Y + SlotH - NameHeight - 6.0f * S, UIFont(), NameHeight);
+
+		X += SlotW + Gap;
 	}
 }
 
@@ -529,6 +658,7 @@ void ALambdaHUD::DrawHUD()
 
 	DrawDamageIndicator(Player, W, H, Now);
 	DrawWeaponSelection(Player, W, Now);
+	DrawDamageTypes(Player, W, H, Now);
 	DrawPickupHistory(Player, W, H, Now);
 
 	// ---- Ammo, bottom right ----

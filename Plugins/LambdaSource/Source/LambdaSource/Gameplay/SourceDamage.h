@@ -39,6 +39,12 @@ namespace SourceDamageType
 	constexpr int32 DMG_REMOVENORAGDOLL = (1 << 22);
 }
 
+namespace SourceDamage
+{
+	/** A DMG_* bit from its shareddefs.h name without the prefix ("slash", "fall"), or DMG_GENERIC. */
+	LAMBDASOURCE_API int32 TypeFromName(const FString& Name);
+}
+
 /** shareddefs.h hit groups, as studiomdl writes them into hitboxes. */
 namespace SourceHitGroup
 {

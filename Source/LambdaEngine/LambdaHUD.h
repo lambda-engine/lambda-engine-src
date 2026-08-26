@@ -50,8 +50,19 @@ protected:
 		const FLinearColor& Bright, const FLinearColor& Dim);
 	/** Maps an HL2 ammo pool name onto the Black Mesa icon for that round. */
 	static FString AmmoIconName(const FString& AmmoType);
+	/** Maps an HL2 weapon classname onto the Black Mesa icon for that weapon. */
+	static FString WeaponIconName(const FString& ClassName);
+	/** Maps a DMG_* bit onto the Black Mesa icon for that kind of harm, or empty if it has none. */
+	static FString DamageTypeIconName(int32 DamageBit);
 	/** Draws one of Black Mesa's HUD icons (materials/vgui/hud) tinted, sized in pixels. */
 	void DrawHudIcon(const FString& TextureName, float X, float Y, float Size, const FLinearColor& Colour);
+	/**
+	 * The same, fitted inside a box and centred, keeping the icon's own proportions.
+	 *
+	 * The weapon icons are wide - 256x64 for the crowbar, 256x128 for the pistol - so drawing them square
+	 * squashes them into something unreadable. This scales to whichever of the two edges runs out first.
+	 */
+	void DrawHudIconFitted(const FString& TextureName, float X, float Y, float BoxW, float BoxH, const FLinearColor& Colour);
 	class ULambdaMaterialLibrary* GetMaterials();
 
 	/** HL2's HUD amber. */
@@ -87,6 +98,8 @@ protected:
 	float WeaponFlashEndTime = 0.0f;
 
 	void DrawDamageIndicator(class ALambdaCharacter* Player, float W, float H, float Now);
+	/** CHudDamageIndicator's icon half: what is currently hurting, in a column beside the health. */
+	void DrawDamageTypes(class ALambdaCharacter* Player, float W, float H, float Now);
 	void DrawWeaponSelection(class ALambdaCharacter* Player, float W, float Now);
 	void DrawPickupHistory(class ALambdaCharacter* Player, float W, float H, float Now);
 };

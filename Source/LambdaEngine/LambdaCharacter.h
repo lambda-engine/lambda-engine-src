@@ -4,6 +4,8 @@
 #include "GameFramework/Character.h"
 #include "Gameplay/SourcePlayerPunch.h"
 #include "Entities/SourceItemPickup.h"
+#include "LambdaSuitVoice.h"
+
 #include "LambdaCharacter.generated.h"
 
 class UCameraComponent;
@@ -66,6 +68,9 @@ public:
 	float GetLastDamageAmount() const { return LastDamageAmount; }
 	/** Angle of the blow relative to the view: 0 ahead, +90 right, -90 left, +/-180 behind. */
 	float GetLastDamageYaw() const { return LastDamageYaw; }
+	/** m_bitsDamageType: what kinds of harm are currently being done, for the HUD's damage-type icons. */
+	int32 GetDamageBits() const { return DamageBits; }
+	float GetDamageBitsTime() const { return DamageBitsTime; }
 
 	/** CHudHistoryResource: the last few pickups, newest last. */
 	struct FPickupEvent { FString Text; float Time = 0.0f; };
@@ -79,8 +84,33 @@ public:
 	virtual bool BumpWeapon(const FString& WeaponClassName) override;
 	void RemoveAmmo(const FString& AmmoType, int32 Count);
 
-	/** CBasePlayer::OnTakeDamage: takes the damage off health (armour is not modelled yet). */
+	/**
+	 * CBasePlayer::OnTakeDamage: armour first, then health, then the suit says what it makes of it.
+	 *
+	 * The damage type matters here, not just the amount - a fall and a bullet of the same size are different
+	 * injuries, and the HEV suit names them differently. FSourceDamageEvent carries the DMG_* bits; a plain
+	 * UE damage event arrives as DMG_GENERIC and is simply survived quietly.
+	 */
 	virtual float TakeDamage(float DamageAmount, const FDamageEvent& DamageEvent, AController* EventInstigator, AActor* DamageCauser) override;
+
+	/** CBasePlayer::Event_Killed: health has run out. */
+	void Killed(AActor* Attacker);
+	bool IsAlive() const { return Health > 0.0f; }
+
+	/** The HEV suit's voice, so items and the world can make it say things. */
+	FLambdaSuitVoice& GetSuitVoice() { return SuitVoice; }
+	/** CBasePlayer::EquipSuit - without it the suit neither speaks nor shows armour. */
+	void EquipSuit(bool bEquip = true);
+	bool IsSuitEquipped() const { return bSuitEquipped; }
+
+	/** IncrementArmorValue, capped at 100 as Source caps it. */
+	void GiveArmor(float Amount);
+
+protected:
+	/** The suit's half of OnTakeDamage: which injury this was, and what that leaves the player. */
+	void SuitDamageReaction(int32 DamageType, float Damage, float HealthPrev);
+
+public:
 
 	/** Builds the first-person view model from a Source .mdl and shows it on the camera. */
 	UFUNCTION(BlueprintCallable, Category = "Lambda")
@@ -203,6 +233,12 @@ protected:
 	void Input_InvNext() { CycleSelection(+1); }
 	void Input_InvPrev() { CycleSelection(-1); }
 	void SelectSlot(int32 Bucket);
+
+public:
+	/** Opens the weapon selection on a bucket and leaves it open, which is what the scroll wheel does. */
+	void OpenWeaponSelection(int32 Bucket) { SelectSlot(Bucket); }
+
+protected:
 	void CycleSelection(int32 Step);
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Lambda")
@@ -280,6 +316,9 @@ protected:
 	float AutoCrouchSeconds = 0.0f;
 	float AutoCrouchDelay = 0.0f;
 	float AutoSpeedLogSeconds = 0.0f;
+	float AutoHurtAmount = 0.0f;
+	float AutoHurtDelay = 0.0f;
+	FString AutoHurtType;
 	float AutoSpeedLogTimer = 0.0f;
 	bool bAutoJumpArmed = false;
 	float AutoJumpDelay = 0.0f;
@@ -377,4 +416,11 @@ protected:
 
 	UPROPERTY(EditAnywhere, Category = "Lambda")
 	float Armor = 0.0f;
+
+	/** m_bitsDamageType and when it was last added to, so the HUD can show and then drop the icons. */
+	int32 DamageBits = 0;
+	float DamageBitsTime = 0.0f;
+
+	bool bSuitEquipped = true;	// the player starts suited; there is no HEV pickup to find yet
+	FLambdaSuitVoice SuitVoice;
 };

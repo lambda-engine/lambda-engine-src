@@ -25,7 +25,9 @@ lambda-engine-src/            this repository - the Unreal project
     Rendering/                studio models, runtime skeletal meshes, ragdolls, decals, particles
   Config/  Content/
   Build/Windows/              Application.ico - the icon compiled into the packaged exe
-  Tools/                      dev scripts: GenerateProjectFiles / Build / CreateAssets / Editor / Env
+  Tools/                      dev scripts: GenerateProjectFiles / Build / CreateAssets / Editor / Env,
+                              content importers (ImportSuitVoice, ImportSource2*, ImportImageToVTF), vpk.py,
+                              make_movement_testmap.py
 
 lambda-engine/                the other repository - the shippable game files
   lambda.exe                  the packaged game (created by Release.bat over here)
@@ -175,6 +177,7 @@ Clip sizes, ammo types, sounds and damage come from `scripts/weapon_*.txt`, `scr
 | VMT, VTF (7.0–7.5, DXT1/3/5 and the uncompressed formats) | Done |
 | MDL/VVD/VTX (v44+), PHY ledge trees | Done |
 | WAV, soundscripts (`game_sounds_*.txt`), `surfaceproperties`, `decals_subrect` | Done |
+| `sentences.txt` (the VOX sentence system: words, `(pNNN)` parameter blocks, per-word trims) | Done |
 
 ### Systems
 
@@ -182,7 +185,9 @@ Clip sizes, ammo types, sounds and damage come from `scripts/weapon_*.txt`, `scr
 |---|---|
 | Runtime skeletal meshes, GPU skinning, bodygroups | Done |
 | Impact decals, blood, ragdolls, particles | Done |
-| HUD (health, suit, ammo), weapon selection | Done |
+| HUD (health, suit, ammo), weapon selection with icons, damage-type icons | Done |
+| Player damage: armour absorption, damage types, death | Done — no death camera or respawn yet |
+| HEV suit voice (`CBasePlayer`'s suit update queue, on VOX sentences) | Done — damage reactions and the flatline; the geiger counter and battery lines are not wired up |
 | Main menu, pause menu, developer console, loading screen | Done — `map` is the only console command that does anything of its own |
 | Save / load | Not started |
 | Options, achievements | Not started — the menu entries say so when picked |

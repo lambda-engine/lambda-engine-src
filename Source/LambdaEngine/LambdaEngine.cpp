@@ -13,6 +13,9 @@
 #include "Entities/SourcePropPhysics.h"
 #include "EngineUtils.h"
 #include "LambdaCharacter.h"
+#include "LambdaSuitVoice.h"
+#include "Audio/SourceSentences.h"
+#include "Gameplay/SourceDamage.h"
 #include "Materials/SourceDecalScript.h"
 #include "Materials/SourceSurfaceProps.h"
 #include "LambdaConsole.h"
@@ -414,6 +417,101 @@ static FAutoConsoleCommandWithWorldAndArgs GLambdaGiveAmmoCommand(
 	TEXT("giveammo"),
 	TEXT("Give the player ammo: giveammo <ammotype> <count>"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaGiveAmmoCommand));
+
+// hurt [amount] [damagetype] - Source's "hurtme", plus the damage type so the suit's reaction can be tried.
+static void LambdaHurtCommand(const TArray<FString>& Args, UWorld* World)
+{
+	APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
+	ALambdaCharacter* Player = PC ? Cast<ALambdaCharacter>(PC->GetPawn()) : nullptr;
+	if (!Player)
+	{
+		return;
+	}
+	const float Amount = Args.Num() > 0 ? FCString::Atof(*Args[0]) : 10.0f;
+
+	// The names are shareddefs.h's, less the DMG_ - "hurt 30 slash" is a claw, "hurt 30 fall" is a drop.
+	const int32 Type = Args.Num() > 1 ? SourceDamage::TypeFromName(Args[1]) : SourceDamageType::DMG_GENERIC;
+
+	FHitResult Hit;
+	Hit.ImpactPoint = Player->GetActorLocation();
+	Hit.Location = Hit.ImpactPoint;
+	FSourceDamageEvent Info(Amount, Hit, -Player->GetActorForwardVector(), UDamageType::StaticClass(),
+		FVector::ZeroVector, Type);
+	Player->TakeDamage(Amount, Info, nullptr, nullptr);
+	UE_LOG(LogLambda, Display, TEXT("hurt %.0f (%s): health %.0f, armour %.0f"),
+		Amount, Args.Num() > 1 ? *Args[1] : TEXT("generic"), Player->GetHealth(), Player->GetArmor());
+}
+
+static FAutoConsoleCommandWithWorldAndArgs GLambdaHurtCommand(
+	TEXT("hurt"),
+	TEXT("Damage the player: hurt <amount> [bullet|slash|fall|burn|poison|radiation|...]"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaHurtCommand));
+
+// givearmor [amount] - a suit battery's worth by default
+static void LambdaGiveArmorCommand(const TArray<FString>& Args, UWorld* World)
+{
+	APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
+	if (ALambdaCharacter* Player = PC ? Cast<ALambdaCharacter>(PC->GetPawn()) : nullptr)
+	{
+		Player->GiveArmor(Args.Num() > 0 ? FCString::Atof(*Args[0]) : 15.0f);
+		UE_LOG(LogLambda, Display, TEXT("armour %.0f"), Player->GetArmor());
+	}
+}
+
+static FAutoConsoleCommandWithWorldAndArgs GLambdaGiveArmorCommand(
+	TEXT("givearmor"),
+	TEXT("Give the player suit armour: givearmor [amount]"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaGiveArmorCommand));
+
+// speak <sentence> - make the suit say one line, for checking the sentence system
+static void LambdaSpeakCommand(const TArray<FString>& Args, UWorld* World)
+{
+	APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
+	ALambdaCharacter* Player = PC ? Cast<ALambdaCharacter>(PC->GetPawn()) : nullptr;
+	if (!Player)
+	{
+		return;
+	}
+	if (Args.Num() < 1)
+	{
+		UE_LOG(LogLambda, Display, TEXT("Usage: speak <sentence>   e.g. speak HEV_DMG4  (%d sentences loaded)"),
+			FSourceSentences::Get().Num());
+		return;
+	}
+	const FSourceSentence* Sentence = FSourceSentences::Get().Find(Args[0]);
+	if (!Sentence)
+	{
+		UE_LOG(LogLambda, Display, TEXT("speak: no sentence '%s'"), *Args[0]);
+		return;
+	}
+	FString Words;
+	for (const FSourceVoxWord& Word : Sentence->Words)
+	{
+		Words += FString::Printf(TEXT("%s(p%d) "), *Word.Wave, Word.Pitch);
+	}
+	UE_LOG(LogLambda, Display, TEXT("speak %s: %s"), *Sentence->Name, *Words);
+	Player->GetSuitVoice().SetSuitUpdate(Player, Args[0], FLambdaSuitVoice::RepeatOK);
+}
+
+static FAutoConsoleCommandWithWorldAndArgs GLambdaSpeakCommand(
+	TEXT("speak"),
+	TEXT("Make the HEV suit say a sentence: speak HEV_DMG4"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaSpeakCommand));
+
+// weaponmenu [bucket] - open the weapon selection and leave it open, so the row can be looked at
+static void LambdaWeaponMenuCommand(const TArray<FString>& Args, UWorld* World)
+{
+	APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
+	if (ALambdaCharacter* Player = PC ? Cast<ALambdaCharacter>(PC->GetPawn()) : nullptr)
+	{
+		Player->OpenWeaponSelection(Args.Num() > 0 ? FCString::Atoi(*Args[0]) : 0);
+	}
+}
+
+static FAutoConsoleCommandWithWorldAndArgs GLambdaWeaponMenuCommand(
+	TEXT("weaponmenu"),
+	TEXT("Open the weapon selection on a bucket and leave it open: weaponmenu [bucket]"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaWeaponMenuCommand));
 
 // viewmodel <models/path.mdl> - load any Source model as the view model, for checking MDL support
 static void LambdaViewModelCommand(const TArray<FString>& Args, UWorld* World)

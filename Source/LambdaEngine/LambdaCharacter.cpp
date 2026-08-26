@@ -36,6 +36,7 @@ void ALambdaCharacterAddPickupHistory(TArray<ALambdaCharacter::FPickupEvent>& Hi
 #include "Materials/SourceSurfaceProps.h"
 #include "Audio/LambdaSoundLibrary.h"
 #include "Audio/SourceSoundScript.h"
+#include "Gameplay/SourceDamage.h"
 #include "Engine/Engine.h"
 #include "Rendering/SourceStudioModelComponent.h"
 #include "Rendering/SourceRagdoll.h"
@@ -102,6 +103,14 @@ static FAutoConsoleVariableRef CVarWalkAuto(
 	TEXT("walk.auto"),
 	GWalkAuto,
 	TEXT("\"<seconds> [delay_s]\": walk forward for that long"));
+
+// hurt.auto "<amount> [type] [delay_s]" hurts the player on a timer, so the suit's reaction and the HUD's
+// damage icons can be seen without anything pressing a key.
+static FString GHurtAuto;
+static FAutoConsoleVariableRef CVarHurtAuto(
+	TEXT("hurt.auto"),
+	GHurtAuto,
+	TEXT("\"<amount> [damagetype] [delay_s]\": damage the player after that long"));
 
 static FString GSpeedLogAuto;
 static FAutoConsoleVariableRef CVarSpeedLogAuto(
@@ -781,6 +790,9 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 	UpdateEyeHeight(DeltaSeconds);
 	UpdateStepSound(DeltaSeconds);
 
+	// CheckSuitUpdate: the suit works through whatever it has been given to say.
+	SuitVoice.Tick(this, GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f);
+
 	// CBasePlayer::ItemPostFrame drives the active weapon every frame.
 	if (ActiveWeapon)
 	{
@@ -832,6 +844,23 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 				}
 				PendingPropCreate.Reset();
 			}
+		}
+	}
+
+	// hurt.auto: damage on a timer, so the suit's reaction and the damage icons can be watched.
+	if (AutoHurtDelay > 0.0f)
+	{
+		AutoHurtDelay -= DeltaSeconds;
+		if (AutoHurtDelay <= 0.0f)
+		{
+			FHitResult Hit;
+			Hit.ImpactPoint = GetActorLocation();
+			Hit.Location = Hit.ImpactPoint;
+			FSourceDamageEvent Info(AutoHurtAmount, Hit, -GetActorForwardVector(), UDamageType::StaticClass(),
+				FVector::ZeroVector, SourceDamage::TypeFromName(AutoHurtType));
+			TakeDamage(AutoHurtAmount, Info, nullptr, nullptr);
+			UE_LOG(LogLambda, Display, TEXT("hurt.auto %.0f %s: health %.0f, armour %.0f"),
+				AutoHurtAmount, *AutoHurtType, Health, Armor);
 		}
 	}
 
@@ -1052,6 +1081,14 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 				GSlotAuto.ParseIntoArrayWS(Parts);
 				AutoSlotBucket = Parts.Num() > 0 ? FCString::Atoi(*Parts[0]) : 0;
 				AutoSlotDelay = Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : 1.0f;
+			}
+			if (!GHurtAuto.IsEmpty())
+			{
+				TArray<FString> Parts;
+				GHurtAuto.ParseIntoArrayWS(Parts);
+				AutoHurtAmount = Parts.Num() > 0 ? FCString::Atof(*Parts[0]) : 10.0f;
+				AutoHurtType = Parts.Num() > 1 ? Parts[1] : TEXT("generic");
+				AutoHurtDelay = Parts.Num() > 2 ? FCString::Atof(*Parts[2]) : 2.0f;
 			}
 			if (!GWalkAuto.IsEmpty())
 			{
@@ -1374,6 +1411,14 @@ ALambdaWeapon* ALambdaCharacter::GiveWeapon(const FString& WeaponClassName)
 	if (!World)
 	{
 		return nullptr;
+	}
+
+	// CBasePlayer::GiveNamedItem: "If I already own this type don't create one." BumpWeapon checks before it
+	// gets here, but the give console command does not, and a second crowbar shows up as a second slot in the
+	// weapon selection for the rest of the game.
+	if (ALambdaWeapon* Existing = FindWeapon(WeaponClassName))
+	{
+		return Existing;
 	}
 
 	// Pick the class that implements this weapon; anything without a dedicated port still gets the shared behaviour.
@@ -1867,16 +1912,79 @@ void ALambdaCharacter::DecayPunchAngle(float DeltaSeconds)
 	}
 }
 
+void ALambdaCharacter::EquipSuit(bool bEquip)
+{
+	if (bSuitEquipped == bEquip)
+	{
+		return;
+	}
+	bSuitEquipped = bEquip;
+	if (bEquip)
+	{
+		// The logon is the one line that jumps the queue - it is what the suit says as it comes up.
+		SuitVoice.SetSuitUpdate(this, TEXT("HEV_LOGON"), FLambdaSuitVoice::RepeatOK);
+	}
+	else
+	{
+		SuitVoice.Reset();
+	}
+}
+
+void ALambdaCharacter::GiveArmor(float Amount)
+{
+	// IncrementArmorValue( nCount, MAX_NORMAL_BATTERY ).
+	Armor = FMath::Clamp(Armor + Amount, 0.0f, 100.0f);
+}
+
 float ALambdaCharacter::TakeDamage(float DamageAmount, const FDamageEvent& DamageEvent, AController* EventInstigator, AActor* DamageCauser)
 {
-	if (DamageAmount <= 0.0f || Health <= 0.0f)
+	if (DamageAmount <= 0.0f || !IsAlive())
 	{
 		return 0.0f;
 	}
-	// CBasePlayer::OnTakeDamage without the suit: the whole amount comes off health. Death is not handled yet -
-	// health simply stops at zero.
-	Health = FMath::Max(0.0f, Health - DamageAmount);
-	UE_LOG(LogLambda, Log, TEXT("player took %.0f damage from %s, health %.0f"), DamageAmount, *GetNameSafe(DamageCauser), Health);
+	// CHL1_Player::OnTakeDamage. The damage type is what tells the suit which injury this is; damage from
+	// something that never filled it in is generic, and the suit stays quiet about it.
+	const int32 DamageType = DamageEvent.IsOfType(FSourceDamageEvent::ClassID)
+		? static_cast<const FSourceDamageEvent&>(DamageEvent).DamageType
+		: SourceDamageType::DMG_GENERIC;
+	const float HealthPrev = Health;
+
+	// ---- armour ----
+	//
+	// ARMOR_RATIO 0.2 / ARMOR_BONUS 0.5: health takes a fifth of the blow and the suit soaks up the rest, at
+	// two points of damage stopped for every point of armour spent. It does not help against a fall, drowning
+	// or poison - those do not arrive at the surface of the suit.
+	float Damage = DamageAmount;
+	using namespace SourceDamageType;
+	if (Armor > 0.0f && !(DamageType & (DMG_FALL | DMG_DROWN | DMG_POISON)))
+	{
+		constexpr float ArmorRatio = 0.2f;
+		constexpr float ArmorBonus = 0.5f;
+		float ToHealth = Damage * ArmorRatio;
+		float ToArmor = (Damage - ToHealth) * ArmorBonus;
+		if (ToArmor > Armor)
+		{
+			// The armour runs out part way through and the remainder lands on health.
+			ToArmor = Armor * (1.0f / ArmorBonus);
+			ToHealth = Damage - ToArmor;
+			Armor = 0.0f;
+		}
+		else
+		{
+			Armor -= ToArmor;
+		}
+		Damage = ToHealth;
+	}
+
+	Health = FMath::Max(0.0f, Health - Damage);
+	UE_LOG(LogLambda, Log, TEXT("player took %.0f damage (%.0f after armour) from %s, health %.0f armour %.0f"),
+		DamageAmount, Damage, *GetNameSafe(DamageCauser), Health, Armor);
+
+	// m_bitsDamageType: what is hurting, for the HUD's icons.
+	DamageBits |= DamageType;
+	DamageBitsTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+
+	SuitDamageReaction(DamageType, Damage, HealthPrev);
 
 	// The HUD's damage indicator wants to know which way the blow came from, relative to the view.
 	LastDamageTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
@@ -1890,7 +1998,145 @@ float ALambdaCharacter::TakeDamage(float DamageAmount, const FDamageEvent& Damag
 	{
 		LastDamageYaw = 0.0f;
 	}
+
+	if (!IsAlive())
+	{
+		Killed(DamageCauser);
+	}
 	return DamageAmount;
+}
+
+void ALambdaCharacter::SuitDamageReaction(int32 DamageType, float Damage, float HealthPrev)
+{
+	// CHL1_Player::OnTakeDamage's suit half, verbatim in structure: the suit names the injury, then - if this
+	// was a real blow rather than a scratch - comments on how much of the player is left.
+	//
+	// Source loops here clearing one damage bit at a time because a single blow can carry several. The loop is
+	// kept: a shotgun to the face underwater really does have three things to say about it.
+	if (!bSuitEquipped)
+	{
+		return;
+	}
+	using namespace SourceDamageType;
+
+	const bool bTrivial = (Health > 75.0f || Damage < 5.0f);
+	const bool bMajor = (Damage > 25.0f);
+	const bool bCritical = (Health < 30.0f);
+	const bool bTimeBased = (DamageType & DMG_TIMEBASED) != 0;
+
+	int32 Bits = DamageType;
+	while ((!bTrivial || bTimeBased) && Bits != 0)
+	{
+		const int32 Before = Bits;
+
+		if (Bits & DMG_CLUB)
+		{
+			if (bMajor) { SuitVoice.SetSuitUpdate(this, TEXT("HEV_DMG4"), FLambdaSuitVoice::NextIn30Sec); }
+			Bits &= ~DMG_CLUB;
+		}
+		if (Bits & (DMG_FALL | DMG_CRUSH))
+		{
+			SuitVoice.SetSuitUpdate(this, bMajor ? TEXT("HEV_DMG5") : TEXT("HEV_DMG4"), FLambdaSuitVoice::NextIn30Sec);
+			Bits &= ~(DMG_FALL | DMG_CRUSH);
+		}
+		if (Bits & (DMG_BULLET | DMG_BUCKSHOT))
+		{
+			if (Damage > 5.0f) { SuitVoice.SetSuitUpdate(this, TEXT("HEV_DMG6"), FLambdaSuitVoice::NextIn30Sec); }
+			Bits &= ~(DMG_BULLET | DMG_BUCKSHOT);
+		}
+		if (Bits & DMG_SLASH)
+		{
+			SuitVoice.SetSuitUpdate(this, bMajor ? TEXT("HEV_DMG1") : TEXT("HEV_DMG0"), FLambdaSuitVoice::NextIn30Sec);
+			Bits &= ~DMG_SLASH;
+		}
+		if (Bits & DMG_SONIC)
+		{
+			if (bMajor) { SuitVoice.SetSuitUpdate(this, TEXT("HEV_DMG2"), FLambdaSuitVoice::NextIn1Min); }
+			Bits &= ~DMG_SONIC;
+		}
+		if (Bits & (DMG_POISON | DMG_PARALYZE))
+		{
+			SuitVoice.SetSuitUpdate(this, TEXT("HEV_DMG3"), FLambdaSuitVoice::NextIn1Min);
+			Bits &= ~(DMG_POISON | DMG_PARALYZE);
+		}
+		if (Bits & DMG_ACID)
+		{
+			SuitVoice.SetSuitUpdate(this, TEXT("HEV_DET1"), FLambdaSuitVoice::NextIn1Min);
+			Bits &= ~DMG_ACID;
+		}
+		if (Bits & DMG_NERVEGAS)
+		{
+			SuitVoice.SetSuitUpdate(this, TEXT("HEV_DET0"), FLambdaSuitVoice::NextIn1Min);
+			Bits &= ~DMG_NERVEGAS;
+		}
+		if (Bits & DMG_RADIATION)
+		{
+			SuitVoice.SetSuitUpdate(this, TEXT("HEV_DET2"), FLambdaSuitVoice::NextIn1Min);
+			Bits &= ~DMG_RADIATION;
+		}
+		Bits &= ~DMG_SHOCK;
+
+		if (Bits == Before)
+		{
+			break;	// nothing here the suit knows a word for
+		}
+	}
+
+	// A first real wound, while still healthy: the automedic.
+	if (!bTrivial && bMajor && HealthPrev >= 75.0f)
+	{
+		SuitVoice.SetSuitUpdate(this, TEXT("HEV_MED1"), FLambdaSuitVoice::NextIn30Min);
+		SuitVoice.SetSuitUpdate(this, TEXT("HEV_HEAL7"), FLambdaSuitVoice::NextIn30Min);
+	}
+	// Getting dangerous.
+	if (!bTrivial && bCritical && HealthPrev < 75.0f)
+	{
+		if (Health < 6.0f)
+		{
+			SuitVoice.SetSuitUpdate(this, TEXT("HEV_HLTH3"), FLambdaSuitVoice::NextIn10Min);
+		}
+		else if (Health < 20.0f)
+		{
+			SuitVoice.SetSuitUpdate(this, TEXT("HEV_HLTH2"), FLambdaSuitVoice::NextIn10Min);
+		}
+		if (FMath::RandRange(0, 3) == 0 && HealthPrev < 50.0f)
+		{
+			SuitVoice.SetSuitUpdate(this, TEXT("HEV_DMG7"), FLambdaSuitVoice::NextIn5Min);
+		}
+	}
+	if (bTimeBased && HealthPrev < 75.0f)
+	{
+		if (HealthPrev < 50.0f)
+		{
+			if (FMath::RandRange(0, 3) == 0)
+			{
+				SuitVoice.SetSuitUpdate(this, TEXT("HEV_DMG7"), FLambdaSuitVoice::NextIn5Min);
+			}
+		}
+		else
+		{
+			SuitVoice.SetSuitUpdate(this, TEXT("HEV_HLTH1"), FLambdaSuitVoice::NextIn10Min);
+		}
+	}
+}
+
+void ALambdaCharacter::Killed(AActor* Attacker)
+{
+	UE_LOG(LogLambda, Log, TEXT("player killed by %s"), *GetNameSafe(Attacker));
+
+	// The flatline is the last thing the suit says, and it says it over everything else that was queued.
+	SuitVoice.Reset();
+	if (bSuitEquipped)
+	{
+		SuitVoice.SetSuitUpdate(this, FMath::RandBool() ? TEXT("HEV_DEAD0") : TEXT("HEV_DEAD1"), FLambdaSuitVoice::RepeatOK);
+	}
+
+	// CBasePlayer::Event_Killed drops the weapon and hands control to the death camera. Neither exists yet, so
+	// the player is simply frozen where they fell - enough that death reads as death rather than as nothing.
+	if (APlayerController* PC = Cast<APlayerController>(GetController()))
+	{
+		DisableInput(PC);
+	}
 }
 
 ULambdaMaterialLibrary* ALambdaCharacter::GetWorldMaterialLibrary() const
