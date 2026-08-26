@@ -190,4 +190,7 @@ Clip sizes, ammo types, sounds and damage come from `scripts/weapon_*.txt`, `scr
 
 * 1 Hammer unit = 1.905 cm (16 units = 1 foot), configurable (`UnitScale`)
 * Source (x, y, z) -> UE (x, -y, z) * scale; face normals derived from surfedge winding (not plane+side)
-* Player: capsule 32 x 72 units, eye height 64, walk 190 u/s, sprint 320 u/s (Shift), jump 21 units, gravity 600 u/s^2
+* Player: a **box** 32 x 32 x 72 units, 36 tall ducked, eye 64 units up and 28 ducked - VEC_HULL_MIN/MAX and
+  VEC_DUCK_VIEW, because Source's player is SOLID_BBOX and a pill behaves differently at every edge. Unreal's
+  character is welded to a capsule, so the player is a plain pawn moved by a port of CGameMovement instead
+* Walk 190 u/s, sprint 320 (Shift), jump 21 units, 57 crouch-jumping, gravity 600 u/s^2

@@ -70,11 +70,10 @@ bool ULambdaPlayerMovement::TraceHull(const FVector& Start, const FVector& End, 
 	{
 		return false;
 	}
-	// TracePlayerBBox: the player's own box, swept. Shrunk a hair so a box resting exactly on a surface does not
-	// report itself as already touching it, which is what DIST_EPSILON is for in Source.
-	const float Scale = ULambdaSourceSettings::Get().UnitScale;
-	FVector Extent = Hull->GetScaledBoxExtent();
-	Extent -= FVector(DIST_EPSILON * Scale);
+	// TracePlayerBBox: the player's own box, swept, at its true size. Shrinking it here would be worse than
+	// useless - the box would come to rest with its real faces that far *inside* whatever it landed on, and
+	// every sweep after that would start solid. The clearance is kept by where the box is put down instead.
+	const FVector Extent = Hull->GetScaledBoxExtent();
 
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(PlayerHull), /*bTraceComplex=*/ false, PawnOwner);
 	Params.bReturnFaceIndex = true;
@@ -157,10 +156,12 @@ void ULambdaPlayerMovement::CategorizePosition()
 	}
 
 	SetGroundActor(Hit.GetActor() ? Hit.GetActor() : GetOwner(), Hit);
-	// Settle onto it, so the box rests on the surface rather than a fraction above it.
-	if (Hit.bBlockingHit && Hit.Distance > 0.0f)
+	// Settle onto it, but a hair clear of it. Resting flush means the next sweep begins touching the floor,
+	// which reads as starting solid and takes the whole move - including a jump - away.
+	if (Hit.bBlockingHit)
 	{
-		UpdatedComponent->SetWorldLocation(Hit.Location, false, nullptr, ETeleportType::TeleportPhysics);
+		UpdatedComponent->SetWorldLocation(Hit.Location + FVector(0.0f, 0.0f, DIST_EPSILON * Scale),
+			false, nullptr, ETeleportType::TeleportPhysics);
 	}
 }
 
@@ -524,6 +525,8 @@ void ULambdaPlayerMovement::FinishDuck()
 	}
 	bDucked = true;
 	bDucking = false;
+	++DuckChangeCount;
+	bLastDuckChangeAirborne = !bOnGround;
 
 	const FVector Before = GetFeetLocation();
 	Hull->SetBoxExtent(HullHalfExtent(true), false);
@@ -536,10 +539,11 @@ void ULambdaPlayerMovement::FinishDuck()
 	}
 	else
 	{
-		// In the air: the feet come up by the whole difference between the hulls and the head stays. This is
-		// what crouch jumping is.
+		// In the air: the feet come up by the whole difference between the hulls and the head stays, which is
+		// what crouch jumping is. Resizing the box about its centre has already raised them by half of that, so
+		// what is owed is the other half.
 		const FVector Lift = FVector(0.0f, 0.0f, HullHalfExtent(false).Z - HullHalfExtent(true).Z);
-		UpdatedComponent->AddWorldOffset(Lift * 2.0f, false, nullptr, ETeleportType::TeleportPhysics);
+		UpdatedComponent->AddWorldOffset(Lift, false, nullptr, ETeleportType::TeleportPhysics);
 	}
 }
 
@@ -551,6 +555,8 @@ void ULambdaPlayerMovement::FinishUnDuck()
 	}
 	bDucked = false;
 	bDucking = false;
+	++DuckChangeCount;
+	bLastDuckChangeAirborne = !bOnGround;
 
 	const FVector Before = GetFeetLocation();
 	Hull->SetBoxExtent(HullHalfExtent(false), false);
@@ -562,8 +568,9 @@ void ULambdaPlayerMovement::FinishUnDuck()
 	}
 	else
 	{
+		// The mirror of the lift, and half of it is again already done by the resize.
 		const FVector Drop = FVector(0.0f, 0.0f, HullHalfExtent(false).Z - HullHalfExtent(true).Z);
-		UpdatedComponent->AddWorldOffset(-Drop * 2.0f, false, nullptr, ETeleportType::TeleportPhysics);
+		UpdatedComponent->AddWorldOffset(-Drop, false, nullptr, ETeleportType::TeleportPhysics);
 	}
 }
 

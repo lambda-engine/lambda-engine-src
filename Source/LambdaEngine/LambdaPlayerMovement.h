@@ -54,6 +54,16 @@ public:
 	/** How tall the box is right now, in centimetres. */
 	float GetHullHeight() const;
 
+	/**
+	 * Bumped every time the duck state changes, with whether that change happened in the air.
+	 *
+	 * The view needs to know: a duck begun off the ground lifts the feet by the whole hull difference in one
+	 * frame, and only an equally sudden drop in the eye leaves the head still. A duck begun on the ground moves
+	 * no feet, so the eye eases instead.
+	 */
+	int32 DuckChangeCount = 0;
+	bool bLastDuckChangeAirborne = false;
+
 	/** m_surfaceFriction. */
 	float SurfaceFriction = 1.0f;
 
