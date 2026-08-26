@@ -871,8 +871,7 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 		if (AutoSlotDelay <= 0.0f)
 		{
 			SelectSlot(AutoSlotBucket);
-			bSelectionActive = false;
-			SwitchToWeapon(GetSelectedWeapon());
+			ConfirmWeaponSelection();
 			UE_LOG(LogLambda, Display, TEXT("slot.auto %d -> %s"), AutoSlotBucket,
 				ActiveWeapon ? *ActiveWeapon->GetWeaponClassName() : TEXT("none"));
 		}
@@ -1371,8 +1370,11 @@ void ALambdaCharacter::SelectSlot(int32 Bucket)
 	}
 	if (First == INDEX_NONE)
 	{
-		return;		// nothing in that bucket
+		// An empty slot is refused out loud, the way Source refuses it.
+		PlayUISound(TEXT("Player.DenyWeaponSelection"));
+		return;
 	}
+	const int32 Was = bSelectionActive ? SelectionIndex : INDEX_NONE;
 	if (bSelectionActive && Weapons.IsValidIndex(SelectionIndex) && Weapons[SelectionIndex]->GetWeaponInfo().Bucket == Bucket)
 	{
 		// Cycle within the bucket, wrapping back to its first weapon.
@@ -1388,6 +1390,17 @@ void ALambdaCharacter::SelectSlot(int32 Bucket)
 		SelectionIndex = First;
 	}
 	bSelectionActive = true;
+	if (SelectionIndex != Was)
+	{
+		PlayUISound(TEXT("Player.WeaponSelectionMoveSlot"));
+	}
+}
+
+void ALambdaCharacter::ConfirmWeaponSelection()
+{
+	bSelectionActive = false;
+	PlayUISound(TEXT("Player.WeaponSelected"));
+	SwitchToWeapon(GetSelectedWeapon());
 }
 
 void ALambdaCharacter::CycleSelection(int32 Step)
@@ -1402,7 +1415,13 @@ void ALambdaCharacter::CycleSelection(int32 Step)
 		SelectionIndex = Weapons.IndexOfByKey(ActiveWeapon);
 		bSelectionActive = true;
 	}
+	const int32 Was = SelectionIndex;
 	SelectionIndex = (SelectionIndex + Step + Weapons.Num()) % Weapons.Num();
+	if (SelectionIndex != Was)
+	{
+		// CHudWeaponSelection::CycleToNextWeapon - every notch of the wheel is a click.
+		PlayUISound(TEXT("Player.WeaponSelectionMoveSlot"));
+	}
 }
 
 ALambdaWeapon* ALambdaCharacter::GiveWeapon(const FString& WeaponClassName)
@@ -1638,8 +1657,7 @@ void ALambdaCharacter::Input_AttackStart()
 	// With the weapon menu open, the attack is the confirmation, not a shot (CBaseHudWeaponSelection).
 	if (bSelectionActive)
 	{
-		bSelectionActive = false;
-		SwitchToWeapon(GetSelectedWeapon());
+		ConfirmWeaponSelection();
 		return;
 	}
 	// CPlayerPickupController::Use: firing while carrying something throws it instead (the weapon is holstered
@@ -2345,6 +2363,17 @@ void ALambdaCharacter::PlayStepSound(const FString& SurfaceProp, float Volume)
 		USoundAttenuation* Attenuation = FLambdaSoundCache::Get().GetAttenuationForSoundLevel(Entry ? Entry->SoundLevel : 75.0f);
 		UGameplayStatics::SpawnSoundAtLocation(this, Wave, GetActorLocation(), FRotator::ZeroRotator,
 			Volume, Pitch, 0.0f, Attenuation);
+	}
+}
+
+void ALambdaCharacter::PlayUISound(const FString& ScriptName)
+{
+	float Volume = 1.0f, Pitch = 1.0f;
+	ULambdaSoundWave* Wave = FLambdaSoundCache::Get().CreateWaveResolved(this, ScriptName, false, Volume, Pitch);
+	UE_LOG(LogLambda, Verbose, TEXT("ui sound: %s%s"), *ScriptName, Wave ? TEXT("") : TEXT(" MISSING"));
+	if (Wave)
+	{
+		UGameplayStatics::PlaySound2D(this, Wave, Volume, Pitch);
 	}
 }
 

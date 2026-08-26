@@ -141,6 +141,15 @@ public:
 	/** CBasePlayer::PlayStepSound: the surface names the sound, alternating feet. */
 	void PlayStepSound(const FString& SurfaceProp, float Volume);
 
+	/**
+	 * A soundscript played flat in the player's ears rather than out in the world.
+	 *
+	 * The selection sounds are SNDLVL_NONE in the scripts, which is Source's way of saying this one is not in
+	 * the world at all - no attenuation, no direction, no falloff. Emitting it at the player's location would
+	 * still pan it as they turned.
+	 */
+	void PlayUISound(const FString& ScriptName);
+
 	/** m_flStepSoundTime, in milliseconds, exactly as Source keeps it. */
 	float StepSoundTime = 0.0f;
 	/** m_nStepside. */
@@ -233,6 +242,8 @@ protected:
 	void Input_InvNext() { CycleSelection(+1); }
 	void Input_InvPrev() { CycleSelection(-1); }
 	void SelectSlot(int32 Bucket);
+	/** CBaseHudWeaponSelection::SelectWeapon: take what the menu is on and close it. */
+	void ConfirmWeaponSelection();
 
 public:
 	/** Opens the weapon selection on a bucket and leaves it open, which is what the scroll wheel does. */
