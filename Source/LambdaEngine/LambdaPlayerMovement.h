@@ -47,6 +47,14 @@ public:
 	/** IN_DUCK, held. */
 	void SetWantsToDuck(bool bWants) { bWantsToDuck = bWants; }
 	bool IsDucked() const { return bDucked; }
+	/**
+	 * How far between standing and ducked the *view* is: 0 standing, 1 ducked.
+	 *
+	 * SetDuckedEyeOffset: Source moves the view across the duck as it happens, while the hull changes in one
+	 * step at the end of it. Reading the view off bDucked instead makes the eye sit still for the whole
+	 * transition and then move, which is felt as the crouch not responding.
+	 */
+	float GetDuckViewFraction() const { return DuckViewFraction; }
 	bool IsDucking() const { return bDucking; }
 
 	/** Where the feet are: the bottom of the box. */
@@ -105,6 +113,13 @@ protected:
 	/** The box's half extent right now, standing or ducked. */
 	FVector HullHalfExtent(bool bDuckedHull) const;
 	void SetGroundActor(AActor* NewGround, const FHitResult& Hit);
+	/**
+	 * CheckStuck: if the box has ended up inside something, push it back out.
+	 *
+	 * Without this a single frame that begins solid is permanent - TryPlayerMove gives up on a start-solid
+	 * sweep, so the player never moves again, and never moves out of what he is stuck in either.
+	 */
+	bool ResolvePenetration();
 
 	UPROPERTY(Transient)
 	TObjectPtr<UBoxComponent> Hull;
@@ -122,5 +137,6 @@ protected:
 	bool bWantsToDuck = false;
 	bool bDucked = false;		// m_bDucked: the ducked hull is in effect
 	bool bDucking = false;		// m_bDucking: the transition is running
-	float DuckTime = 0.0f;		// m_flDucktime, in seconds spent in the transition
+	float DuckTime = 0.0f;
+	float DuckViewFraction = 0.0f;		// m_flDucktime, in seconds spent in the transition
 };

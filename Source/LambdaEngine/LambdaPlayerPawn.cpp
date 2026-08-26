@@ -31,8 +31,12 @@ ALambdaPlayerPawn::ALambdaPlayerPawn(const FObjectInitializer& ObjectInitializer
 	Movement->SetUpdatedComponent(Hull);
 	Movement->SetHullComponent(Hull);
 
+	// The hull is axis aligned and stays that way. Source's player is SOLID_BBOX: turning changes where you
+	// look, never the shape you occupy. The box is this pawn's root, so letting the controller yaw the pawn
+	// would yaw the box with it - and a box that turns while pressed against a wall turns into the wall.
+	// Where the player is facing is the control rotation's business, and the camera's.
 	bUseControllerRotationPitch = false;
-	bUseControllerRotationYaw = true;
+	bUseControllerRotationYaw = false;
 	bUseControllerRotationRoll = false;
 }
 

@@ -408,8 +408,10 @@ void ALambdaCharacter::Input_Move(const FInputActionValue& Value)
 	const FVector2D Axis = Value.Get<FVector2D>();
 	if (Controller)
 	{
-		AddMovementInput(GetActorForwardVector(), Axis.Y);
-		AddMovementInput(GetActorRightVector(), Axis.X);
+		// The pawn does not turn - its box is axis aligned - so forward is where the view is pointing.
+		const FRotator ViewYaw(0.0f, GetControlRotation().Yaw, 0.0f);
+		AddMovementInput(ViewYaw.Vector(), Axis.Y);
+		AddMovementInput(FRotationMatrix(ViewYaw).GetUnitAxis(EAxis::Y), Axis.X);
 	}
 }
 
@@ -2055,44 +2057,21 @@ void ALambdaCharacter::Input_CrouchEnd()
 
 void ALambdaCharacter::UpdateEyeHeight(float DeltaSeconds)
 {
-	// VEC_VIEW / VEC_DUCK_VIEW: the eye is 64 units above the feet standing and 28 ducked. Source eases between
-	// them over TIME_TO_DUCK rather than switching, and unducks faster than it ducks.
+	// VEC_VIEW / VEC_DUCK_VIEW: the eye is 64 units above the feet standing and 28 ducked, and the movement
+	// component says how far between the two the duck has got. Following that rather than "am I ducked yet"
+	// is what makes the crouch answer the key straight away instead of a fifth of a second later.
 	if (!FirstPersonCamera)
 	{
 		return;
 	}
 	const float Scale = ULambdaSourceSettings::Get().UnitScale;
-	const float StandEyeCm = 64.0f * Scale;
-	const float DuckEyeCm = 28.0f * Scale;
-	const float TargetCm = IsCrouched() ? DuckEyeCm : StandEyeCm;
-
-	// A duck that happened off the ground moved the feet the whole hull difference in one frame, so the eye has
-	// to move with it; one begun on the ground moved no feet, so it eases even if a jump interrupts it.
 	const ULambdaPlayerMovement* Move = GetMovement();
-	if (Move && Move->DuckChangeCount != SeenDuckChangeCount)
-	{
-		SeenDuckChangeCount = Move->DuckChangeCount;
-		if (Move->bLastDuckChangeAirborne)
-		{
-			EyeAboveFeetCm = TargetCm;
-		}
-	}
+	const float Fraction = Move ? Move->GetDuckViewFraction() : 0.0f;
 
-	if (EyeAboveFeetCm < 0.0f)
-	{
-		EyeAboveFeetCm = TargetCm;	// first frame: start where we are, do not sweep up from the floor
-	}
-	else
-	{
-		// TIME_TO_DUCK 0.4s, TIME_TO_UNDUCK 0.2s, across the 36 units between the two.
-		const float Travel = StandEyeCm - DuckEyeCm;
-		const float Rate = Travel / (IsCrouched() ? 0.4f : 0.2f);
-		EyeAboveFeetCm = FMath::FInterpConstantTo(EyeAboveFeetCm, TargetCm, DeltaSeconds, Rate);
-	}
+	EyeAboveFeetCm = FMath::Lerp(64.0f * Scale, 28.0f * Scale, Fraction);
 
-	// Stated from the feet, so it has to lose the half height to become a position relative to the middle of the
-	// capsule - which is also what absorbs the capsule resizing under it, so nothing jumps.
-	const float HalfHeight = GetHullHalfHeight();
-	FirstPersonCamera->SetRelativeLocation(FVector(0.0f, 0.0f, EyeAboveFeetCm - HalfHeight));
+	// Stated from the feet, so it loses the half height to become a position relative to the middle of the box -
+	// which is also what absorbs the box resizing under it, so nothing jumps.
+	FirstPersonCamera->SetRelativeLocation(FVector(0.0f, 0.0f, EyeAboveFeetCm - GetHullHalfHeight()));
 }
 

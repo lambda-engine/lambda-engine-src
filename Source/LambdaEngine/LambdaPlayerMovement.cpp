@@ -3,6 +3,7 @@
 #include "Core/LambdaSourceSettings.h"
 
 #include "Components/BoxComponent.h"
+#include "Engine/OverlapResult.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 
@@ -119,6 +120,52 @@ void ULambdaPlayerMovement::SetGroundActor(AActor* NewGround, const FHitResult& 
 			OnLanded.Broadcast(Hit);
 		}
 	}
+}
+
+bool ULambdaPlayerMovement::ResolvePenetration()
+{
+	UWorld* World = GetWorld();
+	if (!World || !Hull || !UpdatedComponent)
+	{
+		return false;
+	}
+	const FVector Centre = UpdatedComponent->GetComponentLocation();
+	const FVector Extent = Hull->GetScaledBoxExtent();
+
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(PlayerUnstick), false, PawnOwner);
+	TArray<FOverlapResult> Overlaps;
+	if (!World->OverlapMultiByChannel(Overlaps, Centre, FQuat::Identity, ECC_Pawn,
+		FCollisionShape::MakeBox(Extent), Params))
+	{
+		return false;
+	}
+
+	// Ask each thing we are inside how far out it wants us, and take the largest push.
+	FVector Push = FVector::ZeroVector;
+	for (const FOverlapResult& Overlap : Overlaps)
+	{
+		UPrimitiveComponent* Other = Overlap.GetComponent();
+		if (!Other)
+		{
+			continue;
+		}
+		FMTDResult MTD;
+		if (Other->ComputePenetration(MTD, FCollisionShape::MakeBox(Extent), Centre, FQuat::Identity))
+		{
+			if (MTD.Distance > Push.Size())
+			{
+				Push = MTD.Direction * MTD.Distance;
+			}
+		}
+	}
+	if (Push.IsNearlyZero())
+	{
+		return false;
+	}
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+	UpdatedComponent->SetWorldLocation(Centre + Push + Push.GetSafeNormal() * DIST_EPSILON * Scale,
+		false, nullptr, ETeleportType::TeleportPhysics);
+	return true;
 }
 
 void ULambdaPlayerMovement::CategorizePosition()
@@ -576,7 +623,8 @@ void ULambdaPlayerMovement::FinishUnDuck()
 
 void ULambdaPlayerMovement::Duck(float DeltaTime)
 {
-	// CGameMovement::Duck, cut to the ducking itself.
+	// CGameMovement::Duck, cut to the ducking itself. The view moves across the transition; the hull changes in
+	// one step at the end of it.
 	if (bWantsToDuck)
 	{
 		if (!bDucked)
@@ -587,29 +635,54 @@ void ULambdaPlayerMovement::Duck(float DeltaTime)
 				DuckTime = 0.0f;
 			}
 			DuckTime += DeltaTime;
+			// SimpleSpline: eased at both ends rather than a straight ramp.
+			const float T = FMath::Clamp(DuckTime / TIME_TO_DUCK, 0.0f, 1.0f);
+			DuckViewFraction = FMath::SmoothStep(0.0f, 1.0f, T);
+
 			// "Finish ducking immediately if duck time is over or not on ground."
 			if (DuckTime > TIME_TO_DUCK || !bOnGround)
 			{
 				FinishDuck();
+				DuckViewFraction = 1.0f;
 			}
+		}
+		else
+		{
+			DuckViewFraction = 1.0f;
 		}
 	}
 	else if (bDucked || bDucking)
 	{
+		if (!bDucked)
+		{
+			// The duck never finished, so there is nothing to undo but the view.
+			bDucking = false;
+			DuckTime = 0.0f;
+			DuckViewFraction = 0.0f;
+			return;
+		}
 		if (!CanUnDuckHere())
 		{
 			return;		// something overhead; stay down until there is room
 		}
-		if (!bDucked)
+		if (!bDucking)
 		{
-			bDucking = false;	// the duck never finished, so there is nothing to undo
-			return;
+			bDucking = true;
+			DuckTime = 0.0f;
 		}
 		DuckTime += DeltaTime;
+		const float T = FMath::Clamp(DuckTime / TIME_TO_UNDUCK, 0.0f, 1.0f);
+		DuckViewFraction = 1.0f - FMath::SmoothStep(0.0f, 1.0f, T);
+
 		if (DuckTime > TIME_TO_UNDUCK || !bOnGround)
 		{
 			FinishUnDuck();
+			DuckViewFraction = 0.0f;
 		}
+	}
+	else
+	{
+		DuckViewFraction = 0.0f;
 	}
 }
 
@@ -661,6 +734,10 @@ void ULambdaPlayerMovement::TickComponent(float DeltaTime, ELevelTick TickType, 
 	const FVector Input = ConsumeInputVector().GetClampedToMaxSize(1.0f);
 	WishDirection = FVector(Input.X, Input.Y, 0.0f).GetSafeNormal();
 	WishSpeed = MaxSpeedCm * FVector(Input.X, Input.Y, 0.0f).Size();
+
+	// Before anything else: if the box is inside something, get it out, or every move this frame begins solid
+	// and does nothing at all.
+	ResolvePenetration();
 
 	CategorizePosition();
 	Duck(DeltaTime);
