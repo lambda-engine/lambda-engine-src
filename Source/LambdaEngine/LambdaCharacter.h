@@ -164,6 +164,15 @@ public:
 
 	USourceStudioModelComponent* GetViewModelMesh() const { return ViewModelMesh; }
 
+	// ---- The player's own body (LambdaPlayerBody.cpp) ----
+
+	/** Loads the legs and the shadow body and sets their visibility rules. Called once the map's materials exist. */
+	void SetupPlayerBody();
+	/** Picks the sequence both meshes play from how the player is moving, and keeps their feet on the ground. */
+	void UpdatePlayerBody(float DeltaSeconds);
+	/** The sequence label the current movement calls for ("run_forward", "crouch_idle", ...). */
+	FString ChoosePlayerBodySequence() const;
+
 	UFUNCTION(BlueprintPure, Category = "Lambda") float GetHealth() const { return Health; }
 	UFUNCTION(BlueprintPure, Category = "Lambda") float GetArmor() const { return Armor; }
 
@@ -421,6 +430,13 @@ protected:
 
 	/** Ammo carried, by ammo type name. */
 	TMap<FString, int32> AmmoCounts;
+
+	/** Drawn only for the player who owns them: what looking down shows. */
+	UPROPERTY(VisibleAnywhere, Category = "Lambda")
+	TObjectPtr<USourceStudioModelComponent> LegsMesh;
+	/** Drawn for everyone else, and casting even when hidden: the shadow the player throws. */
+	UPROPERTY(VisibleAnywhere, Category = "Lambda")
+	TObjectPtr<USourceStudioModelComponent> BodyMesh;
 
 	UPROPERTY(EditAnywhere, Category = "Lambda")
 	float Health = 100.0f;

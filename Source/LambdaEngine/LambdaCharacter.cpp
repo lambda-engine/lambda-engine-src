@@ -206,6 +206,18 @@ ALambdaCharacter::ALambdaCharacter(const FObjectInitializer& ObjectInitializer)
 	ViewModelMesh = CreateDefaultSubobject<USourceStudioModelComponent>(TEXT("ViewModel"));
 	ViewModelMesh->SetupAttachment(FirstPersonCamera);
 	ViewModelMesh->SetMobility(EComponentMobility::Movable);
+
+	// The player's own body: legs the owner sees, and a whole body only its shadow gets out of. Both hang off
+	// the capsule rather than the camera - they belong to the pawn's position, not to where it is looking.
+	LegsMesh = CreateDefaultSubobject<USourceStudioModelComponent>(TEXT("PlayerLegs"));
+	LegsMesh->SetupAttachment(GetCapsuleComponent());
+	LegsMesh->SetMobility(EComponentMobility::Movable);
+	LegsMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	BodyMesh = CreateDefaultSubobject<USourceStudioModelComponent>(TEXT("PlayerBody"));
+	BodyMesh->SetupAttachment(GetCapsuleComponent());
+	BodyMesh->SetMobility(EComponentMobility::Movable);
+	BodyMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	// Source draws the view model in its own pass with a compressed depth range so it can never intersect the
 	// world; UE's first-person primitive path is the same idea, and it is what stops the gun pushing into a wall
 	// the player stands against.
@@ -789,6 +801,7 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 
 	UpdateEyeHeight(DeltaSeconds);
 	UpdateStepSound(DeltaSeconds);
+	UpdatePlayerBody(DeltaSeconds);
 
 	// CheckSuitUpdate: the suit works through whatever it has been given to say.
 	SuitVoice.Tick(this, GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f);

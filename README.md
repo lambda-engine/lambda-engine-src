@@ -184,6 +184,8 @@ Clip sizes, ammo types, sounds and damage come from `scripts/weapon_*.txt`, `scr
 | | Status |
 |---|---|
 | Runtime skeletal meshes, GPU skinning, bodygroups | Done |
+| First-person legs and a shadow-casting player body | Partial — both models load, sit correctly and the shadow casts; animated sequences deform the mesh (see below) |
+| glTF/GLB -> .mdl compilation (Tools/ImportGLTFModel.py, via studiomdl) | Partial — mesh, skeleton, materials and the bind pose are correct; animation is not |
 | Impact decals, blood, ragdolls, particles | Done |
 | HUD (health, suit, ammo), weapon selection with icons, damage-type icons | Done |
 | Player damage: armour absorption, damage types, death | Done — no death camera or respawn yet |
@@ -191,6 +193,31 @@ Clip sizes, ammo types, sounds and damage come from `scripts/weapon_*.txt`, `scr
 | Main menu, pause menu, developer console, loading screen | Done — `map` is the only console command that does anything of its own |
 | Save / load | Not started |
 | Options, achievements | Not started — the menu entries say so when picked |
+
+### Known defect: converted animations deform the mesh
+
+`Tools/ImportGLTFModel.py` compiles a GLB into a real Source model - SMD plus QC through studiomdl - and the
+result loads, stands in its bind pose correctly, and casts a correct shadow. Playing any of its sequences
+distorts the mesh.
+
+What has been ruled out, so the next person does not repeat it:
+
+* The SMD data. Bone-local translations and rotations in the animation files match the reference pose bone for
+  bone; a spine 4.3 units above the hips reads as 4.3 in both.
+* Scale. It *was* wrong - a rig with an armature scale of 0.01 (Mixamo's) makes `inv(parent) @ child` divide
+  every offset by that scale, so locals came out 100x too large in both the reference and the animations, which
+  agree with each other and therefore looked right standing still. `strip_scale` fixes it and the numbers are
+  now correct.
+* The euler convention. SMD's three rotation floats build `Rz(z) * Ry(y) * Rx(x)`, which is what mathlib's
+  `AngleMatrix(RadianEuler)` does once its QAngle relabelling is unwound, and that is what the exporter emits.
+* Bone culling. studiomdl discards bones no vertex is weighted to - 65 becomes 10 for a legs-only mesh - but
+  the mesh deforms just as badly with all 65 kept.
+* `$definebone`. Declaring every bone keeps the rig intact and makes the deformation worse, so its six fixup
+  columns are not all zero as assumed.
+
+The bind pose being right and the animation being wrong points at the per-frame path rather than the skeleton:
+either what studiomdl writes for these sequences or how the engine decodes it. Stock Source models animate
+correctly in this engine, so the model is the more likely half.
 
 ## Conventions
 

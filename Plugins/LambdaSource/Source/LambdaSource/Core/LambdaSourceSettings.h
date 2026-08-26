@@ -186,6 +186,17 @@ public:
 	FRotator ViewModelRotation = FRotator(0.0f, 0.0f, 0.0f);
 
 	/**
+	 * The player's own body. Two models rather than one: a legs-only mesh for what the player sees looking
+	 * down, and the whole body for the shadow it throws. A full body worn in first person puts its own neck
+	 * through the near plane, which is why every game that draws legs draws only legs.
+	 */
+	UPROPERTY(EditAnywhere, config, Category = "Player Body")
+	FString PlayerLegsModel = TEXT("models/player/gordon_legs.mdl");
+
+	UPROPERTY(EditAnywhere, config, Category = "Player Body")
+	FString PlayerBodyModel = TEXT("models/player/gordon.mdl");
+
+	/**
 	 * Field of view the view model is drawn with, separate from the world's - Source's viewmodel_fov, which
 	 * defaults to 54 in HL2 while the world runs at 90.
 	 */
