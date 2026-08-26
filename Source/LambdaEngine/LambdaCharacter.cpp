@@ -2096,6 +2096,10 @@ void ALambdaCharacter::OnStartCrouch(float HalfHeightAdjust, float ScaledHalfHei
 	if (GetCharacterMovement() && GetCharacterMovement()->IsFalling())
 	{
 		AddActorWorldOffset(FVector(0.0f, 0.0f, ScaledHalfHeightAdjust), /*bSweep=*/ false);
+		// The feet just moved the whole hull difference in one frame, so the view has to as well or the head
+		// lurches. Only here, though - a duck begun on the ground eases even if a jump interrupts it, because
+		// there the feet never moved.
+		EyeAboveFeetCm = 28.0f * ULambdaSourceSettings::Get().UnitScale;	// VEC_DUCK_VIEW
 	}
 }
 
@@ -2108,6 +2112,7 @@ void ALambdaCharacter::OnEndCrouch(float HalfHeightAdjust, float ScaledHalfHeigh
 	if (GetCharacterMovement() && GetCharacterMovement()->IsFalling())
 	{
 		AddActorWorldOffset(FVector(0.0f, 0.0f, -ScaledHalfHeightAdjust), /*bSweep=*/ false);
+		EyeAboveFeetCm = 64.0f * ULambdaSourceSettings::Get().UnitScale;	// VEC_VIEW
 	}
 }
 
@@ -2124,14 +2129,9 @@ void ALambdaCharacter::UpdateEyeHeight(float DeltaSeconds)
 	const float DuckEyeCm = 28.0f * Scale;
 	const float TargetCm = bIsCrouched ? DuckEyeCm : StandEyeCm;
 
-	// "Finish ducking immediately if duck time is over or not on ground" (CGameMovement::Duck). In the air the
-	// duck is instant, and it has to be: ducking off the ground lifts the feet by the whole hull difference at
-	// once, and only an equally instant drop in the view offset leaves the head where it was. Easing it is what
-	// makes the view jump - the feet move now and the eye follows over the next four tenths of a second.
-	const bool bInAir = GetCharacterMovement() && GetCharacterMovement()->IsFalling();
-	if (EyeAboveFeetCm < 0.0f || bInAir)
+	if (EyeAboveFeetCm < 0.0f)
 	{
-		EyeAboveFeetCm = TargetCm;
+		EyeAboveFeetCm = TargetCm;	// first frame: start where we are, do not sweep up from the floor
 	}
 	else
 	{
