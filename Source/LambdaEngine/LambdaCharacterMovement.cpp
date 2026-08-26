@@ -1,6 +1,11 @@
 #include "LambdaCharacterMovement.h"
 
 #include "Core/LambdaSourceSettings.h"
+#include "Entities/SourceInfoLadder.h"
+
+#include "Components/CapsuleComponent.h"
+#include "EngineUtils.h"
+#include "GameFramework/Character.h"
 
 // movevars_shared.cpp, with Source's defaults. Held as floats so they can be changed while the game runs.
 static float SvFriction = 4.0f;
@@ -19,6 +24,10 @@ static FAutoConsoleVariableRef CVarSvAirAccelerate(TEXT("sv_airaccelerate"), SvA
 
 // CGameMovement::GetAirSpeedCap. Thirty units is the number every Quake-derived game uses, and the reason air
 // strafing works at all: see QuakeAirAccelerate.
+static float SvMaxVelocity = 3500.0f;
+static FAutoConsoleVariableRef CVarSvMaxVelocity(TEXT("sv_maxvelocity"), SvMaxVelocity,
+	TEXT("Maximum speed any ballistically moving object is allowed to attain per axis, in units."));
+
 static float SvAirSpeedCap = 30.0f;
 static FAutoConsoleVariableRef CVarSvAirSpeedCap(TEXT("sv_airspeedcap"), SvAirSpeedCap,
 	TEXT("How much of the wish speed air acceleration will chase, in units."));
@@ -49,8 +58,21 @@ ULambdaCharacterMovement::ULambdaCharacterMovement()
 
 bool ULambdaCharacterMovement::CanAttemptJump() const
 {
-	// Unreal's, less the "and not crouching" it adds.
-	return IsJumpAllowed() && (IsMovingOnGround() || IsFalling());
+	// Unreal's, less the "and not crouching" it adds - and a ladder counts, because jumping is how you let go.
+	return IsJumpAllowed() && (IsMovingOnGround() || IsFalling() || IsOnLadder());
+}
+
+bool ULambdaCharacterMovement::DoJump(bool bReplayingMoves, float DeltaTime)
+{
+	if (IsOnLadder())
+	{
+		// LadderMove's IN_JUMP: off the face at 270 units, and gravity takes over.
+		Velocity = LadderNormal * 270.0f * ULambdaSourceSettings::Get().UnitScale;
+		LadderRegrabTime = GetWorld()->GetTimeSeconds() + 0.4f;
+		SetMovementMode(MOVE_Falling);
+		return true;
+	}
+	return Super::DoJump(bReplayingMoves, DeltaTime);
 }
 
 void ULambdaCharacterMovement::CalcVelocity(float DeltaTime, float Friction, bool bFluid, float BrakingDeceleration)
@@ -85,6 +107,13 @@ void ULambdaCharacterMovement::CalcVelocity(float DeltaTime, float Friction, boo
 		// touched the vertical either - the wish direction it works from is flattened.
 		QuakeAirAccelerate(WishDir, WishSpeed, SvAirAccelerate, DeltaTime);
 	}
+
+	// CheckVelocity: each axis is clamped to sv_maxvelocity. A surf ramp with nothing at the bottom of it will
+	// otherwise hand out speed without limit.
+	const float MaxVel = SvMaxVelocity * ULambdaSourceSettings::Get().UnitScale;
+	Velocity.X = FMath::Clamp(Velocity.X, -MaxVel, MaxVel);
+	Velocity.Y = FMath::Clamp(Velocity.Y, -MaxVel, MaxVel);
+	Velocity.Z = FMath::Clamp(Velocity.Z, -MaxVel, MaxVel);
 }
 
 void ULambdaCharacterMovement::ApplyGroundFriction(float DeltaTime)
@@ -144,4 +173,147 @@ void ULambdaCharacterMovement::QuakeAirAccelerate(const FVector& WishDir, float 
 	}
 	const float AccelSpeed = FMath::Min(Accel * WishSpeed * DeltaTime * SurfaceFriction, AddSpeed);
 	Velocity += AccelSpeed * WishDir;
+}
+
+ASourceInfoLadder* ULambdaCharacterMovement::FindTouchedLadder(const FVector& Probe) const
+{
+	const UWorld* World = GetWorld();
+	const ACharacter* Owner = CharacterOwner.Get();
+	if (!World || !Owner)
+	{
+		return nullptr;
+	}
+	// The hull as a box around the capsule, moved to the probe position; a ladder is touched when the boxes meet.
+	const UCapsuleComponent* Capsule = Owner->GetCapsuleComponent();
+	const FVector Extent(Capsule->GetScaledCapsuleRadius(), Capsule->GetScaledCapsuleRadius(),
+		Capsule->GetScaledCapsuleHalfHeight());
+	const FBox HullBox(Probe - Extent, Probe + Extent);
+
+	for (TActorIterator<ASourceInfoLadder> It(const_cast<UWorld*>(World)); It; ++It)
+	{
+		if (It->GetVolume().Intersect(HullBox))
+		{
+			return *It;
+		}
+	}
+	return nullptr;
+}
+
+void ULambdaCharacterMovement::UpdateCharacterStateBeforeMovement(float DeltaSeconds)
+{
+	Super::UpdateCharacterStateBeforeMovement(DeltaSeconds);
+
+	if (!HasValidData() || MovementMode == MOVE_None)
+	{
+		return;
+	}
+
+	// Just jumped off: the shove needs time to carry the player out of reach before a grab is offered again.
+	if (!IsOnLadder() && GetWorld()->GetTimeSeconds() < LadderRegrabTime)
+	{
+		return;
+	}
+
+	// CGameMovement::LadderMove's attach test. Already climbing, look into the ladder; otherwise look where the
+	// player is pushing, and no input means no attaching.
+	FVector WishDir;
+	if (IsOnLadder())
+	{
+		WishDir = -LadderNormal;
+	}
+	else
+	{
+		WishDir = Acceleration.GetSafeNormal();
+		if (WishDir.IsNearlyZero())
+		{
+			return;
+		}
+	}
+
+	// LadderDistance: two units along the wish is close enough to take hold.
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+	const FVector Probe = UpdatedComponent->GetComponentLocation() + WishDir * 2.0f * Scale;
+	ASourceInfoLadder* Ladder = FindTouchedLadder(Probe);
+
+	if (Ladder)
+	{
+		LadderNormal = Ladder->GetNormalToward(UpdatedComponent->GetComponentLocation());
+		if (!IsOnLadder())
+		{
+			SetMovementMode(MOVE_Custom, CMOVE_Ladder);
+		}
+	}
+	else if (IsOnLadder())
+	{
+		// Climbed off the end of it.
+		SetMovementMode(MOVE_Falling);
+	}
+}
+
+void ULambdaCharacterMovement::PhysCustom(float DeltaTime, int32 Iterations)
+{
+	if (CustomMovementMode != CMOVE_Ladder)
+	{
+		Super::PhysCustom(DeltaTime, Iterations);
+		return;
+	}
+	ACharacter* Owner = CharacterOwner.Get();
+	if (!Owner || DeltaTime < MIN_TICK_TIME)
+	{
+		return;
+	}
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+
+	// The rest is CGameMovement::LadderMove's climb, verbatim in UE vectors.
+	//
+	// The intended velocity is rebuilt in the *view* basis, pitch included: Source's forwardmove rides
+	// m_vecForward, which points where the player looks, so climbing follows the eyes - look up and push
+	// forward to go up, look down to go down. Acceleration cannot be used directly here because the input
+	// bindings flattened it to the yaw plane.
+	const FRotator View = Owner->GetControlRotation();
+	const FVector ViewForward = View.Vector();
+	const FVector ViewRight = FRotationMatrix(FRotator(0.0f, View.Yaw, 0.0f)).GetUnitAxis(EAxis::Y);
+	const FRotator YawOnly(0.0f, View.Yaw, 0.0f);
+	const FVector YawForward = YawOnly.Vector();
+
+	const float ClimbSpeed = 200.0f * Scale;	// MAX_CLIMB_SPEED
+	const float ForwardMove = FMath::Sign(FVector::DotProduct(Acceleration, YawForward))
+		* (FMath::Abs(FVector::DotProduct(Acceleration.GetSafeNormal(), YawForward)) > 0.3f ? ClimbSpeed : 0.0f);
+	const float RightMove = FMath::Sign(FVector::DotProduct(Acceleration, ViewRight))
+		* (FMath::Abs(FVector::DotProduct(Acceleration.GetSafeNormal(), ViewRight)) > 0.3f ? ClimbSpeed : 0.0f);
+
+	if (ForwardMove == 0.0f && RightMove == 0.0f)
+	{
+		// No input: hang where you are.
+		Velocity = FVector::ZeroVector;
+	}
+	else
+	{
+		const FVector Intended = ViewForward * ForwardMove + ViewRight * RightMove;
+
+		// Decompose against the ladder: perp lies across its face, TmpUp runs up it.
+		const FVector Perp = FVector::CrossProduct(FVector::UpVector, LadderNormal).GetSafeNormal();
+		const float NormalComp = FVector::DotProduct(Intended, LadderNormal);
+		const FVector Cross = LadderNormal * NormalComp;
+		const FVector Lateral = Intended - Cross;
+		const FVector TmpUp = FVector::CrossProduct(LadderNormal, Perp);
+
+		Velocity = Lateral - NormalComp * TmpUp;
+
+		// On the floor and pushing away from the ladder: step off it rather than climb.
+		if (IsMovingOnGround() && NormalComp > 0.0f)
+		{
+			Velocity += ClimbSpeed * LadderNormal;
+			SetMovementMode(MOVE_Falling);
+		}
+	}
+
+	// Move, sliding along whatever the hull meets - the wall behind the ladder, the platform lip at the top.
+	const FVector Delta = Velocity * DeltaTime;
+	FHitResult Hit;
+	SafeMoveUpdatedComponent(Delta, UpdatedComponent->GetComponentQuat(), true, Hit);
+	if (Hit.IsValidBlockingHit())
+	{
+		SlideAlongSurface(Delta, 1.0f - Hit.Time, Hit.Normal, Hit, true);
+	}
 }

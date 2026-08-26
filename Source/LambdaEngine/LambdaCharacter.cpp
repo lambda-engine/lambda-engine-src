@@ -103,6 +103,12 @@ static FAutoConsoleVariableRef CVarWalkAuto(
 	GWalkAuto,
 	TEXT("\"<seconds> [delay_s]\": walk forward for that long"));
 
+static FString GSpeedLogAuto;
+static FAutoConsoleVariableRef CVarSpeedLogAuto(
+	TEXT("speedlog.auto"),
+	GSpeedLogAuto,
+	TEXT("\"<seconds>\": log the player's speed and height four times a second, for measuring surf and ladders"));
+
 static FString GCrouchAuto;
 static FAutoConsoleVariableRef CVarCrouchAuto(
 	TEXT("crouch.auto"),
@@ -884,6 +890,23 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 		}
 	}
 
+	// speedlog.auto: the numbers surf and ladders are judged by.
+	if (AutoSpeedLogSeconds > 0.0f)
+	{
+		AutoSpeedLogTimer -= DeltaSeconds;
+		if (AutoSpeedLogTimer <= 0.0f)
+		{
+			AutoSpeedLogTimer = 0.25f;
+			AutoSpeedLogSeconds -= 0.25f;
+			const float Scale = ULambdaSourceSettings::Get().UnitScale;
+			const UCharacterMovementComponent* Move = GetCharacterMovement();
+			UE_LOG(LogLambda, Display, TEXT("speed: %.0f u/s (z %+.0f) feet %.0f u %s"),
+				Move->Velocity.Size2D() / Scale, Move->Velocity.Z / Scale,
+				(GetActorLocation().Z - GetCapsuleComponent()->GetScaledCapsuleHalfHeight()) / Scale,
+				Move->MovementMode == MOVE_Custom ? TEXT("LADDER") : (Move->IsFalling() ? TEXT("air") : TEXT("ground")));
+		}
+	}
+
 	// crouch.auto: hold duck, so the ducked hull and view can be tested.
 	if (AutoCrouchSeconds > 0.0f)
 	{
@@ -1044,6 +1067,10 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 				AutoJumpDelay = Parts.Num() > 0 ? FCString::Atof(*Parts[0]) : 1.0f;
 				AutoJumpDuckAfter = Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : -1.0f;
 				bAutoJumpArmed = true;
+			}
+			if (!GSpeedLogAuto.IsEmpty())
+			{
+				AutoSpeedLogSeconds = FCString::Atof(*GSpeedLogAuto);
 			}
 			if (!GCrouchAuto.IsEmpty())
 			{

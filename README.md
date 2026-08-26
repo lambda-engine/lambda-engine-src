@@ -153,6 +153,7 @@ Clip sizes, ammo types, sounds and damage come from `scripts/weapon_*.txt`, `scr
 |---|---|
 | `func_button` | Done |
 | `func_door_rotating` | Done |
+| `func_ladder` (as vbsp's `info_ladder`) | Done — attach, climb at 200 u/s, jump off at 270; Tools/make_movement_testmap.py builds a map to try it on |
 | any other `"model" "*N"` entity | Geometry only — it is drawn and collides, but does nothing |
 
 ### World
@@ -190,4 +191,8 @@ Clip sizes, ammo types, sounds and damage come from `scripts/weapon_*.txt`, `scr
 
 * 1 Hammer unit = 1.905 cm (16 units = 1 foot), configurable (`UnitScale`)
 * Source (x, y, z) -> UE (x, -y, z) * scale; face normals derived from surfedge winding (not plane+side)
-* Player: capsule 32 x 72 units, eye height 64, walk 190 u/s, sprint 320 u/s (Shift), jump 21 units, gravity 600 u/s^2
+* Player: capsule 32 x 72 units (36 ducked), eye height 64 (28 ducked), walk 190 u/s, sprint 320 u/s (Shift),
+  jump 21 units and 57 crouch-jumping, gravity 600 u/s^2
+* Movement is Quake's (a CalcVelocity override on Unreal's character movement): bunny hopping and air strafing
+  work, surfing works on any slope too steep to stand on (normal.z < 0.7), ladders are climbable, and
+  sv_maxvelocity caps it all

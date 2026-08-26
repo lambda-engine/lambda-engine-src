@@ -279,6 +279,8 @@ protected:
 
 	float AutoCrouchSeconds = 0.0f;
 	float AutoCrouchDelay = 0.0f;
+	float AutoSpeedLogSeconds = 0.0f;
+	float AutoSpeedLogTimer = 0.0f;
 	bool bAutoJumpArmed = false;
 	float AutoJumpDelay = 0.0f;
 	float AutoJumpDuckAfter = -1.0f;

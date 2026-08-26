@@ -43,11 +43,44 @@ public:
 	 * specifically for jumping while ducked.
 	 */
 	virtual bool CanAttemptJump() const override;
+	/** Jumping off a ladder: let go, shoved off its face at 270 units (CGameMovement::LadderMove's IN_JUMP). */
+	virtual bool DoJump(bool bReplayingMoves, float DeltaTime) override;
 
 	/** m_surfaceFriction: how slippery what we are standing on is. Ice would lower it; nothing does yet. */
 	float SurfaceFriction = 1.0f;
 
+	/** MOVE_Custom submodes. */
+	static constexpr uint8 CMOVE_Ladder = 1;
+
+	bool IsOnLadder() const { return MovementMode == MOVE_Custom && CustomMovementMode == CMOVE_Ladder; }
+
 protected:
+	/**
+	 * CGameMovement::LadderMove, on info_ladder volumes.
+	 *
+	 * Runs before each frame's physics. Already climbing, the wish direction is into the ladder; otherwise it is
+	 * where the player is pushing, and with no input there is no attaching. If the hull moved two units along
+	 * that wish would touch a ladder volume, the mode becomes climbing.
+	 *
+	 * A mapper draws func_ladder brushes, vbsp turns each into an info_ladder point entity carrying the volume
+	 * as mins/maxs - nothing solid and nothing rendered - so "am I on a ladder" is a box test, the way
+	 * Counter-Strike's ladders work, rather than the CONTENTS_LADDER trace HL2's brush ladders use.
+	 */
+	virtual void UpdateCharacterStateBeforeMovement(float DeltaSeconds) override;
+	/** The climbing itself: MOVE_Custom / CMOVE_Ladder. */
+	virtual void PhysCustom(float DeltaTime, int32 Iterations) override;
+
+	/** The ladder volume the hull touches (expanded a little), or null. */
+	class ASourceInfoLadder* FindTouchedLadder(const FVector& Probe) const;
+
+	/** m_vecLadderNormal: out of the ladder's face, toward the climber. */
+	FVector LadderNormal = FVector::ZeroVector;
+	/**
+	 * No re-grabbing until this time. Jumping off shoves the player 270 units away, but a frame is short and
+	 * the reach is two units, so with forward still held the next frame would take hold again before the shove
+	 * has moved anybody anywhere - the jump looked like nothing at all.
+	 */
+	float LadderRegrabTime = 0.0f;
 	/** PM_Friction: bleed speed off, with a floor under how much so that stopping is not asymptotic. */
 	void ApplyGroundFriction(float DeltaTime);
 	/** PM_Accelerate. */

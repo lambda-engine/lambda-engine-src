@@ -4,6 +4,7 @@
 #include "Creatures/SourceNPCAntlion.h"
 #include "Creatures/SourceNPCBarnacle.h"
 #include "Creatures/SourceNPCZombie.h"
+#include "Entities/SourceInfoLadder.h"
 #include "Entities/SourceItem.h"
 #include "Entities/SourcePropData.h"
 #include "Entities/SourcePropPhysics.h"
@@ -355,6 +356,19 @@ AActor* ASourceBSPWorldActor::SpawnEntityFromKeyValues(const FSourceEntity& Enti
 		else if (TSubclassOf<ASourceNPCBase> NPCClass = NPCClassForName(Class))
 		{
 			return SpawnNPC(Entity, NPCClass);
+		}
+		else if (Class.Equals(TEXT("info_ladder"), ESearchCase::IgnoreCase))
+		{
+			// vbsp's residue of a func_ladder brush: a climbable volume in mins/maxs keyvalues, nothing solid.
+			FActorSpawnParameters Params;
+			Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+			Params.ObjectFlags |= RF_Transient;
+			if (ASourceInfoLadder* Ladder = World->SpawnActor<ASourceInfoLadder>(ASourceInfoLadder::StaticClass(), FTransform::Identity, Params))
+			{
+				Ladder->InitializeFromEntity(Entity);
+				SpawnedActors.Add(Ladder);
+				return Ladder;
+			}
 		}
 		else if (ASourceItem::IsItemClass(Class))
 		{
