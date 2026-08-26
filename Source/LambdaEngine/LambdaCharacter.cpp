@@ -2145,30 +2145,21 @@ void ALambdaCharacter::OnEndCrouch(float HalfHeightAdjust, float ScaledHalfHeigh
 
 void ALambdaCharacter::UpdateEyeHeight(float DeltaSeconds)
 {
-	// VEC_VIEW / VEC_DUCK_VIEW: the eye is 64 units above the feet standing and 28 ducked. Source eases between
-	// them over TIME_TO_DUCK rather than switching, and unducks faster than it ducks.
+	// VEC_VIEW / VEC_DUCK_VIEW: the eye is 64 units above the feet standing and 28 ducked, and the movement
+	// component says how far through the duck transition the view is. Reading that rather than "am I crouched
+	// yet" is what makes the crouch answer the key at once, and what keeps the head still when a duck finishes
+	// in mid air - the fraction jumps to ducked in the same frame the feet come up.
 	if (!FirstPersonCamera)
 	{
 		return;
 	}
 	const float Scale = ULambdaSourceSettings::Get().UnitScale;
-	const float StandEyeCm = 64.0f * Scale;
-	const float DuckEyeCm = 28.0f * Scale;
-	const float TargetCm = bIsCrouched ? DuckEyeCm : StandEyeCm;
+	const ULambdaCharacterMovement* Move = Cast<ULambdaCharacterMovement>(GetCharacterMovement());
+	const float Fraction = Move ? Move->GetDuckViewFraction() : (bIsCrouched ? 1.0f : 0.0f);
 
-	if (EyeAboveFeetCm < 0.0f)
-	{
-		EyeAboveFeetCm = TargetCm;	// first frame: start where we are, do not sweep up from the floor
-	}
-	else
-	{
-		// TIME_TO_DUCK 0.4s, TIME_TO_UNDUCK 0.2s, across the 36 units between the two.
-		const float Travel = StandEyeCm - DuckEyeCm;
-		const float Rate = Travel / (bIsCrouched ? 0.4f : 0.2f);
-		EyeAboveFeetCm = FMath::FInterpConstantTo(EyeAboveFeetCm, TargetCm, DeltaSeconds, Rate);
-	}
+	EyeAboveFeetCm = FMath::Lerp(64.0f * Scale, 28.0f * Scale, Fraction);
 
-	// Stated from the feet, so it has to lose the half height to become a position relative to the middle of the
+	// Stated from the feet, so it loses the half height to become a position relative to the middle of the
 	// capsule - which is also what absorbs the capsule resizing under it, so nothing jumps.
 	const float HalfHeight = GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
 	FirstPersonCamera->SetRelativeLocation(FVector(0.0f, 0.0f, EyeAboveFeetCm - HalfHeight));

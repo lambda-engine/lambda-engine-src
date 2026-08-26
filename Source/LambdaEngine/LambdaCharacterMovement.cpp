@@ -32,6 +32,13 @@ static float SvAirSpeedCap = 30.0f;
 static FAutoConsoleVariableRef CVarSvAirSpeedCap(TEXT("sv_airspeedcap"), SvAirSpeedCap,
 	TEXT("How much of the wish speed air acceleration will chase, in units."));
 
+namespace
+{
+	// gamemovement.h
+	constexpr float TIME_TO_DUCK = 0.4f;
+	constexpr float TIME_TO_UNDUCK = 0.2f;
+}
+
 ULambdaCharacterMovement::ULambdaCharacterMovement()
 {
 	// Full air control, which sounds like the opposite of what a Quake port wants and is not.
@@ -54,6 +61,106 @@ ULambdaCharacterMovement::ULambdaCharacterMovement()
 	// drop in Half-Life and you go over it - so the rule goes.
 	bCanWalkOffLedgesWhenCrouching = true;
 	bMaintainHorizontalGroundVelocity = true;
+}
+
+void ULambdaCharacterMovement::UpdateCharacterStateBeforeMovement(float DeltaSeconds)
+{
+	ACharacter* Owner = CharacterOwner.Get();
+	const bool bCrouchedNow = Owner && Owner->bIsCrouched;
+
+	if (bWantsToCrouch && !bCrouchedNow && IsMovingOnGround())
+	{
+		// The transition. While it runs the hull stays standing and only the view moves - and the clock, not the
+		// key, decides when the hull changes. SimpleSpline's easing, as SetDuckedEyeOffset applies it.
+		DuckTimer += DeltaSeconds;
+		if (DuckTimer < TIME_TO_DUCK)
+		{
+			DuckViewFraction = FMath::SmoothStep(0.0f, 1.0f, DuckTimer / TIME_TO_DUCK);
+			bWantsToCrouch = false;		// not yet: keep Unreal's instant crouch from running
+			Super::UpdateCharacterStateBeforeMovement(DeltaSeconds);
+			bWantsToCrouch = true;
+			// No ladder check this frame: grabbing on mid-transition would climb with a half-ducked view anyway.
+			return;
+		}
+	}
+
+	if (bWantsToCrouch)
+	{
+		// Finishing: the clock ran out on the ground, or the ground went away - "finish ducking immediately if
+		// duck time is over or not on ground" - and an airborne finish tucks the feet (the OnStartCrouch lift).
+		// The view goes to ducked in the same step; with the feet coming up, an eased eye would throw the head.
+		DuckViewFraction = 1.0f;
+	}
+	else
+	{
+		DuckTimer = 0.0f;
+		if (IsFalling())
+		{
+			// Standing up in the air drops the feet in one step, and the eye goes with them or the head lurches.
+			DuckViewFraction = 0.0f;
+		}
+		else
+		{
+			// TIME_TO_UNDUCK: the view eases back up. The hull change stays instant on the ground, which is a
+			// deliberate divergence - Source also refuses to jump during its unduck transition, and keeping the
+			// stand instant is what lets crouch-jump-crouch flow without that refusal.
+			DuckViewFraction = FMath::Max(0.0f, DuckViewFraction - DeltaSeconds / TIME_TO_UNDUCK);
+		}
+	}
+
+	Super::UpdateCharacterStateBeforeMovement(DeltaSeconds);
+
+	// ---- CGameMovement::LadderMove's attach test, on info_ladder volumes ----
+	//
+	// Already climbing, the wish direction is into the ladder; otherwise it is where the player is pushing, and
+	// with no input there is no attaching. Two units of reach. A mapper draws func_ladder brushes and vbsp turns
+	// each into an info_ladder point entity carrying the volume as mins/maxs - nothing solid, nothing rendered -
+	// so this is a box test, the way Counter-Strike ladders work, not HL2's CONTENTS_LADDER trace.
+	if (!HasValidData() || MovementMode == MOVE_None)
+	{
+		return;
+	}
+
+	// Just jumped off: the shove needs time to carry the player out of reach before a grab is offered again.
+	if (!IsOnLadder() && GetWorld()->GetTimeSeconds() < LadderRegrabTime)
+	{
+		return;
+	}
+
+	// CGameMovement::LadderMove's attach test. Already climbing, look into the ladder; otherwise look where the
+	// player is pushing, and no input means no attaching.
+	FVector WishDir;
+	if (IsOnLadder())
+	{
+		WishDir = -LadderNormal;
+	}
+	else
+	{
+		WishDir = Acceleration.GetSafeNormal();
+		if (WishDir.IsNearlyZero())
+		{
+			return;
+		}
+	}
+
+	// LadderDistance: two units along the wish is close enough to take hold.
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+	const FVector Probe = UpdatedComponent->GetComponentLocation() + WishDir * 2.0f * Scale;
+	ASourceInfoLadder* Ladder = FindTouchedLadder(Probe);
+
+	if (Ladder)
+	{
+		LadderNormal = Ladder->GetNormalToward(UpdatedComponent->GetComponentLocation());
+		if (!IsOnLadder())
+		{
+			SetMovementMode(MOVE_Custom, CMOVE_Ladder);
+		}
+	}
+	else if (IsOnLadder())
+	{
+		// Climbed off the end of it.
+		SetMovementMode(MOVE_Falling);
+	}
 }
 
 bool ULambdaCharacterMovement::CanAttemptJump() const
@@ -199,56 +306,6 @@ ASourceInfoLadder* ULambdaCharacterMovement::FindTouchedLadder(const FVector& Pr
 	return nullptr;
 }
 
-void ULambdaCharacterMovement::UpdateCharacterStateBeforeMovement(float DeltaSeconds)
-{
-	Super::UpdateCharacterStateBeforeMovement(DeltaSeconds);
-
-	if (!HasValidData() || MovementMode == MOVE_None)
-	{
-		return;
-	}
-
-	// Just jumped off: the shove needs time to carry the player out of reach before a grab is offered again.
-	if (!IsOnLadder() && GetWorld()->GetTimeSeconds() < LadderRegrabTime)
-	{
-		return;
-	}
-
-	// CGameMovement::LadderMove's attach test. Already climbing, look into the ladder; otherwise look where the
-	// player is pushing, and no input means no attaching.
-	FVector WishDir;
-	if (IsOnLadder())
-	{
-		WishDir = -LadderNormal;
-	}
-	else
-	{
-		WishDir = Acceleration.GetSafeNormal();
-		if (WishDir.IsNearlyZero())
-		{
-			return;
-		}
-	}
-
-	// LadderDistance: two units along the wish is close enough to take hold.
-	const float Scale = ULambdaSourceSettings::Get().UnitScale;
-	const FVector Probe = UpdatedComponent->GetComponentLocation() + WishDir * 2.0f * Scale;
-	ASourceInfoLadder* Ladder = FindTouchedLadder(Probe);
-
-	if (Ladder)
-	{
-		LadderNormal = Ladder->GetNormalToward(UpdatedComponent->GetComponentLocation());
-		if (!IsOnLadder())
-		{
-			SetMovementMode(MOVE_Custom, CMOVE_Ladder);
-		}
-	}
-	else if (IsOnLadder())
-	{
-		// Climbed off the end of it.
-		SetMovementMode(MOVE_Falling);
-	}
-}
 
 void ULambdaCharacterMovement::PhysCustom(float DeltaTime, int32 Iterations)
 {

@@ -43,6 +43,24 @@ public:
 	 * specifically for jumping while ducked.
 	 */
 	virtual bool CanAttemptJump() const override;
+
+	/**
+	 * CGameMovement::Duck's timing, which is physical and not cosmetic.
+	 *
+	 * Unreal shrinks the capsule the frame the key goes down. Source starts a TIME_TO_DUCK clock and only
+	 * finishes the duck when it runs out - unless the player leaves the ground first, in which case it finishes
+	 * that instant, and finishing in the air is what tucks the feet up by the whole hull difference. That is why
+	 * crouch-then-jump in quick succession is a crouch jump in Half-Life: the jump interrupts the transition and
+	 * the tuck happens airborne. With an instant crouch there is nothing left to tuck by the time the jump goes
+	 * off, and the order only works one way round.
+	 */
+	virtual void UpdateCharacterStateBeforeMovement(float DeltaSeconds) override;
+
+	/**
+	 * How far between standing and ducked the view is: 0 standing, 1 ducked. SetDuckedEyeOffset - the view
+	 * crosses the transition while the hull changes in one step at the end of it.
+	 */
+	float GetDuckViewFraction() const { return DuckViewFraction; }
 	/** Jumping off a ladder: let go, shoved off its face at 270 units (CGameMovement::LadderMove's IN_JUMP). */
 	virtual bool DoJump(bool bReplayingMoves, float DeltaTime) override;
 
@@ -55,23 +73,15 @@ public:
 	bool IsOnLadder() const { return MovementMode == MOVE_Custom && CustomMovementMode == CMOVE_Ladder; }
 
 protected:
-	/**
-	 * CGameMovement::LadderMove, on info_ladder volumes.
-	 *
-	 * Runs before each frame's physics. Already climbing, the wish direction is into the ladder; otherwise it is
-	 * where the player is pushing, and with no input there is no attaching. If the hull moved two units along
-	 * that wish would touch a ladder volume, the mode becomes climbing.
-	 *
-	 * A mapper draws func_ladder brushes, vbsp turns each into an info_ladder point entity carrying the volume
-	 * as mins/maxs - nothing solid and nothing rendered - so "am I on a ladder" is a box test, the way
-	 * Counter-Strike's ladders work, rather than the CONTENTS_LADDER trace HL2's brush ladders use.
-	 */
-	virtual void UpdateCharacterStateBeforeMovement(float DeltaSeconds) override;
-	/** The climbing itself: MOVE_Custom / CMOVE_Ladder. */
+	/** The climbing itself: MOVE_Custom / CMOVE_Ladder. LadderMove's attach test lives in
+	 *  UpdateCharacterStateBeforeMovement, beside the duck timing - both run before each frame's physics. */
 	virtual void PhysCustom(float DeltaTime, int32 Iterations) override;
 
 	/** The ladder volume the hull touches (expanded a little), or null. */
 	class ASourceInfoLadder* FindTouchedLadder(const FVector& Probe) const;
+
+	float DuckTimer = 0.0f;			// m_flDucktime, roughly: seconds spent in the duck transition
+	float DuckViewFraction = 0.0f;
 
 	/** m_vecLadderNormal: out of the ladder's face, toward the climber. */
 	FVector LadderNormal = FVector::ZeroVector;
