@@ -4,19 +4,20 @@
 #include "GameFramework/Pawn.h"
 #include "LambdaPlayerPawn.generated.h"
 
-class UBoxComponent;
+class UCapsuleComponent;
 class ULambdaPlayerMovement;
 
 /**
- * The player, as a box.
+ * The player: a pawn moved by a ported CGameMovement, wearing a capsule.
  *
- * ACharacter would be the obvious base and cannot be used: it builds a UCapsuleComponent in its own constructor
- * and its movement component asks for that capsule everywhere it works out a floor, a step or a penetration.
- * Source's player is SOLID_BBOX - (-16,-16,0) to (16,16,72) standing, 36 tall ducked - and the difference shows
- * wherever an edge is involved, so the shape had to come first and the base class second.
+ * ACharacter is not the base because its movement component cannot be replaced with Source's move loop - it owns
+ * the floor, step and penetration logic itself. So the pawn is plain, and ULambdaPlayerMovement does the moving.
  *
- * What is left of ACharacter's job lives here: somewhere to put the hull, the crouch and jump the game asks for,
- * and a landing to tell people about. The moving itself is ULambdaPlayerMovement.
+ * The hull is a capsule rather than Source's SOLID_BBOX, and that is a deliberate infidelity. Source sweeps its
+ * box against brush planes, which is exact; our world is a triangle mesh, and a box swept against triangle soup
+ * catches seam normals at every joint between triangles - which in practice was the player sticking to flat
+ * walls. A capsule rolls over the seams. Same trade QMovement makes for the same reason. The capsule matches the
+ * box's footprint: radius 16 units, 72 tall standing, 36 ducked.
  */
 UCLASS()
 class LAMBDAENGINE_API ALambdaPlayerPawn : public APawn
@@ -29,7 +30,7 @@ public:
 	virtual void BeginPlay() override;
 	virtual UPawnMovementComponent* GetMovementComponent() const override;
 
-	UBoxComponent* GetHull() const { return Hull; }
+	UCapsuleComponent* GetHull() const { return Hull; }
 	ULambdaPlayerMovement* GetMovement() const { return Movement; }
 
 	/** Half the hull's height in centimetres - what GetScaledCapsuleHalfHeight used to answer. */
@@ -47,9 +48,9 @@ public:
 	virtual void Landed(const FHitResult& Hit) {}
 
 protected:
-	/** The player's collision: a box, because Source's is. */
+	/** The player's collision. */
 	UPROPERTY(VisibleAnywhere, Category = "Lambda")
-	TObjectPtr<UBoxComponent> Hull;
+	TObjectPtr<UCapsuleComponent> Hull;
 
 	UPROPERTY(VisibleAnywhere, Category = "Lambda")
 	TObjectPtr<ULambdaPlayerMovement> Movement;

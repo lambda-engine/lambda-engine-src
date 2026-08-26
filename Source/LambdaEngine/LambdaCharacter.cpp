@@ -9,7 +9,7 @@
 #include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
 #include "LambdaPlayerMovement.h"
-#include "Components/BoxComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "InputAction.h"
 #include "InputActionValue.h"
@@ -159,7 +159,7 @@ ALambdaCharacter::ALambdaCharacter(const FObjectInitializer& ObjectInitializer)
 	const float HalfHeightCm = (Settings ? Settings->PlayerCapsuleHalfHeightUnits : 36.0f) * Scale;
 	const float EyeHeightCm = (Settings ? Settings->PlayerEyeHeightUnits : 64.0f) * Scale;
 
-	GetHull()->SetBoxExtent(FVector(RadiusCm, RadiusCm, HalfHeightCm));
+	GetHull()->SetCapsuleSize(RadiusCm, HalfHeightCm);
 
 	// The ducked hull and the view heights are the movement component's now; it resizes the box itself, and
 	// UpdateEyeHeight drives the eye from the feet.
@@ -572,7 +572,7 @@ float ALambdaCharacter::PlayerHullRadiusCm() const
 {
 	// CollisionProp()->OBBMaxs().Length2D(): the player's box is as wide as the capsule is across, so its 2D
 	// diagonal is what a carried object has to clear.
-	const float HalfWidth = GetHull()->GetScaledBoxExtent().X;
+	const float HalfWidth = GetHull()->GetScaledCapsuleRadius();
 	return HalfWidth * UE_SQRT_2;
 }
 

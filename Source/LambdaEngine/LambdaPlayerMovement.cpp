@@ -2,8 +2,7 @@
 
 #include "Core/LambdaSourceSettings.h"
 
-#include "Components/BoxComponent.h"
-#include "Engine/OverlapResult.h"
+#include "Components/CapsuleComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 
@@ -45,7 +44,7 @@ ULambdaPlayerMovement::ULambdaPlayerMovement()
 
 float ULambdaPlayerMovement::GetHullHeight() const
 {
-	return Hull ? Hull->GetScaledBoxExtent().Z * 2.0f : 0.0f;
+	return Hull ? Hull->GetScaledCapsuleHalfHeight() * 2.0f : 0.0f;
 }
 
 FVector ULambdaPlayerMovement::GetFeetLocation() const
@@ -57,11 +56,18 @@ FVector ULambdaPlayerMovement::GetFeetLocation() const
 	return UpdatedComponent->GetComponentLocation() - FVector(0.0f, 0.0f, GetHullHeight() * 0.5f);
 }
 
-FVector ULambdaPlayerMovement::HullHalfExtent(bool bDuckedHull) const
+void ULambdaPlayerMovement::HullDimensions(bool bDuckedHull, float& OutRadius, float& OutHalfHeight) const
 {
-	// VEC_HULL_MIN/MAX: 32 wide and 72 tall standing, 36 tall ducked.
+	// VEC_HULL_MIN/MAX's numbers on a capsule: 32 wide and 72 tall standing, 36 tall ducked.
 	const float Scale = ULambdaSourceSettings::Get().UnitScale;
-	return FVector(16.0f * Scale, 16.0f * Scale, (bDuckedHull ? 18.0f : 36.0f) * Scale);
+	OutRadius = 16.0f * Scale;
+	OutHalfHeight = (bDuckedHull ? 18.0f : 36.0f) * Scale;
+}
+
+float ULambdaPlayerMovement::HullHalfHeightDelta() const
+{
+	// Half of (72 - 36) units: the standing half height less the ducked one.
+	return 18.0f * ULambdaSourceSettings::Get().UnitScale;
 }
 
 bool ULambdaPlayerMovement::TraceHull(const FVector& Start, const FVector& End, FHitResult& OutHit) const
@@ -71,15 +77,12 @@ bool ULambdaPlayerMovement::TraceHull(const FVector& Start, const FVector& End, 
 	{
 		return false;
 	}
-	// TracePlayerBBox: the player's own box, swept, at its true size. Shrinking it here would be worse than
-	// useless - the box would come to rest with its real faces that far *inside* whatever it landed on, and
-	// every sweep after that would start solid. The clearance is kept by where the box is put down instead.
-	const FVector Extent = Hull->GetScaledBoxExtent();
-
+	// TracePlayerBBox, with a capsule where Source has a box: swept at its true size, and the physics engine's
+	// own contact offset keeps it a hair clear of what it lands on.
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(PlayerHull), /*bTraceComplex=*/ false, PawnOwner);
 	Params.bReturnFaceIndex = true;
 	return World->SweepSingleByChannel(OutHit, Start, End, FQuat::Identity, ECC_Pawn,
-		FCollisionShape::MakeBox(Extent), Params);
+		FCollisionShape::MakeCapsule(Hull->GetScaledCapsuleRadius(), Hull->GetScaledCapsuleHalfHeight()), Params);
 }
 
 int32 ULambdaPlayerMovement::ClipVelocity(const FVector& In, const FVector& Normal, FVector& Out, float Overbounce)
@@ -122,50 +125,71 @@ void ULambdaPlayerMovement::SetGroundActor(AActor* NewGround, const FHitResult& 
 	}
 }
 
-bool ULambdaPlayerMovement::ResolvePenetration()
+bool ULambdaPlayerMovement::TestPlayerPosition(const FVector& Centre) const
 {
-	UWorld* World = GetWorld();
-	if (!World || !Hull || !UpdatedComponent)
+	const UWorld* World = GetWorld();
+	if (!World || !Hull)
 	{
-		return false;
+		return true;
 	}
-	const FVector Centre = UpdatedComponent->GetComponentLocation();
-	const FVector Extent = Hull->GetScaledBoxExtent();
+	// Shrunk by half a unit so resting flush against a wall does not read as being stuck inside it.
+	const float Shrink = 0.5f * ULambdaSourceSettings::Get().UnitScale;
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(PlayerFits), false, PawnOwner);
+	return !World->OverlapBlockingTestByChannel(Centre, FQuat::Identity, ECC_Pawn,
+		FCollisionShape::MakeCapsule(
+			FMath::Max(1.0f, Hull->GetScaledCapsuleRadius() - Shrink),
+			FMath::Max(1.0f, Hull->GetScaledCapsuleHalfHeight() - Shrink)),
+		Params);
+}
 
-	FCollisionQueryParams Params(SCENE_QUERY_STAT(PlayerUnstick), false, PawnOwner);
-	TArray<FOverlapResult> Overlaps;
-	if (!World->OverlapMultiByChannel(Overlaps, Centre, FQuat::Identity, ECC_Pawn,
-		FCollisionShape::MakeBox(Extent), Params))
+void ULambdaPlayerMovement::NudgePosition()
+{
+	// PM_NudgePosition. Not stuck is the common case, and costs one overlap test a frame.
+	if (!UpdatedComponent || TestPlayerPosition(UpdatedComponent->GetComponentLocation()))
 	{
-		return false;
+		return;
 	}
 
-	// Ask each thing we are inside how far out it wants us, and take the largest push.
-	FVector Push = FVector::ZeroVector;
-	for (const FOverlapResult& Overlap : Overlaps)
+	// Stuck. Try small offsets until somewhere fits: straight up first, since the usual way in is through the
+	// floor, then an expanding ring. Asking the engine how far out of a triangle mesh we are (its MTD query)
+	// gives answers that are wrong as often as right; "does the hull fit here" it always answers correctly.
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+	const FVector Base = UpdatedComponent->GetComponentLocation();
+
+	static const float Rises[] = { 0.125f, 0.5f, 1.0f, 2.0f, 4.0f };
+	for (float Rise : Rises)
 	{
-		UPrimitiveComponent* Other = Overlap.GetComponent();
-		if (!Other)
+		const FVector Spot = Base + FVector(0.0f, 0.0f, Rise * Scale);
+		if (TestPlayerPosition(Spot))
 		{
-			continue;
+			UpdatedComponent->SetWorldLocation(Spot, false, nullptr, ETeleportType::TeleportPhysics);
+			return;
 		}
-		FMTDResult MTD;
-		if (Other->ComputePenetration(MTD, FCollisionShape::MakeBox(Extent), Centre, FQuat::Identity))
+	}
+	static const float Rings[] = { 1.0f, 2.0f, 4.0f };
+	for (float Ring : Rings)
+	{
+		for (int32 X = -1; X <= 1; ++X)
 		{
-			if (MTD.Distance > Push.Size())
+			for (int32 Y = -1; Y <= 1; ++Y)
 			{
-				Push = MTD.Direction * MTD.Distance;
+				for (int32 Z = 0; Z <= 1; ++Z)
+				{
+					if (X == 0 && Y == 0 && Z == 0)
+					{
+						continue;
+					}
+					const FVector Spot = Base + FVector(X * Ring, Y * Ring, Z * Ring) * Scale;
+					if (TestPlayerPosition(Spot))
+					{
+						UpdatedComponent->SetWorldLocation(Spot, false, nullptr, ETeleportType::TeleportPhysics);
+						return;
+					}
+				}
 			}
 		}
 	}
-	if (Push.IsNearlyZero())
-	{
-		return false;
-	}
-	const float Scale = ULambdaSourceSettings::Get().UnitScale;
-	UpdatedComponent->SetWorldLocation(Centre + Push + Push.GetSafeNormal() * DIST_EPSILON * Scale,
-		false, nullptr, ETeleportType::TeleportPhysics);
-	return true;
+	// Nowhere nearby fits: stay put rather than teleport somewhere surprising. GoldSrc gives up here too.
 }
 
 void ULambdaPlayerMovement::CategorizePosition()
@@ -203,8 +227,9 @@ void ULambdaPlayerMovement::CategorizePosition()
 	}
 
 	SetGroundActor(Hit.GetActor() ? Hit.GetActor() : GetOwner(), Hit);
-	// Settle onto it, but a hair clear of it. Resting flush means the next sweep begins touching the floor,
-	// which reads as starting solid and takes the whole move - including a jump - away.
+	// Settle a hair above where the sweep stopped, never flush. Trusting the engine's own contact offset here
+	// was tried and does not hold against the world's triangle mesh: a settle that lands flush makes the next
+	// sweep - a jump's included - begin solid, and TryPlayerMove throws the velocity away.
 	if (Hit.bBlockingHit)
 	{
 		UpdatedComponent->SetWorldLocation(Hit.Location + FVector(0.0f, 0.0f, DIST_EPSILON * Scale),
@@ -544,24 +569,21 @@ bool ULambdaPlayerMovement::CheckJumpButton(float DeltaTime)
 
 bool ULambdaPlayerMovement::CanUnDuckHere() const
 {
-	// Is there room for the standing hull where we are?
-	if (!UpdatedComponent)
-	{
-		return true;
-	}
+	// Is there room for the standing hull, its feet where they are now?
 	const UWorld* World = GetWorld();
-	if (!World)
+	if (!World || !UpdatedComponent)
 	{
 		return true;
 	}
-	const FVector StandExtent = HullHalfExtent(false);
-	// The feet stay put on the ground, so the standing box grows upwards from them.
-	const FVector Feet = GetFeetLocation();
-	const FVector Centre = Feet + FVector(0.0f, 0.0f, StandExtent.Z);
+	float Radius, HalfHeight;
+	HullDimensions(false, Radius, HalfHeight);
+	const float Shrink = 0.5f * ULambdaSourceSettings::Get().UnitScale;
+	const FVector Centre = GetFeetLocation() + FVector(0.0f, 0.0f, HalfHeight);
 
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(PlayerUnDuck), false, PawnOwner);
 	return !World->OverlapBlockingTestByChannel(Centre, FQuat::Identity, ECC_Pawn,
-		FCollisionShape::MakeBox(StandExtent - FVector(DIST_EPSILON)), Params);
+		FCollisionShape::MakeCapsule(FMath::Max(1.0f, Radius - Shrink), FMath::Max(1.0f, HalfHeight - Shrink)),
+		Params);
 }
 
 void ULambdaPlayerMovement::FinishDuck()
@@ -575,22 +597,23 @@ void ULambdaPlayerMovement::FinishDuck()
 	++DuckChangeCount;
 	bLastDuckChangeAirborne = !bOnGround;
 
+	float Radius, HalfHeight;
+	HullDimensions(true, Radius, HalfHeight);
 	const FVector Before = GetFeetLocation();
-	Hull->SetBoxExtent(HullHalfExtent(true), false);
+	Hull->SetCapsuleSize(Radius, HalfHeight, false);
 
 	if (bOnGround)
 	{
 		// Standing on something: the feet stay where they are and the head comes down.
-		const FVector Centre = Before + FVector(0.0f, 0.0f, HullHalfExtent(true).Z);
-		UpdatedComponent->SetWorldLocation(Centre, false, nullptr, ETeleportType::TeleportPhysics);
+		UpdatedComponent->SetWorldLocation(Before + FVector(0.0f, 0.0f, HalfHeight),
+			false, nullptr, ETeleportType::TeleportPhysics);
 	}
 	else
 	{
-		// In the air: the feet come up by the whole difference between the hulls and the head stays, which is
-		// what crouch jumping is. Resizing the box about its centre has already raised them by half of that, so
-		// what is owed is the other half.
-		const FVector Lift = FVector(0.0f, 0.0f, HullHalfExtent(false).Z - HullHalfExtent(true).Z);
-		UpdatedComponent->AddWorldOffset(Lift, false, nullptr, ETeleportType::TeleportPhysics);
+		// In the air the feet come up by the whole difference between the hulls and the head stays, which is
+		// what crouch jumping is. Resizing about the centre already lifted them by half; owe the other half.
+		UpdatedComponent->AddWorldOffset(FVector(0.0f, 0.0f, HullHalfHeightDelta()),
+			false, nullptr, ETeleportType::TeleportPhysics);
 	}
 }
 
@@ -605,19 +628,21 @@ void ULambdaPlayerMovement::FinishUnDuck()
 	++DuckChangeCount;
 	bLastDuckChangeAirborne = !bOnGround;
 
+	float Radius, HalfHeight;
+	HullDimensions(false, Radius, HalfHeight);
 	const FVector Before = GetFeetLocation();
-	Hull->SetBoxExtent(HullHalfExtent(false), false);
+	Hull->SetCapsuleSize(Radius, HalfHeight, false);
 
 	if (bOnGround)
 	{
-		const FVector Centre = Before + FVector(0.0f, 0.0f, HullHalfExtent(false).Z);
-		UpdatedComponent->SetWorldLocation(Centre, false, nullptr, ETeleportType::TeleportPhysics);
+		UpdatedComponent->SetWorldLocation(Before + FVector(0.0f, 0.0f, HalfHeight),
+			false, nullptr, ETeleportType::TeleportPhysics);
 	}
 	else
 	{
 		// The mirror of the lift, and half of it is again already done by the resize.
-		const FVector Drop = FVector(0.0f, 0.0f, HullHalfExtent(false).Z - HullHalfExtent(true).Z);
-		UpdatedComponent->AddWorldOffset(-Drop, false, nullptr, ETeleportType::TeleportPhysics);
+		UpdatedComponent->AddWorldOffset(FVector(0.0f, 0.0f, -HullHalfHeightDelta()),
+			false, nullptr, ETeleportType::TeleportPhysics);
 	}
 }
 
@@ -735,9 +760,9 @@ void ULambdaPlayerMovement::TickComponent(float DeltaTime, ELevelTick TickType, 
 	WishDirection = FVector(Input.X, Input.Y, 0.0f).GetSafeNormal();
 	WishSpeed = MaxSpeedCm * FVector(Input.X, Input.Y, 0.0f).Size();
 
-	// Before anything else: if the box is inside something, get it out, or every move this frame begins solid
+	// Before anything else: if the hull is inside something, walk it out, or every move this frame begins solid
 	// and does nothing at all.
-	ResolvePenetration();
+	NudgePosition();
 
 	CategorizePosition();
 	Duck(DeltaTime);

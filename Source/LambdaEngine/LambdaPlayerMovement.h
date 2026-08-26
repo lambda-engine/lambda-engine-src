@@ -4,22 +4,19 @@
 #include "GameFramework/PawnMovementComponent.h"
 #include "LambdaPlayerMovement.generated.h"
 
-class UBoxComponent;
+class UCapsuleComponent;
 
 /**
- * The player's movement, as CGameMovement does it: a box, traced and slid by hand.
+ * The player's movement, as CGameMovement does it: the move loop ported, not adapted. CategorizePosition to find
+ * the ground, TryPlayerMove to slide along what it hits, StepMove to get up a step, ClipVelocity to take the
+ * velocity out of a plane, and the Quake friction and acceleration. Unreal's part is reduced to sweeping a shape
+ * through the world and saying what it hit.
  *
- * Unreal's character is a capsule and cannot be anything else - UCharacterMovementComponent asks its owner for
- * GetCapsuleComponent() everywhere it works out a floor, a step or a penetration. Quake and Half-Life move an
- * axis-aligned box: SOLID_BBOX, (-16,-16,0) to (16,16,72) standing and (16,16,36) ducked. A box and a pill behave
- * differently in the places that matter - a flat bottom catches a ledge lip that a rounded one slides off, and a
- * square footprint reaches further into its diagonals than a circle of the same width - so the shape is not a
- * detail that can be approximated away.
- *
- * So this is the move loop itself, ported rather than adapted: CategorizePosition to find the ground,
- * TryPlayerMove to slide along what it hits, StepMove to get up a step, ClipVelocity to take the velocity out of
- * a plane, and the Quake friction and acceleration that were already here. Unreal's part is reduced to sweeping
- * a shape through the world and telling us what it hit.
+ * The shape it sweeps is a capsule, where Source sweeps a box, and the reason is the collision backend rather
+ * than taste. Source traces its box against brush planes, which is exact. Our world is a triangle mesh, and a
+ * swept box catches the seams between triangles - edge normals that belong to no face - which came out as the
+ * player sticking to perfectly flat walls. A capsule rolls over the seams. It keeps the box's numbers: radius
+ * 16 units, 72 tall standing, 36 ducked, feet at the bottom.
  */
 UCLASS()
 class LAMBDAENGINE_API ULambdaPlayerMovement : public UPawnMovementComponent
@@ -33,7 +30,7 @@ public:
 	virtual float GetMaxSpeed() const override { return MaxSpeedCm; }
 
 	/** The box being moved. Set by the pawn that owns this. */
-	void SetHullComponent(UBoxComponent* InHull) { Hull = InHull; }
+	void SetHullComponent(UCapsuleComponent* InHull) { Hull = InHull; }
 
 	// ---- what the rest of the game asks about the player ----
 	bool IsMovingOnGround() const { return bOnGround; }
@@ -110,19 +107,26 @@ protected:
 
 	/** TracePlayerBBox: sweeps the player's box between two points. */
 	bool TraceHull(const FVector& Start, const FVector& End, FHitResult& OutHit) const;
-	/** The box's half extent right now, standing or ducked. */
-	FVector HullHalfExtent(bool bDuckedHull) const;
+	/** The hull's radius and half height, standing or ducked, in centimetres. */
+	void HullDimensions(bool bDuckedHull, float& OutRadius, float& OutHalfHeight) const;
+	/** The standing and ducked half heights differ by this much; the crouch-jump lift is exactly it. */
+	float HullHalfHeightDelta() const;
 	void SetGroundActor(AActor* NewGround, const FHitResult& Hit);
 	/**
-	 * CheckStuck: if the box has ended up inside something, push it back out.
+	 * PM_NudgePosition: if the hull has ended up inside something, walk it back out by trying small offsets
+	 * until a spot fits - up first, then an expanding ring.
 	 *
-	 * Without this a single frame that begins solid is permanent - TryPlayerMove gives up on a start-solid
-	 * sweep, so the player never moves again, and never moves out of what he is stuck in either.
+	 * GoldSrc unsticks this way, and it is the reliable way here too: asking the physics engine how far out of a
+	 * *triangle mesh* a shape is (its MTD query) gives answers that are wrong as often as right, but "does the
+	 * hull fit at this spot" is a question it always answers correctly. Without this, one frame that begins
+	 * inside geometry is permanent - TryPlayerMove refuses start-solid sweeps, so the player never moves again.
 	 */
-	bool ResolvePenetration();
+	void NudgePosition();
+	/** PM_TestPlayerPosition: does the hull, slightly shrunk, fit here? Shrunk so flush wall contact is not "stuck". */
+	bool TestPlayerPosition(const FVector& Centre) const;
 
 	UPROPERTY(Transient)
-	TObjectPtr<UBoxComponent> Hull;
+	TObjectPtr<UCapsuleComponent> Hull;
 
 	FVector WishDirection = FVector::ZeroVector;
 	float WishSpeed = 0.0f;

@@ -3,7 +3,7 @@
 #include "Core/LambdaSourceSettings.h"
 #include "LambdaPlayerMovement.h"
 
-#include "Components/BoxComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "Engine/CollisionProfile.h"
 
 ALambdaPlayerPawn::ALambdaPlayerPawn(const FObjectInitializer& ObjectInitializer)
@@ -18,8 +18,8 @@ ALambdaPlayerPawn::ALambdaPlayerPawn(const FObjectInitializer& ObjectInitializer
 	const float HalfWidth = (Settings ? Settings->PlayerCapsuleRadiusUnits : 16.0f) * Scale;
 	const float HalfHeight = (Settings ? Settings->PlayerCapsuleHalfHeightUnits : 36.0f) * Scale;
 
-	Hull = CreateDefaultSubobject<UBoxComponent>(TEXT("Hull"));
-	Hull->SetBoxExtent(FVector(HalfWidth, HalfWidth, HalfHeight));
+	Hull = CreateDefaultSubobject<UCapsuleComponent>(TEXT("Hull"));
+	Hull->InitCapsuleSize(HalfWidth, HalfHeight);
 	Hull->SetCollisionProfileName(UCollisionProfile::Pawn_ProfileName);
 	Hull->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	// Source's player is a physics shadow: it pushes what it walks into at its own speed and no harder, so
@@ -31,10 +31,8 @@ ALambdaPlayerPawn::ALambdaPlayerPawn(const FObjectInitializer& ObjectInitializer
 	Movement->SetUpdatedComponent(Hull);
 	Movement->SetHullComponent(Hull);
 
-	// The hull is axis aligned and stays that way. Source's player is SOLID_BBOX: turning changes where you
-	// look, never the shape you occupy. The box is this pawn's root, so letting the controller yaw the pawn
-	// would yaw the box with it - and a box that turns while pressed against a wall turns into the wall.
-	// Where the player is facing is the control rotation's business, and the camera's.
+	// The hull never turns - Source's does not either (turning changes where you look, not the shape you
+	// occupy), and a capsule is symmetric anyway. Facing is the control rotation's business, and the camera's.
 	bUseControllerRotationPitch = false;
 	bUseControllerRotationYaw = false;
 	bUseControllerRotationRoll = false;
@@ -56,7 +54,7 @@ UPawnMovementComponent* ALambdaPlayerPawn::GetMovementComponent() const
 
 float ALambdaPlayerPawn::GetHullHalfHeight() const
 {
-	return Hull ? Hull->GetScaledBoxExtent().Z : 0.0f;
+	return Hull ? Hull->GetScaledCapsuleHalfHeight() : 0.0f;
 }
 
 FVector ALambdaPlayerPawn::GetFeetLocation() const
