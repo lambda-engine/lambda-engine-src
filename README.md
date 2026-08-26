@@ -184,8 +184,9 @@ Clip sizes, ammo types, sounds and damage come from `scripts/weapon_*.txt`, `scr
 | | Status |
 |---|---|
 | Runtime skeletal meshes, GPU skinning, bodygroups | Done |
-| First-person legs and a shadow-casting player body | Partial — both models load, sit correctly and the shadow casts; animated sequences deform the mesh (see below) |
-| glTF/GLB -> .mdl compilation (Tools/ImportGLTFModel.py, via studiomdl) | Partial — mesh, skeleton, materials and the bind pose are correct; animation is not |
+| Shadow-casting player body in first person | Done |
+| First-person legs | Partial — the model and its animation are correct; it tears seen from inside the player (see below) |
+| glTF/GLB -> .mdl compilation (Tools/ImportGLTFModel.py, via studiomdl) | Done — mesh, skeleton, materials, bind pose and animation |
 | Impact decals, blood, ragdolls, particles | Done |
 | HUD (health, suit, ammo), weapon selection with icons, damage-type icons | Done |
 | Player damage: armour absorption, damage types, death | Done — no death camera or respawn yet |
@@ -194,30 +195,41 @@ Clip sizes, ammo types, sounds and damage come from `scripts/weapon_*.txt`, `scr
 | Save / load | Not started |
 | Options, achievements | Not started — the menu entries say so when picked |
 
-### Known defect: converted animations deform the mesh
+### Known defect: first-person legs
 
-`Tools/ImportGLTFModel.py` compiles a GLB into a real Source model - SMD plus QC through studiomdl - and the
-result loads, stands in its bind pose correctly, and casts a correct shadow. Playing any of its sequences
-distorts the mesh.
+The shadow works. `Tools/ImportGLTFModel.py` compiles a GLB into a real Source model, both player models load
+and animate correctly, and the body throws a proper humanoid shadow on the floor while staying invisible to its
+owner. What does not work is the other half: looking down at your own legs shows torn geometry.
 
-What has been ruled out, so the next person does not repeat it:
+The model is not the problem, and that is worth stating plainly because it took a while to establish. Stood out
+in front of the player - `cl_legs_debug 1` does exactly that - the same model playing the same sequence draws two
+clean legs with boots on. It is only wrong seen from the eye position it is meant to be seen from.
 
-* The SMD data. Bone-local translations and rotations in the animation files match the reference pose bone for
-  bone; a spine 4.3 units above the hips reads as 4.3 in both.
-* Scale. It *was* wrong - a rig with an armature scale of 0.01 (Mixamo's) makes `inv(parent) @ child` divide
-  every offset by that scale, so locals came out 100x too large in both the reference and the animations, which
-  agree with each other and therefore looked right standing still. `strip_scale` fixes it and the numbers are
-  now correct.
-* The euler convention. SMD's three rotation floats build `Rz(z) * Ry(y) * Rx(x)`, which is what mathlib's
-  `AngleMatrix(RadianEuler)` does once its QAngle relabelling is unwound, and that is what the exporter emits.
-* Bone culling. studiomdl discards bones no vertex is weighted to - 65 becomes 10 for a legs-only mesh - but
-  the mesh deforms just as badly with all 65 kept.
-* `$definebone`. Declaring every bone keeps the rig intact and makes the deformation worse, so its six fixup
-  columns are not all zero as assumed.
+What that leaves is the geometry of looking at yourself from inside yourself:
 
-The bind pose being right and the animation being wrong points at the per-frame path rather than the skeleton:
-either what studiomdl writes for these sequences or how the engine decodes it. Stock Source models animate
-correctly in this engine, so the model is the more likely half.
+* The legs-only mesh is cut off at the waist and open there. Single-sided, looking down into it means looking
+  through the front faces at an interior with its back faces culled, which is the tearing.
+* The full body is closed, but then the camera is inside the torso and fills the screen with the inside of a
+  ribcage. Tried; worse.
+* Unreal's first-person pass (what the view model uses) does make it solid, because it gives the primitive its
+  own depth range. But it also scales depth toward the camera by `ViewModelFirstPersonScale` (0.4), which is
+  right for a gun - it has no world position to keep - and wrong for legs, which have to meet the floor where
+  the player is standing. Solid and two and a half times too large; no offset fixes both.
+* Not the view model bleeding through: the same tearing happens with `viewmodel.firstperson 0`.
+
+The real fix is a mesh authored for this - a legs model with its waist capped - or a dedicated render pass for
+the legs with its own near plane and no depth scaling. `cl_drawlegs 0` turns them off meanwhile;
+`cl_legs_offset_forward` and `cl_legs_offset_up` move them if a different model needs different placement.
+
+Two genuine bugs were found and fixed on the way, and they are the reason animation works at all:
+
+* **Armature scale.** A rig with scale at the root - Mixamo's is 0.01 - makes `inv(parent) @ child` divide every
+  bone offset by it, so locals come out a hundred times too large. The reference pose and the animations agree
+  on the error, so the model stands up perfectly and only explodes once animated.
+* **Float noise on bone translations.** Bones do not stretch, but going through matrices leaves a few microns of
+  wander on each one. studiomdl decides per bone whether a channel is animated or constant, and a bone moving by
+  two ten-thousandths of a unit counts as animated - so the rig compiled with position data on all sixty-five
+  bones where a Source-authored model has it on one. Snapping the noise away is what fixed the deformation.
 
 ## Conventions
 

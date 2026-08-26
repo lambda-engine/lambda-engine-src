@@ -38,6 +38,18 @@ static FAutoConsoleVariableRef CVarLegsDebug(
 	GLegsDebug,
 	TEXT("Show the legs and body to everyone, and log where they are - for working out why they are not on screen."));
 
+static float GLegsOffsetForward = -14.0f;
+static FAutoConsoleVariableRef CVarLegsOffsetForward(
+	TEXT("cl_legs_offset_forward"),
+	GLegsOffsetForward,
+	TEXT("Centimetres to slide the first-person legs along the view axis; negative is backwards."));
+
+static float GLegsOffsetUp = 0.0f;
+static FAutoConsoleVariableRef CVarLegsOffsetUp(
+	TEXT("cl_legs_offset_up"),
+	GLegsOffsetUp,
+	TEXT("Centimetres to raise or lower the first-person legs."));
+
 static bool GDrawPlayerShadow = true;
 static FAutoConsoleVariableRef CVarDrawPlayerShadow(
 	TEXT("cl_drawplayershadow"),
@@ -59,6 +71,12 @@ void ALambdaCharacter::SetupPlayerBody()
 			// shadows from one player is worse than none.
 			LegsMesh->SetOnlyOwnerSee(!GLegsDebug);
 			LegsMesh->SetCastShadow(false);
+			// Deliberately NOT the view model's first-person pass, though it does clear up the tearing. That
+			// pass compresses depth toward the camera by ViewModelFirstPersonScale (0.4), which is right for a
+			// gun - it has no world-space truth to keep - and wrong for legs, which have to meet the floor
+			// where the player is actually standing. Marking them makes them solid and two and a half times
+			// too large, and no offset fixes both at once.
+			LegsMesh->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::None);
 			UE_LOG(LogLambda, Log, TEXT("player legs: '%s', %d bones, %d sequences"),
 				*Settings.PlayerLegsModel, LegsMesh->GetModel()->GetBones().Num(),
 				LegsMesh->GetModel()->GetSequences().Num());
@@ -189,7 +207,11 @@ void ALambdaCharacter::UpdatePlayerBody(float DeltaSeconds)
 		{
 			continue;
 		}
-		Part->SetRelativeLocation(Offset);
+		// The legs alone are nudged along the view axis. They hang directly under the eye otherwise, so looking
+		// down lands on the tops of the knees rather than along the thighs - a real head sits forward of the
+		// hips and this makes up the difference. The shadow body is not moved: it has to stay where the player
+		// actually is, or the shadow steps away from the feet.
+		Part->SetRelativeLocation(i == 0 ? Offset + FVector(GLegsOffsetForward, 0.0f, GLegsOffsetUp) : Offset);
 
 		const int32 Sequence = Part->GetModel()->FindSequenceByLabel(Wanted);
 		if (Sequence != INDEX_NONE && Sequence != Part->GetSequence())

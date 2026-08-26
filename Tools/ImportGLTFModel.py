@@ -334,6 +334,20 @@ def sample_animation(g, skel, anim):
             pose[node] = (tr, rot, sc)
         globals_source = [to_source_matrix(skel.node_global(n, pose)) for n in skel.joints]
         out.append(skel.locals_from_globals(globals_source))
+
+    # Bones do not stretch. Every bone but the root sits at a fixed offset from its parent, and the handful of
+    # microns each one wanders here is round-off from going through matrices, not animation.
+    #
+    # It matters more than it looks. studiomdl decides per bone whether a channel is animated or constant, and
+    # a bone that moves by two ten-thousandths of a unit still counts as animated - so a rig like this compiles
+    # with position data on all sixty-five bones, where a model authored in Source has it on one. Snapping the
+    # noise away puts the compiler back on the path every stock model takes.
+    bind = skel.bind_locals()
+    for b in range(len(skel.joints)):
+        spread = max(max(abs(f[b][0][i] - bind[b][0][i]) for i in range(3)) for f in out)
+        if spread < 1e-3:
+            for f in out:
+                f[b] = (list(bind[b][0]), f[b][1])
     return out
 
 
@@ -509,8 +523,10 @@ def export_materials(g, out_dir, material_path, tools_dir, quiet=False):
             if mat.get("alphaMode") == "MASK":
                 f.write('\t"$alphatest" "1"\n')
                 f.write(f'\t"$alphatestreference" "{mat.get("alphaCutoff", 0.5)}"\n')
-            if mat.get("doubleSided"):
-                f.write('\t"$nocull" "1"\n')
+            # doubleSided is deliberately not honoured, for the same reason as BLEND: exporters set it by
+            # default, and a two-sided character is not just wasted fill. A legs-only mesh is cut off at the
+            # waist and open there, so looking down into it draws the inside of the pelvis - which reads as a
+            # spray of spikes rather than a leg. Source character models are single-sided.
             f.write('}\n')
     return names
 
@@ -582,12 +598,19 @@ def main():
         f.write('$cbox 0 0 0 0 0 0\n')
         f.write('$bbox -16 -16 0 16 16 72\n\n')
 
-        # NOTE: a $definebone for every bone was tried here, to stop studiomdl discarding the bones no vertex is
-        # weighted to - it reduces the 65-bone rig to 10 for a legs-only mesh. It does keep them, but it makes
-        # the deformation worse rather than better: the animated mesh collapses toward the origin instead of
-        # merely distorting, so the six fixup columns it wants are evidently not all zero. Left out until that
-        # is understood. Bone culling is not the cause of the animation defect either way - the mesh deforms
-        # wrongly with all 65 bones present. See "Known defect" in the README.
+        # Every bone is declared, which stops studiomdl discarding the ones no vertex happens to be weighted to.
+        # A legs-only mesh weights nothing above the hips, so left alone the compiler cuts a 65-bone rig down to
+        # ten - and the animations, authored against all 65, no longer describe the skeleton they play on. The
+        # full body keeps 52 and animates correctly; the legs keep 10 and tear. Declaring the bones keeps both
+        # models on one rig, which is also what lets the legs and the shadow play the same sequence and agree
+        # about where the feet are.
+        bind = skel.bind_locals()
+        for i, name in enumerate(skel.names):
+            parent = skel.names[skel.parent[i]] if skel.parent[i] >= 0 else ""
+            t, r = bind[i]
+            f.write(f'$definebone "{name}" "{parent}" '
+                    f'{t[0]:.6f} {t[1]:.6f} {t[2]:.6f} {r[0]:.6f} {r[1]:.6f} {r[2]:.6f} 0 0 0 0 0 0\n')
+        f.write("\n")
         for seq, frames in sequences:
             loop = "" if seq in ("death", "fall") else " loop"
             f.write(f'$sequence "{seq}" "{seq}.smd" fps {FPS:.0f}{loop}\n')
