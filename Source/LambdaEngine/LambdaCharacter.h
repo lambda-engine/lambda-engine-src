@@ -182,6 +182,25 @@ public:
 	void PlayBodyGesture(const TCHAR* GesturePrefix);
 	/** Keeps the active weapon's world model in the shadow body's hand. */
 	void UpdateWeaponShadow(USourceStudioModelComponent* Body);
+
+public:
+	/**
+	 * CAM_ToThirdPerson / CAM_ToFirstPerson: which side of his own eyes the player is on.
+	 *
+	 * In first person the body is drawn for everyone except its owner and casts anyway, so the player sees his
+	 * shadow but not himself, and a legs-only copy fills in what looking down should show. In third person
+	 * there is nothing to fake: the body is simply drawn, the legs copy is switched off, and the camera backs
+	 * away along the view.
+	 */
+	void SetThirdPerson(bool bEnable);
+	bool IsThirdPerson() const { return bThirdPerson; }
+
+protected:
+	/** Pulls the camera back to cam_idealdist behind the eye, stopping short of whatever is in the way. */
+	void UpdateCameraDistance();
+	bool bThirdPerson = false;
+
+public:
 	/** Freezes the shadow body's arms into a two-handed carry, solved from the model's own bind skeleton. */
 	void SolveHoldPose(USourceStudioModelComponent* Body);
 
@@ -348,6 +367,8 @@ protected:
 	float AutoCrouchSeconds = 0.0f;
 	float AutoCrouchDelay = 0.0f;
 	float AutoSpeedLogSeconds = 0.0f;
+	float AutoThirdPersonDelay = 0.0f;
+	float AutoFirstPersonDelay = 0.0f;
 	float AutoHurtAmount = 0.0f;
 	float AutoHurtDelay = 0.0f;
 	FString AutoHurtType;

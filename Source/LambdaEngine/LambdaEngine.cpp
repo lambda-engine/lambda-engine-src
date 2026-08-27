@@ -513,6 +513,28 @@ static FAutoConsoleCommandWithWorldAndArgs GLambdaWeaponMenuCommand(
 	TEXT("Open the weapon selection on a bucket and leave it open: weaponmenu [bucket]"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaWeaponMenuCommand));
 
+// thirdperson / firstperson - Source's own pair, and they mean the same thing here.
+static void LambdaViewModeCommand(UWorld* World, bool bThird)
+{
+	APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
+	if (ALambdaCharacter* Player = PC ? Cast<ALambdaCharacter>(PC->GetPawn()) : nullptr)
+	{
+		Player->SetThirdPerson(bThird);
+	}
+}
+
+static FAutoConsoleCommandWithWorldAndArgs GLambdaThirdPersonCommand(
+	TEXT("thirdperson"),
+	TEXT("Watch the player from behind (cam_idealdist sets how far)."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(
+		[](const TArray<FString>& Args, UWorld* World) { LambdaViewModeCommand(World, true); }));
+
+static FAutoConsoleCommandWithWorldAndArgs GLambdaFirstPersonCommand(
+	TEXT("firstperson"),
+	TEXT("Return to the player's own eyes."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(
+		[](const TArray<FString>& Args, UWorld* World) { LambdaViewModeCommand(World, false); }));
+
 // viewmodel <models/path.mdl> - load any Source model as the view model, for checking MDL support
 static void LambdaViewModelCommand(const TArray<FString>& Args, UWorld* World)
 {

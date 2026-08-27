@@ -112,6 +112,14 @@ static FAutoConsoleVariableRef CVarHurtAuto(
 	GHurtAuto,
 	TEXT("\"<amount> [damagetype] [delay_s]\": damage the player after that long"));
 
+// thirdperson.auto "[delay_s]" switches the view a set number of seconds in, since the console commands
+// themselves run before there is a player to switch.
+static FString GThirdPersonAuto;
+static FAutoConsoleVariableRef CVarThirdPersonAuto(
+	TEXT("thirdperson.auto"),
+	GThirdPersonAuto,
+	TEXT("\"<delay_s> [return_s]\": third person after that long, and back to first at return_s"));
+
 static FString GSpeedLogAuto;
 static FAutoConsoleVariableRef CVarSpeedLogAuto(
 	TEXT("speedlog.auto"),
@@ -867,6 +875,25 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 		}
 	}
 
+	// thirdperson.auto: step outside the player's eyes on a timer, and optionally back in again - the return
+	// trip is where a view mode's restoring goes wrong, so it wants testing as much as the leaving does.
+	if (AutoThirdPersonDelay > 0.0f)
+	{
+		AutoThirdPersonDelay -= DeltaSeconds;
+		if (AutoThirdPersonDelay <= 0.0f)
+		{
+			SetThirdPerson(true);
+		}
+	}
+	if (AutoFirstPersonDelay > 0.0f)
+	{
+		AutoFirstPersonDelay -= DeltaSeconds;
+		if (AutoFirstPersonDelay <= 0.0f)
+		{
+			SetThirdPerson(false);
+		}
+	}
+
 	// hurt.auto: damage on a timer, so the suit's reaction and the damage icons can be watched.
 	if (AutoHurtDelay > 0.0f)
 	{
@@ -1100,6 +1127,13 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 				GSlotAuto.ParseIntoArrayWS(Parts);
 				AutoSlotBucket = Parts.Num() > 0 ? FCString::Atoi(*Parts[0]) : 0;
 				AutoSlotDelay = Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : 1.0f;
+			}
+			if (!GThirdPersonAuto.IsEmpty())
+			{
+				TArray<FString> Parts;
+				GThirdPersonAuto.ParseIntoArrayWS(Parts);
+				AutoThirdPersonDelay = FMath::Max(0.01f, Parts.Num() > 0 ? FCString::Atof(*Parts[0]) : 4.0f);
+				AutoFirstPersonDelay = Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : 0.0f;
 			}
 			if (!GHurtAuto.IsEmpty())
 			{

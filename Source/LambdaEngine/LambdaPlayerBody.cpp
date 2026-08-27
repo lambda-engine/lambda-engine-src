@@ -34,12 +34,12 @@ static FAutoConsoleVariableRef CVarDrawFirstPersonLegs(
 	GDrawFirstPersonLegs,
 	TEXT("Draw the player's own legs in first person. Not a Source cvar - Half-Life 2 draws no player body at all."));
 
-// On while the shadow is being debugged: the body stands out front where it can be watched.
-static bool GLegsDebug = true;
-static FAutoConsoleVariableRef CVarLegsDebug(
-	TEXT("cl_legs_debug"),
-	GLegsDebug,
-	TEXT("Show the legs and body to everyone, and log where they are - for working out why they are not on screen."));
+// How far the third-person camera sits behind the eye, in Hammer units (Source's cam_idealdist).
+static float GCamIdealDist = 64.0f;
+static FAutoConsoleVariableRef CVarCamIdealDist(
+	TEXT("cam_idealdist"),
+	GCamIdealDist,
+	TEXT("Distance the third-person camera trails the player, in units."));
 
 static float GLegsOffsetForward = -24.0f;
 static FAutoConsoleVariableRef CVarLegsOffsetForward(
@@ -91,6 +91,66 @@ static FAutoConsoleVariableRef CVarDrawPlayerShadow(
 	GDrawPlayerShadow,
 	TEXT("Cast a shadow from the player's own body in first person."));
 
+void ALambdaCharacter::SetThirdPerson(bool bEnable)
+{
+	if (bThirdPerson == bEnable)
+	{
+		return;
+	}
+	bThirdPerson = bEnable;
+
+	// The visibility rules are set where the models are built, so they are re-stated here rather than waiting
+	// for a map change to reload them.
+	if (BodyMesh)
+	{
+		BodyMesh->SetOwnerNoSee(!bThirdPerson);
+	}
+	if (WeaponShadowMesh)
+	{
+		WeaponShadowMesh->SetOwnerNoSee(!bThirdPerson);
+	}
+	// The view model is the first-person illusion; in third person the world model in the body's hand is the
+	// weapon, and drawing both means carrying two.
+	if (ViewModelMesh)
+	{
+		ViewModelMesh->SetVisibility(!bThirdPerson, true);
+	}
+	if (MuzzleFlashMesh)
+	{
+		MuzzleFlashMesh->SetVisibility(false, true);
+	}
+	if (!bThirdPerson && FirstPersonCamera)
+	{
+		FirstPersonCamera->SetRelativeLocation(FVector(0.0f, 0.0f, EyeAboveFeetCm - GetCapsuleComponent()->GetScaledCapsuleHalfHeight()));
+	}
+	UE_LOG(LogLambda, Display, TEXT("%s"), bThirdPerson ? TEXT("thirdperson") : TEXT("firstperson"));
+}
+
+void ALambdaCharacter::UpdateCameraDistance()
+{
+	if (!FirstPersonCamera || !bThirdPerson)
+	{
+		return;
+	}
+	// CAM_Think: the camera sits cam_idealdist behind the eye along the view, and stops short of anything
+	// solid in between so it does not end up inside a wall looking at the inside of the player's head.
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+	const FVector Eye = GetActorLocation() + FVector(0.0f, 0.0f, EyeAboveFeetCm - GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
+	const FVector Back = -GetControlRotation().Vector();
+	const float Want = GCamIdealDist * Scale;
+
+	FHitResult Hit;
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(ThirdPersonCamera), false, this);
+	const float Radius = 8.0f * Scale;
+	float Distance = Want;
+	if (GetWorld()->SweepSingleByChannel(Hit, Eye, Eye + Back * Want, FQuat::Identity, ECC_Camera,
+		FCollisionShape::MakeSphere(Radius), Params))
+	{
+		Distance = FMath::Max(0.0f, Hit.Distance);
+	}
+	FirstPersonCamera->SetWorldLocation(Eye + Back * Distance);
+}
+
 void ALambdaCharacter::SetupPlayerBody()
 {
 	const ULambdaSourceSettings& Settings = ULambdaSourceSettings::Get();
@@ -106,7 +166,7 @@ void ALambdaCharacter::SetupPlayerBody()
 			LegsMesh->SetRelativeLocation(FVector(0.0f, 0.0f, -HalfHeight));
 			// Only its owner sees these, and they must not cast - the body behind them is doing that, and two
 			// shadows from one player is worse than none.
-			LegsMesh->SetOnlyOwnerSee(!GLegsDebug);
+			LegsMesh->SetOnlyOwnerSee(true);
 			LegsMesh->SetCastShadow(false);
 			// Deliberately NOT the view model's first-person pass, though it does clear up the tearing. That
 			// pass compresses depth toward the camera by ViewModelFirstPersonScale (0.4), which is right for a
@@ -130,7 +190,7 @@ void ALambdaCharacter::SetupPlayerBody()
 		{
 			BodyMesh->SetRelativeLocation(FVector(0.0f, 0.0f, -HalfHeight));
 			// The point of this one: invisible to the player it belongs to, but its shadow is not.
-			BodyMesh->SetOwnerNoSee(!GLegsDebug);
+			BodyMesh->SetOwnerNoSee(!bThirdPerson);
 			BodyMesh->SetCastShadow(true);
 			BodyMesh->bCastHiddenShadow = true;
 			// Its owner never renders it, so the animation LOD would drop it to ten poses a second - and its
@@ -280,6 +340,8 @@ void ALambdaCharacter::UpdatePlayerBody(float DeltaSeconds)
 		SetupPlayerBody();
 	}
 
+	UpdateCameraDistance();
+
 	// The view's floor and ceiling (CInput::AdjustPitch clamping to cl_pitchdown/cl_pitchup).
 	if (APlayerController* PC = Cast<APlayerController>(GetController()))
 	{
@@ -299,20 +361,16 @@ void ALambdaCharacter::UpdatePlayerBody(float DeltaSeconds)
 	// The capsule shrinks when ducking and the models hang from its centre, so the offset has to follow it or
 	// the feet sink through the floor mid-crouch.
 	const float HalfHeight = GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
-	FVector Offset(0.0f, 0.0f, -HalfHeight);
-	if (GLegsDebug)
-	{
-		// Stood out in front where they can be looked at: from inside the hips, a leg and a broken leg look
-		// much the same.
-		Offset += FVector(150.0f, 0.0f, 0.0f);
-	}
+	const FVector Offset(0.0f, 0.0f, -HalfHeight);
 
 	const FString WantedActivity = ChoosePlayerBodyActivity();
 	const FString Wanted = ChoosePlayerBodySequence();
 	const bool bMoving = GetCharacterMovement() && GetCharacterMovement()->Velocity.Size2D() > 1.0f;
 
+	// The legs copy exists only to stand in for a body the player cannot see; in third person he can see the
+	// real one, and drawing both would put two pairs of legs in the same trousers.
 	USourceStudioModelComponent* Meshes[] = { LegsMesh, BodyMesh };
-	const bool bWanted[] = { GDrawFirstPersonLegs, GDrawPlayerShadow };
+	const bool bWanted[] = { GDrawFirstPersonLegs && !bThirdPerson, GDrawPlayerShadow || bThirdPerson };
 	for (int32 i = 0; i < 2; ++i)
 	{
 		USourceStudioModelComponent* Part = Meshes[i];
@@ -391,20 +449,6 @@ void ALambdaCharacter::UpdatePlayerBody(float DeltaSeconds)
 			UpdateWeaponShadow(Part);
 		}
 
-		if (GLegsDebug && i == 0)
-		{
-			static float NextLog = 0.0f;
-			const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
-			if (Now > NextLog)
-			{
-				NextLog = Now + 2.0f;
-				const FBoxSphereBounds B = Part->Bounds;
-				UE_LOG(LogLambda, Display, TEXT("legs: origin %s extent %s | camera %s | seq %d '%s' vis=%d"),
-					*B.Origin.ToCompactString(), *B.BoxExtent.ToCompactString(),
-					*FirstPersonCamera->GetComponentLocation().ToCompactString(),
-					Part->GetSequence(), *Wanted, Part->IsVisible() ? 1 : 0);
-			}
-		}
 	}
 }
 
@@ -501,10 +545,10 @@ void ALambdaCharacter::UpdateWeaponShadow(USourceStudioModelComponent* Body)
 
 	const bool bShow = WeaponShadowMesh->HasModel() && WeaponShadowBone >= 0 && Body->IsVisible();
 	WeaponShadowMesh->SetVisibility(bShow);
-	// In debug the body shows itself to its owner, so the weapon in its hand has to as well.
-	if (WeaponShadowMesh->bOwnerNoSee == GLegsDebug)
+	// The gun is seen exactly when its carrier is.
+	if (WeaponShadowMesh->bOwnerNoSee == bThirdPerson)
 	{
-		WeaponShadowMesh->SetOwnerNoSee(!GLegsDebug);
+		WeaponShadowMesh->SetOwnerNoSee(!bThirdPerson);
 	}
 	if (bShow)
 	{
