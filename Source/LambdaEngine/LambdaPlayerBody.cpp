@@ -20,6 +20,7 @@
 #include "LambdaWeapon.h"
 
 #include "Core/LambdaSourceSettings.h"
+#include "Core/SourceCoordinates.h"
 #include "Formats/SourceMDLFile.h"
 #include "Rendering/SourceStudioModelComponent.h"
 
@@ -67,16 +68,17 @@ static FAutoConsoleVariableRef CVarPitchUp(
 	GPitchUp,
 	TEXT("How far above the horizon the view may pitch, in degrees."));
 
-// The grip: how the weapon world model sits in the shadow's hand, relative to the hand bone's own axes.
+// Trim on top of the bonemerge, for a world model that was not authored for it (or a rig that disagrees).
+// All zero by default: a stock w_ model carries its own offset and wants no help.
 static float GWeaponShadowPitch = 0.0f;
 static FAutoConsoleVariableRef CVarWeaponShadowPitch(TEXT("cl_weaponshadow_pitch"), GWeaponShadowPitch, TEXT("Grip pitch, degrees."));
-static float GWeaponShadowYaw = 90.0f;
+static float GWeaponShadowYaw = 0.0f;
 static FAutoConsoleVariableRef CVarWeaponShadowYaw(TEXT("cl_weaponshadow_yaw"), GWeaponShadowYaw, TEXT("Grip yaw, degrees."));
 static float GWeaponShadowRoll = 0.0f;
 static FAutoConsoleVariableRef CVarWeaponShadowRoll(TEXT("cl_weaponshadow_roll"), GWeaponShadowRoll, TEXT("Grip roll, degrees."));
 // Where the gun sits relative to the hand bone, in the hand's own axes, centimetres. The bone is the wrist and
 // a w_ model's origin is its middle, so without this the gun balances on the wrist like a seesaw.
-static float GWeaponShadowFwd = 10.0f;
+static float GWeaponShadowFwd = 0.0f;
 static FAutoConsoleVariableRef CVarWeaponShadowFwd(TEXT("cl_weaponshadow_fwd"), GWeaponShadowFwd, TEXT("Grip offset along the hand, cm."));
 static float GWeaponShadowSide = 0.0f;
 static FAutoConsoleVariableRef CVarWeaponShadowSide(TEXT("cl_weaponshadow_side"), GWeaponShadowSide, TEXT("Grip offset across the hand, cm."));
@@ -342,9 +344,11 @@ void ALambdaCharacter::UpdatePlayerBody(float DeltaSeconds)
 			Part->SetPoseParameter(TEXT("aim_yaw"), 0.0f);
 			if (bMoving)
 			{
+				// Negated: the rig measures move_yaw the other way round from UE's yaw delta, so without this
+				// a strafe left plays the strafe-right cycle and the feet cross over.
 				const FVector Dir = GetCharacterMovement()->Velocity.GetSafeNormal2D();
 				const float MoveYaw = FMath::FindDeltaAngleDegrees(GetActorRotation().Yaw, Dir.Rotation().Yaw);
-				Part->SetPoseParameter(TEXT("move_yaw"), MoveYaw);
+				Part->SetPoseParameter(TEXT("move_yaw"), -MoveYaw);
 			}
 		}
 
@@ -458,6 +462,21 @@ void ALambdaCharacter::UpdateWeaponShadow(USourceStudioModelComponent* Body)
 			WeaponShadowMesh->SetOwnerNoSee(true);
 			WeaponShadowMesh->SetCastShadow(true);
 			WeaponShadowMesh->bCastHiddenShadow = true;
+			// The world model's own hand bone: if it has one, this model is built for bonemerge and its bind
+			// transform is what the placement undoes.
+			bWeaponShadowBonemerged = false;
+			WeaponShadowRootBind = FTransform::Identity;
+			const float Scale = ULambdaSourceSettings::Get().UnitScale;
+			for (const FSourceStudioBone& WBone : WeaponShadowMesh->GetModel()->GetBones())
+			{
+				if (WBone.Name.Equals(TEXT("ValveBiped.Bip01_R_Hand"), ESearchCase::IgnoreCase))
+				{
+					WeaponShadowRootBind = FSourceMatrix3x4::FromQuatPos(WBone.Quat, WBone.Pos).ToUETransform(Scale);
+					bWeaponShadowBonemerged = true;
+					break;
+				}
+			}
+
 			// Find the hand once per body model: the rig is Mixamo-named.
 			const TArray<FSourceStudioBone>& Bones = Body->GetModel()->GetBones();
 			for (int32 b = 0; b < Bones.Num(); ++b)
@@ -470,7 +489,9 @@ void ALambdaCharacter::UpdateWeaponShadow(USourceStudioModelComponent* Body)
 					break;
 				}
 			}
-			UE_LOG(LogLambda, Log, TEXT("weapon shadow: '%s' in hand bone %d"), *Info->PlayerModel, WeaponShadowBone);
+			UE_LOG(LogLambda, Log, TEXT("weapon shadow: '%s' in hand bone %d, %s"),
+				*Info->PlayerModel, WeaponShadowBone,
+				bWeaponShadowBonemerged ? TEXT("bonemerged") : TEXT("no hand bone - placed by grip trim"));
 		}
 		else
 		{
@@ -487,13 +508,20 @@ void ALambdaCharacter::UpdateWeaponShadow(USourceStudioModelComponent* Body)
 	}
 	if (bShow)
 	{
-		// The hand's own transform, with a fixed grip offset. With a real player animation set the hands are
-		// posed holding a weapon, so the gun follows the hand the way Source's bonemerge would - the offset is
-		// the difference between the w_ model's origin and where a palm actually grips, found by eye once.
+		// Bonemerge, the way Source carries a world model: a w_ model's root bone is named for the hand it
+		// belongs in, and everything it draws hangs off ValveBiped.Weapon_bone at an offset Valve authored.
+		// Placing the component so that root bone lands exactly on the player's hand reproduces that, and
+		// needs no invented angles at all - which is what the yaw, the flip and the wrist-seesaw offsets were
+		// all badly approximating. Trim stays available for models that carry no such bone.
 		const FTransform Hand = Body->GetBoneWorldTransform(WeaponShadowBone);
-		const FQuat Grip = FRotator(GWeaponShadowPitch, GWeaponShadowYaw, GWeaponShadowRoll).Quaternion();
+		const FQuat Trim = FRotator(GWeaponShadowPitch, GWeaponShadowYaw, GWeaponShadowRoll).Quaternion();
 		const FVector Offset = Hand.GetRotation().RotateVector(FVector(GWeaponShadowFwd, GWeaponShadowSide, GWeaponShadowUp));
-		WeaponShadowMesh->SetWorldLocationAndRotation(Hand.GetLocation() + Offset, Hand.GetRotation() * Grip);
+		FTransform Placed(Hand.GetRotation() * Trim, Hand.GetLocation() + Offset);
+		if (bWeaponShadowBonemerged)
+		{
+			Placed = WeaponShadowRootBind.Inverse() * Placed;
+		}
+		WeaponShadowMesh->SetWorldTransform(Placed);
 		return;
 	}
 

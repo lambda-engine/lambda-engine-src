@@ -119,7 +119,28 @@ bool ALambdaWeapon::SendWeaponAnim(const FString& ActivityName)
 	}
 	// The third-person half of the same moment: the shadow body plays its attack or reload gesture. Keyed off
 	// the view model activity because every weapon's fire and reload funnels through here already.
-	if (ActivityName.Contains(TEXT("PRIMARYATTACK")) || ActivityName.Contains(TEXT("SECONDARYATTACK")))
+	//
+	// A swing is an attack too. Bludgeon weapons never say PRIMARYATTACK - CBaseHLBludgeonWeapon sends
+	// ACT_VM_HITCENTER or ACT_VM_MISSCENTER depending on whether it connected - so matching only the shooting
+	// activities left the crowbar swinging in first person while the shadow stood still.
+	auto IsAttack = [](const FString& Activity)
+	{
+		static const TCHAR* Attacks[] = {
+			TEXT("PRIMARYATTACK"), TEXT("SECONDARYATTACK"),
+			TEXT("HITCENTER"), TEXT("HITLEFT"), TEXT("HITRIGHT"), TEXT("HITSLICE"),
+			TEXT("MISSCENTER"), TEXT("MISSLEFT"), TEXT("MISSRIGHT"), TEXT("MISSSLICE"),
+			TEXT("SWINGHARD"), TEXT("SWINGHIT"), TEXT("SWINGMISS"),
+		};
+		for (const TCHAR* Attack : Attacks)
+		{
+			if (Activity.Contains(Attack))
+			{
+				return true;
+			}
+		}
+		return false;
+	};
+	if (IsAttack(ActivityName))
 	{
 		WeaponOwner->OnWeaponAttackAnim();
 	}

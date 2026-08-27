@@ -456,6 +456,15 @@ protected:
 	FString WeaponShadowClass;
 	/** The shadow body's right-hand bone, found once per model. */
 	int32 WeaponShadowBone = -1;
+	/**
+	 * The world model's own hand bone in its bind pose, cached per weapon.
+	 *
+	 * A w_ model is built to be bonemerged: its root bone is named for the hand it belongs in and its geometry
+	 * hangs off ValveBiped.Weapon_bone at the offset Valve authored. Undoing this transform is what puts that
+	 * root onto the player's hand, and with it the gun exactly where it was meant to sit.
+	 */
+	FTransform WeaponShadowRootBind = FTransform::Identity;
+	bool bWeaponShadowBonemerged = false;
 
 	UPROPERTY(EditAnywhere, Category = "Lambda")
 	float Health = 100.0f;
