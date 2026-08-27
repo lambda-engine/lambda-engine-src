@@ -3,7 +3,6 @@
 #include "Core/LambdaSourceSettings.h"
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
-#include "Components/DirectionalLightComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
@@ -219,16 +218,6 @@ ALambdaCharacter::ALambdaCharacter(const FObjectInitializer& ObjectInitializer)
 	BodyMesh->SetupAttachment(GetCapsuleComponent());
 	BodyMesh->SetMobility(EComponentMobility::Movable);
 	BodyMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-
-	// The legs' own light, on the channel only they occupy. Attached to the capsule so it turns with the
-	// player: the shading on your own legs then stays put instead of swinging as you look around.
-	LegsLight = CreateDefaultSubobject<UDirectionalLightComponent>(TEXT("LegsLight"));
-	LegsLight->SetupAttachment(GetCapsuleComponent());
-	LegsLight->SetMobility(EComponentMobility::Movable);
-	LegsLight->SetLightingChannels(false, false, true);	// channel 2: world is 0+1, everything else is 0
-	LegsLight->SetCastShadows(false);
-	LegsLight->SetRelativeRotation(FRotator(-50.0f, -35.0f, 0.0f));
-	LegsLight->SetIntensity(14.0f);
 
 	// The weapon the shadow holds. Not attached to a bone socket - the pose is composed on the CPU each frame,
 	// so UpdatePlayerBody places it at the hand bone by hand.

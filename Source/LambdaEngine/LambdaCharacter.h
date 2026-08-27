@@ -444,17 +444,6 @@ protected:
 	/** The active weapon's world model, in the shadow body's hand, so the shadow is armed too. */
 	UPROPERTY(VisibleAnywhere, Category = "Lambda")
 	TObjectPtr<USourceStudioModelComponent> WeaponShadowMesh;
-	/**
-	 * Lights the first-person legs, and nothing else lights them.
-	 *
-	 * The legs sit inside the shadow body - they are the same limbs twice - so every light in the map draws
-	 * them into their own duplicate's shadow and they come out uniformly black. Unreal can say which lights
-	 * touch a primitive but not which casters may shadow it, so the legs are moved to a lighting channel
-	 * nothing else uses and given this light of their own. It casts nothing, so nothing can shadow them.
-	 */
-	UPROPERTY(VisibleAnywhere, Category = "Lambda")
-	TObjectPtr<class UDirectionalLightComponent> LegsLight;
-
 	/** The class whose world model the shadow is holding, so a weapon switch reloads it. */
 	FString WeaponShadowClass;
 	/** The shadow body's right-hand bone, found once per model. */
