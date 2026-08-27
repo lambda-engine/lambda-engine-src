@@ -25,6 +25,7 @@
 
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/DirectionalLightComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 
 static bool GDrawFirstPersonLegs = true;
@@ -66,6 +67,13 @@ static FAutoConsoleVariableRef CVarPitchUp(
 	GPitchUp,
 	TEXT("How far above the horizon the view may pitch, in degrees."));
 
+// How hard the legs' own light burns. Zero leaves them to whatever ambient there is, which is nearly nothing.
+static float GLegsLightIntensity = 14.0f;
+static FAutoConsoleVariableRef CVarLegsLightIntensity(
+	TEXT("cl_legs_light"),
+	GLegsLightIntensity,
+	TEXT("Brightness of the light that lights the first-person legs and nothing else."));
+
 static bool GDrawPlayerShadow = true;
 static FAutoConsoleVariableRef CVarDrawPlayerShadow(
 	TEXT("cl_drawplayershadow"),
@@ -93,6 +101,11 @@ void ALambdaCharacter::SetupPlayerBody()
 			// where the player is actually standing. Marking them makes them solid and two and a half times
 			// too large, and no offset fixes both at once.
 			LegsMesh->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::None);
+			// Off every channel the world and the shadow body use, onto one of their own. This is what keeps
+			// the body from shadowing them: a light that cannot see the body cannot draw it into a shadow map,
+			// and no other light reaches the legs at all. The cost is that the legs no longer darken in a dark
+			// room - the usual trade for first-person geometry, and the reason cl_legs_light is tunable.
+			LegsMesh->SetLightingChannels(false, false, true);
 			UE_LOG(LogLambda, Log, TEXT("player legs: '%s', %d bones, %d sequences"),
 				*Settings.PlayerLegsModel, LegsMesh->GetModel()->GetBones().Num(),
 				LegsMesh->GetModel()->GetSequences().Num());
@@ -228,6 +241,15 @@ void ALambdaCharacter::UpdatePlayerBody(float DeltaSeconds)
 		// Stood out in front where they can be looked at: from inside the hips, a leg and a broken leg look
 		// much the same.
 		Offset += FVector(150.0f, 0.0f, 0.0f);
+	}
+
+	if (LegsLight)
+	{
+		LegsLight->SetVisibility(GDrawFirstPersonLegs && !GLegsDebug);
+		if (!FMath::IsNearlyEqual(LegsLight->Intensity, GLegsLightIntensity))
+		{
+			LegsLight->SetIntensity(GLegsLightIntensity);
+		}
 	}
 
 	const FString Wanted = ChoosePlayerBodySequence();

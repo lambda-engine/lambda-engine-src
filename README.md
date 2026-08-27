@@ -221,6 +221,13 @@ The real fix is a mesh authored for this - a legs model with its waist capped - 
 the legs with its own near plane and no depth scaling. `cl_drawlegs 0` turns them off meanwhile;
 `cl_legs_offset_forward` and `cl_legs_offset_up` move them if a different model needs different placement.
 
+Their lighting is settled, though. The legs stand inside the shadow body - they are the same limbs twice - so
+every light in the map drew them into their own duplicate's shadow and they came out black. Unreal can say which
+lights touch a primitive but not which casters may shadow it, so the legs sit on lighting channel 2, which
+nothing else uses (the world is on 0 and 1, everything else on 0), lit by one shadowless light of their own that
+turns with the player. Nothing can shadow what nothing else lights. The cost is that the legs no longer darken in
+a dark room, which is the usual trade for first-person geometry; `cl_legs_light` sets its brightness.
+
 Two genuine bugs were found and fixed on the way, and they are the reason animation works at all:
 
 * **Armature scale.** A rig with scale at the root - Mixamo's is 0.01 - makes `inv(parent) @ child` divide every
