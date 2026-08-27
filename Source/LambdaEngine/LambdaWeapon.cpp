@@ -117,6 +117,16 @@ bool ALambdaWeapon::SendWeaponAnim(const FString& ActivityName)
 	{
 		return false;
 	}
+	// The third-person half of the same moment: the shadow body plays its attack or reload gesture. Keyed off
+	// the view model activity because every weapon's fire and reload funnels through here already.
+	if (ActivityName.Contains(TEXT("PRIMARYATTACK")) || ActivityName.Contains(TEXT("SECONDARYATTACK")))
+	{
+		WeaponOwner->OnWeaponAttackAnim();
+	}
+	else if (ActivityName.Contains(TEXT("RELOAD")))
+	{
+		WeaponOwner->OnWeaponReloadAnim();
+	}
 	if (!WeaponOwner->SendViewModelAnim(ActivityName))
 	{
 		// The model has no sequence for that activity. Not fatal - the weapon keeps whatever it was playing -

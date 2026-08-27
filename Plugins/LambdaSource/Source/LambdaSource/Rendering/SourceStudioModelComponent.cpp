@@ -271,9 +271,10 @@ void USourceStudioModelComponent::ComposePose()
 	// CalcPose: the base sequence, then every gesture layer accumulated on top (AccumulateLayers).
 	FSourceLocalPose Pose;
 	Model->InitLocalPose(Pose);
+	const TArray<float>* Params = PoseParamValues.Num() > 0 ? &PoseParamValues : nullptr;
 	if (CurrentSequence != INDEX_NONE)
 	{
-		Model->AccumulateSequence(Pose, CurrentSequence, Cycle, 1.0f);
+		Model->AccumulateSequence(Pose, CurrentSequence, Cycle, 1.0f, Params);
 	}
 	// C_BaseAnimating::MaintainSequenceTransitions: the sequences on their way out are accumulated over the
 	// current one, newest first, at their fade weight - so the pose starts as the old animation and slides to the
@@ -281,11 +282,11 @@ void USourceStudioModelComponent::ComposePose()
 	for (int32 i = Transitions.Num() - 1; i >= 0; --i)
 	{
 		const FTransitionLayer& Layer = Transitions[i];
-		Model->AccumulateSequence(Pose, Layer.Sequence, Layer.Cycle, TransitionWeight(Layer));
+		Model->AccumulateSequence(Pose, Layer.Sequence, Layer.Cycle, TransitionWeight(Layer), Params);
 	}
 	for (const FGestureLayer& Gesture : Gestures)
 	{
-		Model->AccumulateSequence(Pose, Gesture.Sequence, Gesture.Cycle, 1.0f);
+		Model->AccumulateSequence(Pose, Gesture.Sequence, Gesture.Cycle, 1.0f, Params);
 	}
 	// Bones the code owns pose where they are told, and their children follow (SetBoneRotationOverride).
 	for (const TPair<int32, FQuat4f>& Override : BoneRotationOverrides)
@@ -398,6 +399,30 @@ void USourceStudioModelComponent::SetBoneAimConstraint(const FString& BoneName, 
 	BoneAimConstraints.RemoveAll([Bone](const FBoneAim& A) { return A.Bone == Bone; });
 	BoneAimConstraints.Add(Aim);
 	BoneAimConstraints.Sort([](const FBoneAim& A, const FBoneAim& B) { return A.Bone < B.Bone; });
+}
+
+void USourceStudioModelComponent::SetPoseParameter(const FString& Name, float Value)
+{
+	if (!HasModel())
+	{
+		return;
+	}
+	const int32 Index = Model->FindPoseParam(Name);
+	if (Index == INDEX_NONE)
+	{
+		return;	// this model has no such control; nothing to steer
+	}
+	if (PoseParamValues.Num() < Model->GetPoseParams().Num())
+	{
+		// Unset parameters sit at their range's middle, which is where a grid's centre cell lives.
+		PoseParamValues.SetNum(Model->GetPoseParams().Num());
+		for (int32 i = 0; i < PoseParamValues.Num(); ++i)
+		{
+			const FSourcePoseParam& P = Model->GetPoseParams()[i];
+			PoseParamValues[i] = (P.Start + P.End) * 0.5f;
+		}
+	}
+	PoseParamValues[Index] = Value;
 }
 
 void USourceStudioModelComponent::SetBonePositionOverride(const FString& BoneName, const FVector& ComponentPosition)

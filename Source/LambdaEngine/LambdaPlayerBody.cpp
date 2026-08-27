@@ -33,7 +33,8 @@ static FAutoConsoleVariableRef CVarDrawFirstPersonLegs(
 	GDrawFirstPersonLegs,
 	TEXT("Draw the player's own legs in first person. Not a Source cvar - Half-Life 2 draws no player body at all."));
 
-static bool GLegsDebug = false;
+// On while the shadow is being debugged: the body stands out front where it can be watched.
+static bool GLegsDebug = true;
 static FAutoConsoleVariableRef CVarLegsDebug(
 	TEXT("cl_legs_debug"),
 	GLegsDebug,
@@ -73,6 +74,14 @@ static float GWeaponShadowYaw = 90.0f;
 static FAutoConsoleVariableRef CVarWeaponShadowYaw(TEXT("cl_weaponshadow_yaw"), GWeaponShadowYaw, TEXT("Grip yaw, degrees."));
 static float GWeaponShadowRoll = 0.0f;
 static FAutoConsoleVariableRef CVarWeaponShadowRoll(TEXT("cl_weaponshadow_roll"), GWeaponShadowRoll, TEXT("Grip roll, degrees."));
+// Where the gun sits relative to the hand bone, in the hand's own axes, centimetres. The bone is the wrist and
+// a w_ model's origin is its middle, so without this the gun balances on the wrist like a seesaw.
+static float GWeaponShadowFwd = 10.0f;
+static FAutoConsoleVariableRef CVarWeaponShadowFwd(TEXT("cl_weaponshadow_fwd"), GWeaponShadowFwd, TEXT("Grip offset along the hand, cm."));
+static float GWeaponShadowSide = 0.0f;
+static FAutoConsoleVariableRef CVarWeaponShadowSide(TEXT("cl_weaponshadow_side"), GWeaponShadowSide, TEXT("Grip offset across the hand, cm."));
+static float GWeaponShadowUp = 0.0f;
+static FAutoConsoleVariableRef CVarWeaponShadowUp(TEXT("cl_weaponshadow_up"), GWeaponShadowUp, TEXT("Grip offset out of the palm, cm."));
 
 static bool GDrawPlayerShadow = true;
 static FAutoConsoleVariableRef CVarDrawPlayerShadow(
@@ -320,6 +329,25 @@ void ALambdaCharacter::UpdatePlayerBody(float DeltaSeconds)
 		// actually is, or the shadow steps away from the feet.
 		Part->SetRelativeLocation(i == 0 ? Offset + FVector(GLegsOffsetForward, 0.0f, GLegsOffsetUp) : Offset);
 
+		// The controls the hl2mp set answers to. aim_pitch is the view's pitch so the shadow's weapon follows
+		// where the player is actually pointing; move_yaw is which way the feet are going relative to the body,
+		// so a movement blend picks its direction instead of always running forward. Models without these
+		// controls ignore them.
+		{
+			const FRotator View = GetControlRotation();
+			// Normalised first: a controller reports 357.5 where the maths wants -2.5, and an unnormalised
+			// value clamps to the end of the aim range - the shadow stared at the sky whenever the player
+			// looked slightly down. UE pitch is up-positive; the rig's aim_pitch is down-positive.
+			Part->SetPoseParameter(TEXT("aim_pitch"), -FRotator::NormalizeAxis(View.Pitch));
+			Part->SetPoseParameter(TEXT("aim_yaw"), 0.0f);
+			if (bMoving)
+			{
+				const FVector Dir = GetCharacterMovement()->Velocity.GetSafeNormal2D();
+				const float MoveYaw = FMath::FindDeltaAngleDegrees(GetActorRotation().Yaw, Dir.Rotation().Yaw);
+				Part->SetPoseParameter(TEXT("move_yaw"), MoveYaw);
+			}
+		}
+
 		// A player model answers to activities (the hl2mp set); anything else falls back to sequence labels
 		// (the gordon models' walk_forward and friends).
 		int32 Sequence = Part->GetModel()->SelectWeightedSequence(WantedActivity);
@@ -388,6 +416,28 @@ void ALambdaCharacter::SolveHoldPose(USourceStudioModelComponent* Body)
 	Body->SetBoneAimConstraint(TEXT("mixamorig:LeftForeArm"), TEXT("mixamorig:LeftHand"), FVector3f(0.80f, -0.50f, 0.15f));
 }
 
+void ALambdaCharacter::PlayBodyGesture(const TCHAR* GesturePrefix)
+{
+	// The hl2mp attack and reload animations are gestures - upper-body layers played over whatever the legs
+	// are doing - which is exactly what the component's gesture layers are (CBaseAnimatingOverlay::AddGesture).
+	if (BodyMesh && BodyMesh->HasModel())
+	{
+		const FString Gesture = FString::Printf(TEXT("%s_%s"), GesturePrefix, *WeaponActivitySuffix());
+		const bool bPlayed = BodyMesh->PlayGesture(Gesture);
+		UE_LOG(LogLambda, Verbose, TEXT("body gesture: %s -> %s"), *Gesture, bPlayed ? TEXT("playing") : TEXT("no such activity"));
+	}
+}
+
+void ALambdaCharacter::OnWeaponAttackAnim()
+{
+	PlayBodyGesture(TEXT("ACT_HL2MP_GESTURE_RANGE_ATTACK"));
+}
+
+void ALambdaCharacter::OnWeaponReloadAnim()
+{
+	PlayBodyGesture(TEXT("ACT_HL2MP_GESTURE_RELOAD"));
+}
+
 void ALambdaCharacter::UpdateWeaponShadow(USourceStudioModelComponent* Body)
 {
 	// The shadow carries what the player carries. The first-person view model is arms and a gun floating at
@@ -442,7 +492,8 @@ void ALambdaCharacter::UpdateWeaponShadow(USourceStudioModelComponent* Body)
 		// the difference between the w_ model's origin and where a palm actually grips, found by eye once.
 		const FTransform Hand = Body->GetBoneWorldTransform(WeaponShadowBone);
 		const FQuat Grip = FRotator(GWeaponShadowPitch, GWeaponShadowYaw, GWeaponShadowRoll).Quaternion();
-		WeaponShadowMesh->SetWorldLocationAndRotation(Hand.GetLocation(), Hand.GetRotation() * Grip);
+		const FVector Offset = Hand.GetRotation().RotateVector(FVector(GWeaponShadowFwd, GWeaponShadowSide, GWeaponShadowUp));
+		WeaponShadowMesh->SetWorldLocationAndRotation(Hand.GetLocation() + Offset, Hand.GetRotation() * Grip);
 		return;
 	}
 

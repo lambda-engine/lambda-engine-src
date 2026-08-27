@@ -43,6 +43,11 @@ namespace
 		constexpr int32 SEQ_OFF_ACTWEIGHT = 20, SEQ_OFF_NUMEVENTS = 24, SEQ_OFF_EVENTINDEX = 28;
 		constexpr int32 SEQ_OFF_NUMBLENDS = 56, SEQ_OFF_ANIMINDEXINDEX = 60;
 		constexpr int32 SEQ_OFF_GROUPSIZE0 = 68, SEQ_OFF_GROUPSIZE1 = 72;
+		constexpr int32 SEQ_OFF_PARAMINDEX0 = 76, SEQ_OFF_PARAMINDEX1 = 80;
+		constexpr int32 SEQ_OFF_PARAMSTART0 = 84, SEQ_OFF_PARAMSTART1 = 88;
+		constexpr int32 SEQ_OFF_PARAMEND0 = 92, SEQ_OFF_PARAMEND1 = 96;
+		constexpr int32 OFF_NUMLOCALPOSEPARAM = 300, OFF_LOCALPOSEPARAMINDEX = 304;
+		constexpr int32 SIZE_POSEPARAMDESC = 20;
 		constexpr int32 SEQ_OFF_FADEINTIME = 104, SEQ_OFF_FADEOUTTIME = 108;
 		constexpr int32 SEQ_OFF_NUMAUTOLAYERS = 148, SEQ_OFF_AUTOLAYERINDEX = 152, SEQ_OFF_WEIGHTLISTINDEX = 156;
 		constexpr int32 SIZE_AUTOLAYER = 24;	// mstudioautolayer_t: short iSequence, short iPose, int flags, float start, peak, tail, end
@@ -459,6 +464,7 @@ bool FSourceMDLFile::Load(const FString& RelativeModelPath, float Scale, FString
 	AnimBlockName.Reset();
 	IncludeGroups.Reset();
 	NumLocalSequences = 0;
+	PoseParams.Reset();
 	SurfaceProp.Reset();
 	VvdData.Reset();
 	VtxData.Reset();
@@ -516,6 +522,7 @@ bool FSourceMDLFile::Load(const FString& RelativeModelPath, float Scale, FString
 	}
 
 	ReadBones(Mdl);
+	ReadPoseParams(Mdl);
 	ReadSequences(Mdl);
 	ReadAttachments(Mdl);
 
@@ -947,6 +954,7 @@ bool FSourceMDLFile::LoadAnimationLibrary(const FString& RelativeModelPath, floa
 	ModelName = ReadCString(Mdl, MDL::OFF_NAME);
 
 	ReadBones(Mdl);
+	ReadPoseParams(Mdl);
 	ReadSequences(Mdl);
 
 	// The libraries keep long animations in a .ani beside the .mdl, the same as any model.
@@ -1073,6 +1081,29 @@ void FSourceMDLFile::MergeInclude(const TSharedPtr<FSourceMDLFile>& Child)
 		{
 			Copy.AnimDescIndex += AnimBase;
 		}
+		for (int32& Cell : Copy.BlendAnimDescs)
+		{
+			if (Cell != INDEX_NONE)
+			{
+				Cell += AnimBase;
+			}
+		}
+		// The sequence's pose parameters are the library's; the host adopts any it lacks, by name, so
+		// "aim_pitch" is one control however many libraries mention it.
+		for (int32 Axis = 0; Axis < 2; ++Axis)
+		{
+			if (Copy.ParamIndex[Axis] >= 0 && Child->PoseParams.IsValidIndex(Copy.ParamIndex[Axis]))
+			{
+				Copy.ParamIndex[Axis] = FindOrAddPoseParam(Child->PoseParams[Copy.ParamIndex[Axis]]);
+			}
+		}
+		for (FSourceStudioAutoLayer& Layer : Copy.AutoLayers)
+		{
+			if (Layer.Pose >= 0 && Child->PoseParams.IsValidIndex(Layer.Pose))
+			{
+				Layer.Pose = FindOrAddPoseParam(Child->PoseParams[Layer.Pose]);
+			}
+		}
 		for (FSourceStudioAutoLayer& Layer : Copy.AutoLayers)
 		{
 			if (Layer.Sequence != INDEX_NONE)
@@ -1096,6 +1127,44 @@ void FSourceMDLFile::MergeInclude(const TSharedPtr<FSourceMDLFile>& Child)
 		}
 		Sequences.Add(MoveTemp(Copy));
 	}
+}
+
+void FSourceMDLFile::ReadPoseParams(const TArray<uint8>& Mdl)
+{
+	const int32 Num = ReadInt(Mdl, MDL::OFF_NUMLOCALPOSEPARAM);
+	const int32 Index = ReadInt(Mdl, MDL::OFF_LOCALPOSEPARAMINDEX);
+	for (int32 i = 0; i < Num && i < 64; ++i)
+	{
+		const int64 Off = Index + (int64)i * MDL::SIZE_POSEPARAMDESC;
+		FSourcePoseParam& Param = PoseParams.AddDefaulted_GetRef();
+		Param.Name = ReadCString(Mdl, Off + ReadInt(Mdl, Off));
+		Param.Start = ReadFloat(Mdl, Off + 8);
+		Param.End = ReadFloat(Mdl, Off + 12);
+		Param.Loop = ReadFloat(Mdl, Off + 16);
+	}
+}
+
+int32 FSourceMDLFile::FindPoseParam(const FString& Name) const
+{
+	for (int32 i = 0; i < PoseParams.Num(); ++i)
+	{
+		if (PoseParams[i].Name.Equals(Name, ESearchCase::IgnoreCase))
+		{
+			return i;
+		}
+	}
+	return INDEX_NONE;
+}
+
+int32 FSourceMDLFile::FindOrAddPoseParam(const FSourcePoseParam& Param)
+{
+	const int32 Found = FindPoseParam(Param.Name);
+	if (Found != INDEX_NONE)
+	{
+		return Found;
+	}
+	PoseParams.Add(Param);
+	return PoseParams.Num() - 1;
 }
 
 void FSourceMDLFile::ReadBones(const TArray<uint8>& Mdl)
@@ -1180,18 +1249,28 @@ void FSourceMDLFile::ReadSequences(const TArray<uint8>& Mdl)
 		Seq.FadeOutTime = ReadFloat(Mdl, Off + MDL::SEQ_OFF_FADEOUTTIME);
 
 		// animindexindex points at a short[] of animdesc indices, a groupsize[0] x groupsize[1] grid selected
-		// by pose parameters, which nothing here drives. The middle of the grid is taken, not corner zero: an
-		// aim matrix runs aim-hard-one-way to aim-hard-the-other with straight-ahead at its centre, and a
-		// player model sampled at a corner stands with its arms wrenched over its head. A single-anim sequence
-		// has a 1x1 grid and the middle of it is the same anim it always was.
+		// by the two pose parameters. The whole grid is kept; AnimDescIndex holds its centre as the value for
+		// anyone who drives nothing - an aim matrix runs aim-hard-one-way to aim-hard-the-other with
+		// straight-ahead at its centre, and a model sampled at a corner stands with its arms wrenched over its
+		// head, which is exactly how the first crouch came out.
 		const int32 AnimIndexIndex = ReadInt(Mdl, Off + MDL::SEQ_OFF_ANIMINDEXINDEX);
 		if (AnimIndexIndex != 0)
 		{
-			const int32 Group0 = FMath::Max(1, ReadInt(Mdl, Off + MDL::SEQ_OFF_GROUPSIZE0));
-			const int32 Group1 = FMath::Max(1, ReadInt(Mdl, Off + MDL::SEQ_OFF_GROUPSIZE1));
-			const int32 Middle = (Group1 / 2) * Group0 + (Group0 / 2);
-			const int32 Resolved = ReadI16(Mdl, Off + AnimIndexIndex + (int64)Middle * 2);
-			Seq.AnimDescIndex = AnimDescs.IsValidIndex(Resolved) ? Resolved : INDEX_NONE;
+			Seq.GroupSize[0] = FMath::Clamp(ReadInt(Mdl, Off + MDL::SEQ_OFF_GROUPSIZE0), 1, 64);
+			Seq.GroupSize[1] = FMath::Clamp(ReadInt(Mdl, Off + MDL::SEQ_OFF_GROUPSIZE1), 1, 64);
+			Seq.ParamIndex[0] = ReadInt(Mdl, Off + MDL::SEQ_OFF_PARAMINDEX0);
+			Seq.ParamIndex[1] = ReadInt(Mdl, Off + MDL::SEQ_OFF_PARAMINDEX1);
+			Seq.ParamStart[0] = ReadFloat(Mdl, Off + MDL::SEQ_OFF_PARAMSTART0);
+			Seq.ParamStart[1] = ReadFloat(Mdl, Off + MDL::SEQ_OFF_PARAMSTART1);
+			Seq.ParamEnd[0] = ReadFloat(Mdl, Off + MDL::SEQ_OFF_PARAMEND0);
+			Seq.ParamEnd[1] = ReadFloat(Mdl, Off + MDL::SEQ_OFF_PARAMEND1);
+			for (int32 Cell = 0; Cell < Seq.GroupSize[0] * Seq.GroupSize[1]; ++Cell)
+			{
+				const int32 Resolved = ReadI16(Mdl, Off + AnimIndexIndex + (int64)Cell * 2);
+				Seq.BlendAnimDescs.Add(AnimDescs.IsValidIndex(Resolved) ? Resolved : INDEX_NONE);
+			}
+			const int32 Middle = (Seq.GroupSize[1] / 2) * Seq.GroupSize[0] + (Seq.GroupSize[0] / 2);
+			Seq.AnimDescIndex = Seq.BlendAnimDescs.IsValidIndex(Middle) ? Seq.BlendAnimDescs[Middle] : INDEX_NONE;
 		}
 
 		// Autolayers (gestures are built from these) and the per-bone weight list.
@@ -1412,18 +1491,46 @@ void FSourceMDLFile::BuildBoneToModel(const FSourceLocalPose& Pose, TArray<FSour
 	}
 }
 
-bool FSourceMDLFile::CalcPoseSingle(int32 SequenceIndex, float Cycle, FSourceLocalPose& Out) const
+bool FSourceMDLFile::CalcPoseSingle(int32 SequenceIndex, float Cycle, FSourceLocalPose& Out,
+	const TArray<float>* PoseParamValues) const
 {
 	if (!Sequences.IsValidIndex(SequenceIndex) || Bones.Num() == 0)
 	{
 		return false;
 	}
 	const FSourceStudioSequence& Seq = Sequences[SequenceIndex];
-	if (!AnimDescs.IsValidIndex(Seq.AnimDescIndex))
+
+	// The blend grid, steered by pose parameters when the caller drives them: each axis picks the nearest
+	// cell (Source interpolates between cells; nearest is the honest first step). Per-sequence ranges, which
+	// are sometimes authored reversed - normalising against start and end handles either order.
+	int32 ChosenAnim = Seq.AnimDescIndex;
+	if (PoseParamValues && Seq.BlendAnimDescs.Num() > 1)
+	{
+		int32 Cell[2] = { Seq.GroupSize[0] / 2, Seq.GroupSize[1] / 2 };
+		for (int32 Axis = 0; Axis < 2; ++Axis)
+		{
+			const int32 Param = Seq.ParamIndex[Axis];
+			if (Seq.GroupSize[Axis] > 1 && Param >= 0 && PoseParamValues->IsValidIndex(Param))
+			{
+				const float Span = Seq.ParamEnd[Axis] - Seq.ParamStart[Axis];
+				if (!FMath::IsNearlyZero(Span))
+				{
+					const float T = FMath::Clamp(((*PoseParamValues)[Param] - Seq.ParamStart[Axis]) / Span, 0.0f, 1.0f);
+					Cell[Axis] = FMath::Clamp(FMath::RoundToInt(T * (Seq.GroupSize[Axis] - 1)), 0, Seq.GroupSize[Axis] - 1);
+				}
+			}
+		}
+		const int32 Index = Cell[1] * Seq.GroupSize[0] + Cell[0];
+		if (Seq.BlendAnimDescs.IsValidIndex(Index) && Seq.BlendAnimDescs[Index] != INDEX_NONE)
+		{
+			ChosenAnim = Seq.BlendAnimDescs[Index];
+		}
+	}
+	if (!AnimDescs.IsValidIndex(ChosenAnim))
 	{
 		return false;
 	}
-	const FSourceStudioAnimDesc& Anim = AnimDescs[Seq.AnimDescIndex];
+	const FSourceStudioAnimDesc& Anim = AnimDescs[ChosenAnim];
 
 	// CalcAnimation: bones the animation never moves keep the bind pose - or, for a delta animation, no change
 	// at all (identity rotation, zero offset), since the whole thing is added to whatever is underneath.
@@ -1623,7 +1730,8 @@ void FSourceMDLFile::SlerpBones(FSourceLocalPose& Pose, const FSourceStudioSeque
 	}
 }
 
-void FSourceMDLFile::AddSequenceLayers(FSourceLocalPose& Pose, int32 SequenceIndex, float Cycle, float Weight) const
+void FSourceMDLFile::AddSequenceLayers(FSourceLocalPose& Pose, int32 SequenceIndex, float Cycle, float Weight,
+	const TArray<float>* PoseParamValues) const
 {
 	const FSourceStudioSequence& Seq = Sequences[SequenceIndex];
 	for (const FSourceStudioAutoLayer& Layer : Seq.AutoLayers)
@@ -1632,16 +1740,25 @@ void FSourceMDLFile::AddSequenceLayers(FSourceLocalPose& Pose, int32 SequenceInd
 		{
 			continue;
 		}
+		// The ramp's driver: the parent's cycle for an ordinary layer, and for an AL_POSE layer the pose
+		// parameter's value in the author's units - the aim matrices ride these, weighted in by how far the
+		// aim is from centre (bone_setup.cpp's AddSequenceLayers). A pose-driven layer with no driven value
+		// keeps the old behaviour and stays out.
+		float RampIndex = Cycle;
 		if (Layer.Flags & STUDIO::AL_POSE)
 		{
-			continue;	// driven by a pose parameter, which we do not have
+			if (!PoseParamValues || !PoseParamValues->IsValidIndex(Layer.Pose))
+			{
+				continue;
+			}
+			RampIndex = (*PoseParamValues)[Layer.Pose];
 		}
 		float LayerCycle = Cycle;
 		float LayerWeight = Weight;
 		if (Layer.Start != Layer.End)
 		{
 			float S = 1.0f;
-			const float Index = Cycle;
+			const float Index = RampIndex;
 			if (Index < Layer.Start || Index >= Layer.End)
 			{
 				continue;
@@ -1666,17 +1783,18 @@ void FSourceMDLFile::AddSequenceLayers(FSourceLocalPose& Pose, int32 SequenceInd
 			{
 				LayerWeight = Weight * S;
 			}
-			LayerCycle = (Cycle - Layer.Start) / (Layer.End - Layer.Start);
+			LayerCycle = (Layer.Flags & STUDIO::AL_POSE) ? Cycle : (Cycle - Layer.Start) / (Layer.End - Layer.Start);
 		}
 		if (Layer.Flags & STUDIO::AL_NOBLEND)
 		{
 			LayerWeight = 1.0f;
 		}
-		AccumulateSequence(Pose, Layer.Sequence, LayerCycle, LayerWeight);
+		AccumulateSequence(Pose, Layer.Sequence, LayerCycle, LayerWeight, PoseParamValues);
 	}
 }
 
-bool FSourceMDLFile::AccumulateSequence(FSourceLocalPose& Pose, int32 SequenceIndex, float Cycle, float Weight) const
+bool FSourceMDLFile::AccumulateSequence(FSourceLocalPose& Pose, int32 SequenceIndex, float Cycle, float Weight,
+	const TArray<float>* PoseParams_) const
 {
 	// AccumulatePose: the sequence's own pose, its layers on top of that, then blended into what is there.
 	if (Weight <= 0.0f || Pose.Quat.Num() != Bones.Num())
@@ -1684,11 +1802,10 @@ bool FSourceMDLFile::AccumulateSequence(FSourceLocalPose& Pose, int32 SequenceIn
 		return false;
 	}
 	FSourceLocalPose Single;
-	if (!CalcPoseSingle(SequenceIndex, Cycle, Single))
+	if (!CalcPoseSingle(SequenceIndex, Cycle, Single, PoseParams_))
 	{
 		return false;
 	}
-	AddSequenceLayers(Single, SequenceIndex, Cycle, Weight);
 	SlerpBones(Pose, Sequences[SequenceIndex], Single, Weight, IsSequenceDelta(SequenceIndex));
 	return true;
 }

@@ -75,6 +75,15 @@ struct LAMBDASOURCE_API FSourceStudioAnimDesc
 	TArray<FSourceStudioMovement> Movements;
 };
 
+/** mstudioposeparamdesc_t: a named control the game drives, selecting between a sequence's blend anims. */
+struct LAMBDASOURCE_API FSourcePoseParam
+{
+	FString Name;			// "aim_pitch", "move_yaw", ...
+	float Start = 0.0f;		// the value the low end of the blend grid means, in the author's units (degrees)
+	float End = 1.0f;
+	float Loop = 0.0f;
+};
+
 /** mstudioevent_t: a cue fired at a point in a sequence's cycle (muzzle flash, shell eject, sound). */
 struct LAMBDASOURCE_API FSourceStudioEvent
 {
@@ -105,6 +114,15 @@ struct LAMBDASOURCE_API FSourceStudioSequence
 	int32 ActivityWeight = 0;
 	int32 NumBlends = 0;
 	int32 AnimDescIndex = INDEX_NONE;
+	/**
+	 * The full blend grid, GroupSize[0] x GroupSize[1] animdesc indices, selected by the two pose parameters.
+	 * AnimDescIndex holds the grid's centre for anyone who does not drive them.
+	 */
+	TArray<int32> BlendAnimDescs;
+	int32 GroupSize[2] = { 1, 1 };
+	int32 ParamIndex[2] = { INDEX_NONE, INDEX_NONE };	// into the model's pose parameter list
+	float ParamStart[2] = { 0.0f, 0.0f };				// per-sequence, and sometimes reversed - normalise, do not assume order
+	float ParamEnd[2] = { 1.0f, 1.0f };
 	/** fadeintime / fadeouttime: how long studiomdl says a transition into or out of this sequence should take. */
 	float FadeInTime = 0.2f;
 	float FadeOutTime = 0.2f;
@@ -233,7 +251,11 @@ public:
 	 * AccumulatePose: blends (or, for delta sequences, adds) one sequence at a cycle into Pose with a weight,
 	 * including the sequence's autolayers - which is how a flinch gesture lands on top of a walk.
 	 */
-	bool AccumulateSequence(FSourceLocalPose& Pose, int32 SequenceIndex, float Cycle, float Weight) const;
+	bool AccumulateSequence(FSourceLocalPose& Pose, int32 SequenceIndex, float Cycle, float Weight,
+		const TArray<float>* PoseParams = nullptr) const;
+
+	const TArray<FSourcePoseParam>& GetPoseParams() const { return PoseParams; }
+	int32 FindPoseParam(const FString& Name) const;
 
 	/** How many of the sequences are this model's own rather than borrowed through $includemodel. */
 	int32 GetNumLocalSequences() const { return NumLocalSequences; }
@@ -281,9 +303,11 @@ private:
 	void BuildSections();
 
 	/** CalcPoseSingle: one sequence's own animation (no layers) as local bone transforms. */
-	bool CalcPoseSingle(int32 SequenceIndex, float Cycle, FSourceLocalPose& Out) const;
+	bool CalcPoseSingle(int32 SequenceIndex, float Cycle, FSourceLocalPose& Out,
+		const TArray<float>* PoseParamValues = nullptr) const;
 	/** AddSequenceLayers: the sequence's autolayers accumulated into Pose. */
-	void AddSequenceLayers(FSourceLocalPose& Pose, int32 SequenceIndex, float Cycle, float Weight) const;
+	void AddSequenceLayers(FSourceLocalPose& Pose, int32 SequenceIndex, float Cycle, float Weight,
+		const TArray<float>* PoseParamValues) const;
 	/** SlerpBones: blends (or adds, for delta sequences) Layer into Pose by Weight and the sequence's bone weights. */
 	void SlerpBones(FSourceLocalPose& Pose, const FSourceStudioSequence& Seq, const FSourceLocalPose& Layer, float Weight, bool bDelta) const;
 
@@ -317,6 +341,9 @@ private:
 	};
 	TArray<FIncludeGroup> IncludeGroups;
 	int32 NumLocalSequences = 0;
+	TArray<FSourcePoseParam> PoseParams;
+	void ReadPoseParams(const TArray<uint8>& Mdl);
+	int32 FindOrAddPoseParam(const FSourcePoseParam& Param);
 
 	/** Loads only what an animation library needs: bones, sequences, anim data - no mesh, no vvd/vtx. */
 	bool LoadAnimationLibrary(const FString& RelativeModelPath, float Scale, TArray<FString>& Visited);

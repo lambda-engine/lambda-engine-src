@@ -176,6 +176,10 @@ public:
 	FString ChoosePlayerBodyActivity() const;
 	/** Which hl2mp pose family the active weapon carries as ("SHOTGUN", "PISTOL", ...). */
 	FString WeaponActivitySuffix() const;
+	/** The shadow body plays its attack or reload gesture; called by the weapon when it fires or reloads. */
+	void OnWeaponAttackAnim();
+	void OnWeaponReloadAnim();
+	void PlayBodyGesture(const TCHAR* GesturePrefix);
 	/** Keeps the active weapon's world model in the shadow body's hand. */
 	void UpdateWeaponShadow(USourceStudioModelComponent* Body);
 	/** Freezes the shadow body's arms into a two-handed carry, solved from the model's own bind skeleton. */

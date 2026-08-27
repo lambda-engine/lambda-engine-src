@@ -110,6 +110,13 @@ public:
 	 */
 	void SetHiddenBoneSubtree(const FString& BoneName) { HiddenSubtreeBone = BoneName; }
 
+	/**
+	 * Sets a pose parameter by name, in the author's units (degrees for every aim and movement control).
+	 * They steer which cell of a sequence's blend grid plays: aim_pitch tilts the aim matrices, move_yaw picks
+	 * the direction out of a movement blend. Unset parameters leave a sequence on its grid's centre.
+	 */
+	void SetPoseParameter(const FString& Name, float Value);
+
 	/** Ground speed authored into the current sequence's root motion, in Source units/sec (0 if none). */
 	float GetSequenceGroundSpeed() const;
 
@@ -221,6 +228,8 @@ private:
 	TArray<FBoneAim> BoneAimConstraints;
 	/** The subtree SetHiddenBoneSubtree erases; empty means the whole mesh is built. */
 	FString HiddenSubtreeBone;
+	/** Pose parameter values, indexed as the model's pose parameter list is. */
+	TArray<float> PoseParamValues;
 	TMap<int32, FVector> BonePositionOverrides;
 
 	int32 CurrentSequence = INDEX_NONE;
