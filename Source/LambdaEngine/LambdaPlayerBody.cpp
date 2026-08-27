@@ -364,10 +364,11 @@ void ALambdaCharacter::UpdateWeaponShadow(USourceStudioModelComponent* Body)
 	{
 		// Positioned at the hand, oriented by the body rather than by the hand's own axes: a hand bone's local
 		// frame is whatever the rig's author liked, but a carried gun points where its carrier faces, tipped a
-		// little down. Cheaper to state that directly than to divine the hand's conventions.
+		// little down. Cheaper to state that directly than to divine the hand's conventions. The 90 on the yaw
+		// is the w_ models' own facing - they are authored lying across the model axis, not along it.
 		WeaponShadowMesh->SetWorldLocationAndRotation(
 			Body->GetBoneWorldTransform(WeaponShadowBone).GetLocation(),
-			FRotator(-15.0f, GetActorRotation().Yaw, 0.0f));
+			FRotator(-15.0f, GetActorRotation().Yaw + 90.0f, 0.0f));
 		return;
 	}
 
