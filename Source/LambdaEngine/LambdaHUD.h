@@ -31,7 +31,13 @@ protected:
 	 * magnifies the result (FCanvasSimpleTextItem::DrawStringInternal_RuntimeCache passes only the DPI scale to
 	 * the font cache), so anything drawn bigger than 31px was a blown-up bitmap. This asks for the size instead.
 	 */
-	void DrawTextAtHeight(const FString& Text, const FLinearColor& Colour, float X, float Y, UFont* Font, float PixelHeight);
+	void DrawTextAtHeight(const FString& Text, const FLinearColor& Colour, float X, float Y, UFont* Font, float PixelHeight,
+		ESimpleElementBlendMode BlendMode = SE_BLEND_Translucent);
+	/**
+	 * The main menu's logo, resting its bottom edge on BottomY - resource/gamelogo.res says how big it is and
+	 * how far it is nudged from there.
+	 */
+	void DrawGameLogo(float X, float BottomY, float Scale);
 	/** What DrawTextAtHeight would take up, for laying out and for knowing what the mouse is over. */
 	FVector2D MeasureTextAtHeight(const FString& Text, UFont* Font, float PixelHeight) const;
 	/** Where the mouse was last frame, so hovering only takes the selection when the mouse actually moves. */

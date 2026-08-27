@@ -102,6 +102,14 @@ public:
 	void SetBoneAimConstraint(const FString& BoneName, const FString& ChildName, const FVector3f& ModelSpaceDir);
 	void ClearBoneAimConstraints() { BoneAimConstraints.Reset(); }
 
+	/**
+	 * Erases a bone's subtree from the mesh: triangles whose corners all hang from those bones are left out
+	 * when the mesh is built. It is how a full player model becomes a first-person legs model - name the spine
+	 * above the hips and the torso, arms and head are never built. Set it before SetModel; it is part of which
+	 * mesh this is, so it keys the mesh cache alongside the bodygroups.
+	 */
+	void SetHiddenBoneSubtree(const FString& BoneName) { HiddenSubtreeBone = BoneName; }
+
 	/** Ground speed authored into the current sequence's root motion, in Source units/sec (0 if none). */
 	float GetSequenceGroundSpeed() const;
 
@@ -211,6 +219,8 @@ private:
 	};
 	/** Kept sorted by bone index - parents come before children in a Source skeleton, and the solve leans on it. */
 	TArray<FBoneAim> BoneAimConstraints;
+	/** The subtree SetHiddenBoneSubtree erases; empty means the whole mesh is built. */
+	FString HiddenSubtreeBone;
 	TMap<int32, FVector> BonePositionOverrides;
 
 	int32 CurrentSequence = INDEX_NONE;

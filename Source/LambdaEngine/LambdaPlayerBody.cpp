@@ -39,7 +39,7 @@ static FAutoConsoleVariableRef CVarLegsDebug(
 	GLegsDebug,
 	TEXT("Show the legs and body to everyone, and log where they are - for working out why they are not on screen."));
 
-static float GLegsOffsetForward = -14.0f;
+static float GLegsOffsetForward = -24.0f;
 static FAutoConsoleVariableRef CVarLegsOffsetForward(
 	TEXT("cl_legs_offset_forward"),
 	GLegsOffsetForward,
@@ -66,6 +66,14 @@ static FAutoConsoleVariableRef CVarPitchUp(
 	GPitchUp,
 	TEXT("How far above the horizon the view may pitch, in degrees."));
 
+// The grip: how the weapon world model sits in the shadow's hand, relative to the hand bone's own axes.
+static float GWeaponShadowPitch = 0.0f;
+static FAutoConsoleVariableRef CVarWeaponShadowPitch(TEXT("cl_weaponshadow_pitch"), GWeaponShadowPitch, TEXT("Grip pitch, degrees."));
+static float GWeaponShadowYaw = 90.0f;
+static FAutoConsoleVariableRef CVarWeaponShadowYaw(TEXT("cl_weaponshadow_yaw"), GWeaponShadowYaw, TEXT("Grip yaw, degrees."));
+static float GWeaponShadowRoll = 0.0f;
+static FAutoConsoleVariableRef CVarWeaponShadowRoll(TEXT("cl_weaponshadow_roll"), GWeaponShadowRoll, TEXT("Grip roll, degrees."));
+
 static bool GDrawPlayerShadow = true;
 static FAutoConsoleVariableRef CVarDrawPlayerShadow(
 	TEXT("cl_drawplayershadow"),
@@ -80,6 +88,8 @@ void ALambdaCharacter::SetupPlayerBody()
 	// A Source model stands on its origin, so both meshes hang from the capsule's centre down to the feet.
 	if (LegsMesh)
 	{
+		// Before the model: the cut decides which mesh gets built.
+		LegsMesh->SetHiddenBoneSubtree(Settings.PlayerLegsCutBone);
 		if (LegsMesh->SetModel(Settings.PlayerLegsModel, GetWorldMaterialLibrary()))
 		{
 			LegsMesh->SetRelativeLocation(FVector(0.0f, 0.0f, -HalfHeight));
@@ -133,6 +143,62 @@ void ALambdaCharacter::SetupPlayerBody()
 			UE_LOG(LogLambda, Warning, TEXT("player body: '%s' would not load"), *Settings.PlayerBodyModel);
 		}
 	}
+}
+
+FString ALambdaCharacter::WeaponActivitySuffix() const
+{
+	// The hl2mp animation set is one pose family per weapon carry - ACT_HL2MP_RUN_SHOTGUN and so on - which is
+	// the whole reason to use a player model: it already knows how to hold everything. HL2's weapons map onto
+	// the families the way hl2mp's acttables map them; anything unknown carries like the SMG, hl2mp's own
+	// fallback.
+	static const TMap<FString, FString> Suffixes = {
+		{ TEXT("weapon_crowbar"),	TEXT("MELEE") },
+		{ TEXT("weapon_stunstick"),	TEXT("MELEE") },
+		{ TEXT("weapon_pistol"),	TEXT("PISTOL") },
+		{ TEXT("weapon_357"),		TEXT("PISTOL") },
+		{ TEXT("weapon_smg1"),		TEXT("SMG1") },
+		{ TEXT("weapon_ar2"),		TEXT("AR2") },
+		{ TEXT("weapon_shotgun"),	TEXT("SHOTGUN") },
+		{ TEXT("weapon_crossbow"),	TEXT("CROSSBOW") },
+		{ TEXT("weapon_rpg"),		TEXT("RPG") },
+		{ TEXT("weapon_frag"),		TEXT("GRENADE") },
+		{ TEXT("weapon_slam"),		TEXT("SLAM") },
+		{ TEXT("weapon_physcannon"),TEXT("PHYSGUN") },
+	};
+	if (ActiveWeapon)
+	{
+		if (const FString* Found = Suffixes.Find(ActiveWeapon->GetWeaponClassName().ToLower()))
+		{
+			return *Found;
+		}
+	}
+	return TEXT("SMG1");
+}
+
+FString ALambdaCharacter::ChoosePlayerBodyActivity() const
+{
+	// CPlayerAnimState::CalcMainActivity, for the hl2mp set: the same states the label path below knows, named
+	// as activities. Direction is not chosen here - these are 9-way blends whose centre is forward movement,
+	// and pose parameters are not driven yet.
+	const UCharacterMovementComponent* Move = GetCharacterMovement();
+	const FString Suffix = WeaponActivitySuffix();
+	if (Move && Move->IsFalling())
+	{
+		return FString::Printf(TEXT("ACT_HL2MP_JUMP_%s"), *Suffix);
+	}
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+	const float Speed = Move ? Move->Velocity.Size2D() / Scale : 0.0f;
+	const bool bDucked = bIsCrouched || (Move && Move->bWantsToCrouch);
+	const TCHAR* State;
+	if (bDucked)
+	{
+		State = Speed < 10.0f ? TEXT("IDLE_CROUCH") : TEXT("WALK_CROUCH");
+	}
+	else
+	{
+		State = Speed < 10.0f ? TEXT("IDLE") : TEXT("RUN");
+	}
+	return FString::Printf(TEXT("ACT_HL2MP_%s_%s"), State, *Suffix);
 }
 
 FString ALambdaCharacter::ChoosePlayerBodySequence() const
@@ -230,6 +296,7 @@ void ALambdaCharacter::UpdatePlayerBody(float DeltaSeconds)
 		Offset += FVector(150.0f, 0.0f, 0.0f);
 	}
 
+	const FString WantedActivity = ChoosePlayerBodyActivity();
 	const FString Wanted = ChoosePlayerBodySequence();
 	const bool bMoving = GetCharacterMovement() && GetCharacterMovement()->Velocity.Size2D() > 1.0f;
 
@@ -253,7 +320,13 @@ void ALambdaCharacter::UpdatePlayerBody(float DeltaSeconds)
 		// actually is, or the shadow steps away from the feet.
 		Part->SetRelativeLocation(i == 0 ? Offset + FVector(GLegsOffsetForward, 0.0f, GLegsOffsetUp) : Offset);
 
-		const int32 Sequence = Part->GetModel()->FindSequenceByLabel(Wanted);
+		// A player model answers to activities (the hl2mp set); anything else falls back to sequence labels
+		// (the gordon models' walk_forward and friends).
+		int32 Sequence = Part->GetModel()->SelectWeightedSequence(WantedActivity);
+		if (Sequence == INDEX_NONE)
+		{
+			Sequence = Part->GetModel()->FindSequenceByLabel(Wanted);
+		}
 		if (Sequence != INDEX_NONE && Sequence != Part->GetSequence())
 		{
 			Part->PlaySequence(Sequence);
@@ -339,7 +412,9 @@ void ALambdaCharacter::UpdateWeaponShadow(USourceStudioModelComponent* Body)
 			const TArray<FSourceStudioBone>& Bones = Body->GetModel()->GetBones();
 			for (int32 b = 0; b < Bones.Num(); ++b)
 			{
-				if (Bones[b].Name.EndsWith(TEXT("RightHand")))
+				// ValveBiped's right hand, or a Mixamo rig's - whichever this model is built on.
+				if (Bones[b].Name.Equals(TEXT("ValveBiped.Bip01_R_Hand"), ESearchCase::IgnoreCase)
+					|| Bones[b].Name.EndsWith(TEXT("RightHand")))
 				{
 					WeaponShadowBone = b;
 					break;
@@ -362,13 +437,12 @@ void ALambdaCharacter::UpdateWeaponShadow(USourceStudioModelComponent* Body)
 	}
 	if (bShow)
 	{
-		// Positioned at the hand, oriented by the body rather than by the hand's own axes: a hand bone's local
-		// frame is whatever the rig's author liked, but a carried gun points where its carrier faces, tipped a
-		// little down. Cheaper to state that directly than to divine the hand's conventions. The 90 on the yaw
-		// is the w_ models' own facing - they are authored lying across the model axis, not along it.
-		WeaponShadowMesh->SetWorldLocationAndRotation(
-			Body->GetBoneWorldTransform(WeaponShadowBone).GetLocation(),
-			FRotator(-15.0f, GetActorRotation().Yaw + 90.0f, 0.0f));
+		// The hand's own transform, with a fixed grip offset. With a real player animation set the hands are
+		// posed holding a weapon, so the gun follows the hand the way Source's bonemerge would - the offset is
+		// the difference between the w_ model's origin and where a palm actually grips, found by eye once.
+		const FTransform Hand = Body->GetBoneWorldTransform(WeaponShadowBone);
+		const FQuat Grip = FRotator(GWeaponShadowPitch, GWeaponShadowYaw, GWeaponShadowRoll).Quaternion();
+		WeaponShadowMesh->SetWorldLocationAndRotation(Hand.GetLocation(), Hand.GetRotation() * Grip);
 		return;
 	}
 

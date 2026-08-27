@@ -67,6 +67,8 @@ struct LAMBDASOURCE_API FSourceStudioAnimDesc
 	int32 SectionIndex = 0;
 	int32 SectionFrames = 0;
 	int64 FileOffset = 0;		// every index above is relative to the animdesc itself
+	/** Which file the frame data lives in: 0 is this model, N is IncludeGroups[N-1] ($includemodel). */
+	int32 Group = 0;
 
 	/** mstudioanimsections_t: (animblock, animindex) per section when SectionFrames != 0. */
 	TArray<TPair<int32, int32>> Sections;
@@ -232,6 +234,9 @@ public:
 	 * including the sequence's autolayers - which is how a flinch gesture lands on top of a walk.
 	 */
 	bool AccumulateSequence(FSourceLocalPose& Pose, int32 SequenceIndex, float Cycle, float Weight) const;
+
+	/** How many of the sequences are this model's own rather than borrowed through $includemodel. */
+	int32 GetNumLocalSequences() const { return NumLocalSequences; }
 	/** Local rotations/positions -> bone-to-model matrices through the hierarchy. */
 	void BuildBoneToModel(const FSourceLocalPose& Pose, TArray<FSourceMatrix3x4>& OutBoneToModel) const;
 	/**
@@ -296,6 +301,30 @@ private:
 	TArray<TArray<FSourceSkinVertex>> SkinVertices;
 
 	/** The .mdl is kept so animation data can be decoded on demand rather than unpacked for every frame up front. */
+	/**
+	 * $includemodel: an animation library this model borrows sequences from (Source's virtual model).
+	 *
+	 * Half-Life's humans keep no animations of their own - a citizen's .mdl is mesh and skeleton, and every
+	 * sequence lives in shared libraries (male_shared.mdl and friends) that dozens of models include. The
+	 * library's animations index the library's bones, so each group carries a bone map built by name, which is
+	 * how Source does it too (virtualmodel_t's masterbone). Bones the library has and this model lacks are
+	 * dropped; bones this model has and the library never animates keep the bind pose.
+	 */
+	struct FIncludeGroup
+	{
+		TSharedPtr<FSourceMDLFile> File;
+		TArray<int32> BoneMap;	// the include's bone index -> this model's, INDEX_NONE where this model has none
+	};
+	TArray<FIncludeGroup> IncludeGroups;
+	int32 NumLocalSequences = 0;
+
+	/** Loads only what an animation library needs: bones, sequences, anim data - no mesh, no vvd/vtx. */
+	bool LoadAnimationLibrary(const FString& RelativeModelPath, float Scale, TArray<FString>& Visited);
+	/** Reads the $includemodel list, loads each library, and merges its sequences into this model. */
+	void LoadIncludeModels(const TArray<uint8>& Mdl, TArray<FString>& Visited);
+	void MergeInclude(const TSharedPtr<FSourceMDLFile>& Child);
+	int32 FindOrAddIncludeGroup(const TSharedPtr<FSourceMDLFile>& File);
+
 	TArray<uint8> MdlData;
 	TArray<uint8> VvdData;
 	TArray<uint8> VtxData;

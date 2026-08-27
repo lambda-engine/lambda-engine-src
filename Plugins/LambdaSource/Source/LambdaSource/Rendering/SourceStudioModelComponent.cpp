@@ -29,9 +29,41 @@ void USourceStudioModelComponent::ApplySkeletalMesh()
 	{
 		return;
 	}
-	// One mesh per model and bodygroup selection, shared by every instance: it carries no pose, so there is
-	// nothing per-instance about it.
-	USkeletalMesh* Mesh = FSourceSkeletalMesh::GetOrBuild(ModelPath, *Model, MaterialLibrary, BodygroupKey);
+	// One mesh per model, bodygroup selection and torso cut, shared by every instance: it carries no pose, so
+	// there is nothing per-instance about it. The cut keys the cache - the shadow body and the legs are the
+	// same model path, one whole and one cut, and they must not trade meshes.
+	TSet<int32> HiddenBones;
+	FString CacheKey = BodygroupKey;
+	if (!HiddenSubtreeBone.IsEmpty())
+	{
+		const TArray<FSourceStudioBone>& CutBones = Model->GetBones();
+		int32 Root = INDEX_NONE;
+		for (int32 i = 0; i < CutBones.Num(); ++i)
+		{
+			if (CutBones[i].Name.Equals(HiddenSubtreeBone, ESearchCase::IgnoreCase))
+			{
+				Root = i;
+				break;
+			}
+		}
+		for (int32 i = 0; Root != INDEX_NONE && i < CutBones.Num(); ++i)
+		{
+			for (int32 P = i; P != INDEX_NONE; P = CutBones[P].Parent)
+			{
+				if (P == Root)
+				{
+					HiddenBones.Add(i);
+					break;
+				}
+			}
+		}
+		if (HiddenBones.Num() > 0)
+		{
+			CacheKey += TEXT("|cut:") + HiddenSubtreeBone;
+		}
+	}
+	USkeletalMesh* Mesh = FSourceSkeletalMesh::GetOrBuild(ModelPath, *Model, MaterialLibrary, CacheKey,
+		HiddenBones.Num() > 0 ? &HiddenBones : nullptr);
 	if (Mesh)
 	{
 		SetSkinnedAssetAndUpdate(Mesh, /*bReinitPose=*/ true);

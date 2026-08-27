@@ -176,6 +176,7 @@ Clip sizes, ammo types, sounds and damage come from `scripts/weapon_*.txt`, `scr
 | BSP (v19–21), KeyValues, VPK | Done |
 | VMT, VTF (7.0–7.5, DXT1/3/5 and the uncompressed formats) | Done |
 | MDL/VVD/VTX (v44+), PHY ledge trees | Done |
+| `$includemodel` animation libraries (Source's virtual model: merged sequences, bones mapped by name) | Done — how a citizen borrows the hl2mp player set |
 | WAV, soundscripts (`game_sounds_*.txt`), `surfaceproperties`, `decals_subrect` | Done |
 | `sentences.txt` (the VOX sentence system: words, `(pNNN)` parameter blocks, per-word trims) | Done |
 
@@ -184,7 +185,7 @@ Clip sizes, ammo types, sounds and damage come from `scripts/weapon_*.txt`, `scr
 | | Status |
 |---|---|
 | Runtime skeletal meshes, GPU skinning, bodygroups | Done |
-| Shadow-casting player body in first person | Done — animated at full rate, facing the view, pacing its cycle to the ground, holding the active weapon's world model (which casts too) |
+| Shadow-casting player body in first person | Done — an HL2DM player model (citizen) playing the real hl2mp animation set: idle/run/crouch/jump, each holding the active weapon, whose world model rides the hand and casts too. First-person legs are the same model with the torso cut away at mesh build (SetHiddenBoneSubtree). Aim matrices sample their centre; pose parameters are not driven yet |
 | First-person legs | Partial — the model and its animation are correct; it tears seen from inside the player (see below) |
 | glTF/GLB -> .mdl compilation (Tools/ImportGLTFModel.py, via studiomdl) | Done — mesh, skeleton, materials, bind pose and animation |
 | Impact decals, blood, ragdolls, particles | Done |

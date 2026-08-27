@@ -11,6 +11,7 @@
 #include "LambdaEngine.h"
 #include "LambdaConsole.h"
 #include "LambdaMainMenu.h"
+#include "LambdaMenuScheme.h"
 #include "Engine/GameInstance.h"
 #include "Engine/FontFace.h"
 #include "EngineFontServices.h"
@@ -29,7 +30,8 @@ void ALambdaHUD::LoadSchemeFont()
 	SchemeFont = FLambdaFonts::GetSchemeFont();
 }
 
-void ALambdaHUD::DrawTextAtHeight(const FString& Text, const FLinearColor& Colour, float X, float Y, UFont* Font, float PixelHeight)
+void ALambdaHUD::DrawTextAtHeight(const FString& Text, const FLinearColor& Colour, float X, float Y, UFont* Font, float PixelHeight,
+	ESimpleElementBlendMode BlendMode)
 {
 	if (!Canvas || !Font || Text.IsEmpty())
 	{
@@ -38,7 +40,41 @@ void ALambdaHUD::DrawTextAtHeight(const FString& Text, const FLinearColor& Colou
 	const FSlateFontInfo Info(Font, FMath::Max(1, FMath::RoundToInt(PixelHeight)));
 	FCanvasTextItem Item(FVector2D(X, Y), FText::FromString(Text), Info, Colour);
 	Item.EnableShadow(FLinearColor::Transparent);
+	// A scheme font marked "additive" is added to what is behind it rather than covering it, which is how
+	// Source gets a title that glows against a dark background.
+	Item.BlendMode = BlendMode;
 	Canvas->DrawItem(Item);
+}
+
+void ALambdaHUD::DrawGameLogo(float X, float BottomY, float Scale)
+{
+	const FLambdaGameLogo& Logo = FLambdaGameLogo::Get();
+	UTexture2D* Texture = Logo.GetTexture();
+	if (!Texture || !Canvas)
+	{
+		return;
+	}
+
+	// GameLogo is the area the picture is allowed to cover, and Logo is the picture inside it: a picture bigger
+	// than the area is cropped by it, which is how Source shows part of a power-of-two texture. Working that
+	// crop back into the texture's own coordinates is what the ratios below are.
+	const float TextureWidth = Texture->GetSizeX();
+	const float TextureHeight = Texture->GetSizeY();
+
+	const float U = (-Logo.ImagePosition.X / Logo.ImageSize.X) * TextureWidth;
+	const float V = (-Logo.ImagePosition.Y / Logo.ImageSize.Y) * TextureHeight;
+	const float UL = (Logo.PanelSize.X / Logo.ImageSize.X) * TextureWidth;
+	const float VL = (Logo.PanelSize.Y / Logo.ImageSize.Y) * TextureHeight;
+
+	const float DrawWidth = Logo.PanelSize.X * Scale;
+	const float DrawHeight = Logo.PanelSize.Y * Scale;
+	const float DrawX = X + Logo.Offset.X * Scale;
+	// It rests on the top of the menu items rather than hanging from the top of the screen, so a menu that
+	// grows an item pushes the logo up with it.
+	const float DrawY = BottomY - DrawHeight + Logo.Offset.Y * Scale;
+
+	Canvas->SetDrawColor(FColor::White);
+	Canvas->DrawTile(Texture, DrawX, DrawY, DrawWidth, DrawHeight, U, V, UL, VL, BLEND_Translucent);
 }
 
 FVector2D ALambdaHUD::MeasureTextAtHeight(const FString& Text, UFont* Font, float PixelHeight) const
@@ -275,13 +311,28 @@ void ALambdaHUD::DrawMainMenu(ULambdaMainMenu* Menu, float W, float H)
 
 	const float Scale = H / 480.0f;
 
-	// The mod's own name, from gameinfo.txt's "game" key - what Source titles a mod with everywhere else.
-	const FString GameName = FLambdaFileSystem::Get().GetGameName();
-	const float TitleHeight = 44.0f * Scale;
-	UFont* TitleFont = FLambdaFonts::GetTitleFont();
-	DrawTextAtHeight(GameName.IsEmpty() ? TEXT("LAMBDA ENGINE") : GameName.ToUpper(),
-		ULambdaMainMenu::TitleColour(), 32.0f * Scale, 48.0f * Scale,
-		TitleFont ? TitleFont : MenuFont, TitleHeight);
+	// The title, as gameinfo.txt and resource/clientscheme.res describe it - the mod's own name, where it
+	// wants it, in the face and the colour it asks for.
+	const FLambdaMenuScheme& Scheme = FLambdaMenuScheme::Get();
+	UFont* TitleFont = Scheme.GetTitleFont();
+	if (!TitleFont)
+	{
+		TitleFont = MenuFont;
+	}
+	const ESimpleElementBlendMode TitleBlend = Scheme.bTitleAdditive ? SE_BLEND_Additive : SE_BLEND_Translucent;
+
+	if (!Scheme.Title1.IsEmpty())
+	{
+		DrawTextAtHeight(Scheme.Title1.ToUpper(), Scheme.Title1Colour,
+			Scheme.Title1Position.X * Scale, Scheme.Title1Position.Y * Scale,
+			TitleFont, Scheme.TitleHeight * Scale, TitleBlend);
+	}
+	if (!Scheme.Title2.IsEmpty())
+	{
+		DrawTextAtHeight(Scheme.Title2.ToUpper(), Scheme.Title2Colour,
+			Scheme.Title2Position.X * Scale, Scheme.Title2Position.Y * Scale,
+			TitleFont, Scheme.TitleHeight * Scale, TitleBlend);
+	}
 
 	// The items, down the bottom left, the way the old menu reads.
 	const float ItemHeight = 22.0f * Scale;
@@ -293,6 +344,10 @@ void ALambdaHUD::DrawMainMenu(ULambdaMainMenu* Menu, float W, float H)
 	}
 	TArray<FLambdaMenuItem>& Items = Menu->GetMutableItems();
 	float Y = H - 40.0f * Scale - Items.Num() * ItemHeight;
+
+	// The logo, resting on top of the items - the place Source's GameLogo panel sits, and the reason its offsets
+	// are worth having: a mod nudges it from there rather than positioning it on the screen.
+	DrawGameLogo(32.0f * Scale, Y, Scale);
 
 	for (int32 i = 0; i < Items.Num(); ++i)
 	{

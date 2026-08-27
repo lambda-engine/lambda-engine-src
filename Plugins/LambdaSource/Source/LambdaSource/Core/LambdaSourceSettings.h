@@ -191,10 +191,14 @@ public:
 	 * through the near plane, which is why every game that draws legs draws only legs.
 	 */
 	UPROPERTY(EditAnywhere, config, Category = "Player Body")
-	FString PlayerLegsModel = TEXT("models/player/gordon_legs.mdl");
+	FString PlayerLegsModel = TEXT("models/humans/group03/male_01.mdl");
 
 	UPROPERTY(EditAnywhere, config, Category = "Player Body")
-	FString PlayerBodyModel = TEXT("models/player/gordon.mdl");
+	FString PlayerBodyModel = TEXT("models/humans/group03/male_01.mdl");
+
+	/** Everything above this bone is erased from the legs model, so looking down does not show a chest. */
+	UPROPERTY(EditAnywhere, config, Category = "Player Body")
+	FString PlayerLegsCutBone = TEXT("ValveBiped.Bip01_Spine2");
 
 	/**
 	 * Field of view the view model is drawn with, separate from the world's - Source's viewmodel_fov, which

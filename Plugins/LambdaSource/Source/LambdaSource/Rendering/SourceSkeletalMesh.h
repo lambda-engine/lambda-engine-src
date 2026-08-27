@@ -27,11 +27,13 @@ public:
 	 * the model draws.
 	 */
 	static USkeletalMesh* GetOrBuild(const FString& ModelPath, const FSourceMDLFile& Model,
-		ULambdaMaterialLibrary* Materials, const FString& BodygroupKey);
+		ULambdaMaterialLibrary* Materials, const FString& BodygroupKey,
+		const TSet<int32>* HiddenBones = nullptr);
 
 	/** Drops every cached mesh (map change). */
 	static void FlushCache();
 
 private:
-	static USkeletalMesh* Build(const FSourceMDLFile& Model, ULambdaMaterialLibrary* Materials, const FString& DebugName);
+	static USkeletalMesh* Build(const FSourceMDLFile& Model, ULambdaMaterialLibrary* Materials, const FString& DebugName,
+		const TSet<int32>* HiddenBones);
 };

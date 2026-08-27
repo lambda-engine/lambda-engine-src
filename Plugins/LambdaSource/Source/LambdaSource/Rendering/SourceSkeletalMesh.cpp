@@ -42,7 +42,8 @@ void FSourceSkeletalMesh::FlushCache()
 }
 
 USkeletalMesh* FSourceSkeletalMesh::GetOrBuild(const FString& ModelPath, const FSourceMDLFile& Model,
-	ULambdaMaterialLibrary* Materials, const FString& BodygroupKey)
+	ULambdaMaterialLibrary* Materials, const FString& BodygroupKey,
+	const TSet<int32>* HiddenBones)
 {
 	const FString Key = ModelPath.ToLower() + TEXT("|") + BodygroupKey;
 	if (TObjectPtr<USkeletalMesh>* Found = GetMeshCache().Find(Key))
@@ -52,7 +53,7 @@ USkeletalMesh* FSourceSkeletalMesh::GetOrBuild(const FString& ModelPath, const F
 			return *Found;
 		}
 	}
-	USkeletalMesh* Mesh = Build(Model, Materials, ModelPath);
+	USkeletalMesh* Mesh = Build(Model, Materials, ModelPath, HiddenBones);
 	if (Mesh)
 	{
 		Mesh->AddToRoot();
@@ -61,7 +62,8 @@ USkeletalMesh* FSourceSkeletalMesh::GetOrBuild(const FString& ModelPath, const F
 	return Mesh;
 }
 
-USkeletalMesh* FSourceSkeletalMesh::Build(const FSourceMDLFile& Model, ULambdaMaterialLibrary* Materials, const FString& DebugName)
+USkeletalMesh* FSourceSkeletalMesh::Build(const FSourceMDLFile& Model, ULambdaMaterialLibrary* Materials, const FString& DebugName,
+	const TSet<int32>* HiddenBones)
 {
 	const TArray<FSourceStudioBone>& Bones = Model.GetBones();
 	const TArray<TArray<FSourceSkinVertex>>& SkinVertices = Model.GetSkinVertices();
@@ -158,10 +160,57 @@ USkeletalMesh* FSourceSkeletalMesh::Build(const FSourceMDLFile& Model, ULambdaMa
 			continue;
 		}
 
+		// The torso cut: a triangle touching any corner that mostly hangs from hidden bones is not built at
+		// all. Any corner rather than all three - the hidden bones still animate, so a boundary triangle kept
+		// for its one surviving corner stretches from the waist to wherever the chest went, and the cut reads
+		// as a skirt of spikes. This is where "turn a whole player model into first-person legs" actually
+		// happens - at the mesh, not the skeleton, because scale smuggled through the bone pipeline is quietly
+		// straightened out by the transform maths on its way to the renderer, and geometry that was never
+		// built needs no conspiracy.
+		TArray<int32> Kept;
+		const TArray<int32>* Triangles = &Section.Triangles;
+		if (HiddenBones && HiddenBones->Num() > 0)
+		{
+			Kept.Reserve(Section.Triangles.Num());
+			auto Hidden = [&](int32 V)
+			{
+				if (!Skin.IsValidIndex(V))
+				{
+					return false;
+				}
+				float HiddenWeight = 0.0f;
+				for (int32 b = 0; b < Skin[V].NumBones; ++b)
+				{
+					if (HiddenBones->Contains((int32)Skin[V].Bones[b]))
+					{
+						HiddenWeight += Skin[V].Weights[b];
+					}
+				}
+				// A fifth, not half: a strap or collar vertex mostly weighted to a kept spine bone still
+				// belongs to the torso, and at one half it survives as a floating sliver over the hips.
+				return HiddenWeight > 0.2f;
+			};
+			for (int32 t = 0; t + 2 < Section.Triangles.Num(); t += 3)
+			{
+				if (Hidden(Section.Triangles[t]) || Hidden(Section.Triangles[t + 1]) || Hidden(Section.Triangles[t + 2]))
+				{
+					continue;
+				}
+				Kept.Add(Section.Triangles[t]);
+				Kept.Add(Section.Triangles[t + 1]);
+				Kept.Add(Section.Triangles[t + 2]);
+			}
+			if (Kept.Num() == 0)
+			{
+				continue;	// the whole section was above the cut
+			}
+			Triangles = &Kept;
+		}
+
 		FSkelMeshRenderSection& Out = LOD->RenderSections.AddDefaulted_GetRef();
 		Out.BaseVertexIndex = Positions.Num();
 		Out.BaseIndex = Indices.Num();
-		Out.NumTriangles = Section.Triangles.Num() / 3;
+		Out.NumTriangles = Triangles->Num() / 3;
 		Out.NumVertices = NumVerts;
 		Out.MaxBoneInfluences = 1;
 		Out.MaterialIndex = Mesh->GetMaterials().Num();
@@ -231,7 +280,7 @@ USkeletalMesh* FSourceSkeletalMesh::Build(const FSourceMDLFile& Model, ULambdaMa
 		}
 
 		// The LOD's index buffer is one run for the whole mesh; a section's triangles index into it absolutely.
-		for (int32 Index : Section.Triangles)
+		for (int32 Index : *Triangles)
 		{
 			Indices.Add((uint32)(Out.BaseVertexIndex + Index));
 		}

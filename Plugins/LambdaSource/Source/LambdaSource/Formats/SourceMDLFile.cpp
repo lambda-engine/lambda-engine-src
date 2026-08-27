@@ -17,6 +17,7 @@ namespace
 		constexpr int32 OFF_NUMBODYPARTS = 232, OFF_BODYPARTINDEX = 236;
 		constexpr int32 OFF_NUMLOCALANIM = 180, OFF_LOCALANIMINDEX = 184;
 		constexpr int32 OFF_NUMLOCALSEQ = 188, OFF_LOCALSEQINDEX = 192;
+		constexpr int32 OFF_NUMINCLUDEMODELS = 336, OFF_INCLUDEMODELINDEX = 340;
 		constexpr int32 OFF_NUMLOCALATTACHMENTS = 240, OFF_LOCALATTACHMENTINDEX = 244;
 
 		constexpr int32 SIZE_TEXTURE = 64;		// mstudiotexture_t
@@ -41,6 +42,7 @@ namespace
 		constexpr int32 SEQ_OFF_LABELINDEX = 4, SEQ_OFF_ACTIVITYNAMEINDEX = 8, SEQ_OFF_FLAGS = 12;
 		constexpr int32 SEQ_OFF_ACTWEIGHT = 20, SEQ_OFF_NUMEVENTS = 24, SEQ_OFF_EVENTINDEX = 28;
 		constexpr int32 SEQ_OFF_NUMBLENDS = 56, SEQ_OFF_ANIMINDEXINDEX = 60;
+		constexpr int32 SEQ_OFF_GROUPSIZE0 = 68, SEQ_OFF_GROUPSIZE1 = 72;
 		constexpr int32 SEQ_OFF_FADEINTIME = 104, SEQ_OFF_FADEOUTTIME = 108;
 		constexpr int32 SEQ_OFF_NUMAUTOLAYERS = 148, SEQ_OFF_AUTOLAYERINDEX = 152, SEQ_OFF_WEIGHTLISTINDEX = 156;
 		constexpr int32 SIZE_AUTOLAYER = 24;	// mstudioautolayer_t: short iSequence, short iPose, int flags, float start, peak, tail, end
@@ -455,6 +457,8 @@ bool FSourceMDLFile::Load(const FString& RelativeModelPath, float Scale, FString
 	AniData.Reset();
 	AnimBlocks.Reset();
 	AnimBlockName.Reset();
+	IncludeGroups.Reset();
+	NumLocalSequences = 0;
 	SurfaceProp.Reset();
 	VvdData.Reset();
 	VtxData.Reset();
@@ -553,6 +557,14 @@ bool FSourceMDLFile::Load(const FString& RelativeModelPath, float Scale, FString
 	VtxData = MoveTemp(Vtx);
 	VtxPath = VtxPathUsed;
 	ReadHitboxes(MdlData);
+
+	// $includemodel, after everything local: the borrowed sequences append to the local ones.
+	NumLocalSequences = Sequences.Num();
+	{
+		TArray<FString> Visited;
+		Visited.Add(BasePath.ToLower());
+		LoadIncludeModels(MdlData, Visited);
+	}
 
 	// Body parts and their model counts; every bodygroup starts at model 0 (Source's default body).
 	{
@@ -918,6 +930,174 @@ void FSourceMDLFile::ReadHitboxes(const TArray<uint8>& Mdl)
 
 // ---- Bones, sequences, attachments ----
 
+bool FSourceMDLFile::LoadAnimationLibrary(const FString& RelativeModelPath, float Scale, TArray<FString>& Visited)
+{
+	UnitScale = Scale;
+	FString BasePath = FLambdaFileSystem::NormalizeRelativePath(RelativeModelPath);
+	if (BasePath.EndsWith(TEXT(".mdl"), ESearchCase::IgnoreCase))
+	{
+		BasePath.LeftChopInline(4);
+	}
+	TArray<uint8> Mdl;
+	if (!FLambdaFileSystem::Get().ReadFile(BasePath + TEXT(".mdl"), Mdl) || ReadInt(Mdl, MDL::OFF_ID) != MDL_IDENT)
+	{
+		return false;
+	}
+	Version = ReadInt(Mdl, MDL::OFF_VERSION);
+	ModelName = ReadCString(Mdl, MDL::OFF_NAME);
+
+	ReadBones(Mdl);
+	ReadSequences(Mdl);
+
+	// The libraries keep long animations in a .ani beside the .mdl, the same as any model.
+	const int32 NumAnimBlocks = ReadInt(Mdl, MDL::OFF_NUMANIMBLOCKS);
+	const int32 AnimBlockIndex = ReadInt(Mdl, MDL::OFF_ANIMBLOCKINDEX);
+	for (int32 i = 0; i < NumAnimBlocks; ++i)
+	{
+		const int64 Off = AnimBlockIndex + (int64)i * MDL::SIZE_ANIMBLOCK;
+		AnimBlocks.Emplace(ReadInt(Mdl, Off), ReadInt(Mdl, Off + 4));
+	}
+	if (NumAnimBlocks > 1)
+	{
+		AnimBlockName = ReadCString(Mdl, ReadInt(Mdl, MDL::OFF_SZANIMBLOCKNAMEINDEX));
+		AnimBlockName.ReplaceInline(TEXT("\\"), TEXT("/"));
+		if (!AnimBlockName.IsEmpty() && !FLambdaFileSystem::Get().ReadFile(AnimBlockName, AniData))
+		{
+			UE_LOG(LogLambdaSource, Warning, TEXT("Animation library '%s': .ani '%s' not found"), *BasePath, *AnimBlockName);
+		}
+	}
+
+	MdlData = MoveTemp(Mdl);
+	NumLocalSequences = Sequences.Num();
+	LoadIncludeModels(MdlData, Visited);
+	return true;
+}
+
+void FSourceMDLFile::LoadIncludeModels(const TArray<uint8>& Mdl, TArray<FString>& Visited)
+{
+	const int32 Num = ReadInt(Mdl, MDL::OFF_NUMINCLUDEMODELS);
+	const int32 Index = ReadInt(Mdl, MDL::OFF_INCLUDEMODELINDEX);
+	if (Num <= 0 || Num > 32 || Index <= 0)
+	{
+		return;
+	}
+	for (int32 i = 0; i < Num; ++i)
+	{
+		// mstudiomodelgroup_t: a label and a file name, both relative to the struct.
+		const int64 Off = Index + (int64)i * 8;
+		const int32 NameIndex = ReadInt(Mdl, Off + 4);
+		FString Name = NameIndex > 0 ? ReadCString(Mdl, Off + NameIndex) : FString();
+		Name.ReplaceInline(TEXT("\\"), TEXT("/"));	// male_shared names "models/player\male_anims.mdl"
+		if (Name.IsEmpty())
+		{
+			continue;
+		}
+		if (!Name.StartsWith(TEXT("models/"), ESearchCase::IgnoreCase))
+		{
+			Name = TEXT("models/") + Name;
+		}
+		FString Key = Name.ToLower();
+		Key.RemoveFromEnd(TEXT(".mdl"));
+		if (Visited.Contains(Key))
+		{
+			continue;	// the libraries include each other; each is read once
+		}
+		Visited.Add(Key);
+
+		TSharedPtr<FSourceMDLFile> Library = MakeShared<FSourceMDLFile>();
+		if (!Library->LoadAnimationLibrary(Name, UnitScale, Visited))
+		{
+			UE_LOG(LogLambdaSource, Warning, TEXT("Model '%s': $includemodel '%s' not found"), *ModelName, *Name);
+			continue;
+		}
+		MergeInclude(Library);
+	}
+}
+
+int32 FSourceMDLFile::FindOrAddIncludeGroup(const TSharedPtr<FSourceMDLFile>& File)
+{
+	for (int32 i = 0; i < IncludeGroups.Num(); ++i)
+	{
+		if (IncludeGroups[i].File == File)
+		{
+			return i;
+		}
+	}
+	// The map from the library's bones to ours, by name - virtualmodel_t's masterbone.
+	TMap<FString, int32> ByName;
+	for (int32 b = 0; b < Bones.Num(); ++b)
+	{
+		ByName.Add(Bones[b].Name.ToLower(), b);
+	}
+	FIncludeGroup Group;
+	Group.File = File;
+	Group.BoneMap.SetNum(File->Bones.Num());
+	int32 Mapped = 0;
+	for (int32 b = 0; b < File->Bones.Num(); ++b)
+	{
+		const int32* Found = ByName.Find(File->Bones[b].Name.ToLower());
+		Group.BoneMap[b] = Found ? *Found : INDEX_NONE;
+		Mapped += Found ? 1 : 0;
+	}
+	UE_LOG(LogLambdaSource, Verbose, TEXT("Model '%s': include group '%s', %d of %d bones map"),
+		*ModelName, *File->ModelName, Mapped, File->Bones.Num());
+	IncludeGroups.Add(MoveTemp(Group));
+	return IncludeGroups.Num() - 1;
+}
+
+void FSourceMDLFile::MergeInclude(const TSharedPtr<FSourceMDLFile>& Child)
+{
+	// The child arrives already flattened - its own includes were merged as it loaded - so each of its anim
+	// descs names the file its frames really live in, and every group becomes a group of ours.
+	const int32 SeqBase = Sequences.Num();
+	const int32 AnimBase = AnimDescs.Num();
+
+	TArray<int32> GroupRemap;
+	GroupRemap.Add(FindOrAddIncludeGroup(Child) + 1);
+	for (const FIncludeGroup& G : Child->IncludeGroups)
+	{
+		GroupRemap.Add(FindOrAddIncludeGroup(G.File) + 1);
+	}
+
+	for (const FSourceStudioAnimDesc& A : Child->AnimDescs)
+	{
+		FSourceStudioAnimDesc Copy = A;
+		Copy.Group = GroupRemap.IsValidIndex(A.Group) ? GroupRemap[A.Group] : GroupRemap[0];
+		AnimDescs.Add(MoveTemp(Copy));
+	}
+	const TArray<int32>& ChildMap = IncludeGroups[GroupRemap[0] - 1].BoneMap;
+	for (const FSourceStudioSequence& S : Child->Sequences)
+	{
+		FSourceStudioSequence Copy = S;
+		if (Copy.AnimDescIndex != INDEX_NONE)
+		{
+			Copy.AnimDescIndex += AnimBase;
+		}
+		for (FSourceStudioAutoLayer& Layer : Copy.AutoLayers)
+		{
+			if (Layer.Sequence != INDEX_NONE)
+			{
+				Layer.Sequence += SeqBase;
+			}
+		}
+		// The $weightlist is in the child's bone order and has to arrive in ours.
+		if (Copy.BoneWeights.Num() > 0)
+		{
+			TArray<float> Weights;
+			Weights.Init(1.0f, Bones.Num());
+			for (int32 b = 0; b < Copy.BoneWeights.Num() && b < ChildMap.Num(); ++b)
+			{
+				if (ChildMap[b] != INDEX_NONE)
+				{
+					Weights[ChildMap[b]] = Copy.BoneWeights[b];
+				}
+			}
+			Copy.BoneWeights = MoveTemp(Weights);
+		}
+		Sequences.Add(MoveTemp(Copy));
+	}
+}
+
 void FSourceMDLFile::ReadBones(const TArray<uint8>& Mdl)
 {
 	const int32 NumBonesInFile = ReadInt(Mdl, MDL::OFF_NUMBONES);
@@ -999,12 +1179,18 @@ void FSourceMDLFile::ReadSequences(const TArray<uint8>& Mdl)
 		Seq.FadeInTime = ReadFloat(Mdl, Off + MDL::SEQ_OFF_FADEINTIME);
 		Seq.FadeOutTime = ReadFloat(Mdl, Off + MDL::SEQ_OFF_FADEOUTTIME);
 
-		// animindexindex points at a short[] of animdesc indices, one per blend. Only blend 0 is used: the others
-		// are selected by pose parameters, which a view model never drives.
+		// animindexindex points at a short[] of animdesc indices, a groupsize[0] x groupsize[1] grid selected
+		// by pose parameters, which nothing here drives. The middle of the grid is taken, not corner zero: an
+		// aim matrix runs aim-hard-one-way to aim-hard-the-other with straight-ahead at its centre, and a
+		// player model sampled at a corner stands with its arms wrenched over its head. A single-anim sequence
+		// has a 1x1 grid and the middle of it is the same anim it always was.
 		const int32 AnimIndexIndex = ReadInt(Mdl, Off + MDL::SEQ_OFF_ANIMINDEXINDEX);
 		if (AnimIndexIndex != 0)
 		{
-			const int32 Resolved = ReadI16(Mdl, Off + AnimIndexIndex);
+			const int32 Group0 = FMath::Max(1, ReadInt(Mdl, Off + MDL::SEQ_OFF_GROUPSIZE0));
+			const int32 Group1 = FMath::Max(1, ReadInt(Mdl, Off + MDL::SEQ_OFF_GROUPSIZE1));
+			const int32 Middle = (Group1 / 2) * Group0 + (Group0 / 2);
+			const int32 Resolved = ReadI16(Mdl, Off + AnimIndexIndex + (int64)Middle * 2);
 			Seq.AnimDescIndex = AnimDescs.IsValidIndex(Resolved) ? Resolved : INDEX_NONE;
 		}
 
@@ -1280,32 +1466,42 @@ bool FSourceMDLFile::CalcPoseSingle(int32 SequenceIndex, float Cycle, FSourceLoc
 		Index = Anim.Sections[Section].Value;
 	}
 
+	// A borrowed sequence's frames live in the library that authored it, and its bone indices are the
+	// library's; the group's map says which of our bones each one is.
+	const FSourceMDLFile* DataModel = this;
+	const TArray<int32>* BoneMap = nullptr;
+	if (Anim.Group > 0 && IncludeGroups.IsValidIndex(Anim.Group - 1))
+	{
+		DataModel = IncludeGroups[Anim.Group - 1].File.Get();
+		BoneMap = &IncludeGroups[Anim.Group - 1].BoneMap;
+	}
+
 	// Block 0 is inside the .mdl, relative to the animdesc; any other block is a byte range of the .ani file.
 	const TArray<uint8>* Src = nullptr;
 	int64 P = 0;
 	if (Block == 0)
 	{
-		Src = &MdlData;
+		Src = &DataModel->MdlData;
 		P = Anim.FileOffset + Index;
 	}
-	else if (AnimBlocks.IsValidIndex(Block) && AniData.Num() > 0)
+	else if (DataModel->AnimBlocks.IsValidIndex(Block) && DataModel->AniData.Num() > 0)
 	{
-		Src = &AniData;
-		P = (int64)AnimBlocks[Block].Key + Index;
+		Src = &DataModel->AniData;
+		P = (int64)DataModel->AnimBlocks[Block].Key + Index;
 	}
 	if (!Src || Block < 0 || P <= 0 || P >= Src->Num())
 	{
 		return true;	// STUDIO_ALLZEROS and friends: no data, the init pose stands
 	}
 
-	for (int32 Guard = 0; Guard <= Bones.Num(); ++Guard)
+	for (int32 Guard = 0; Guard <= DataModel->Bones.Num(); ++Guard)
 	{
 		uint8 BoneIdx = 0, Flags = 0;
-		if (!Peek((*Src), P, BoneIdx) || !Peek((*Src), P + 1, Flags) || BoneIdx >= Bones.Num())
+		if (!Peek((*Src), P, BoneIdx) || !Peek((*Src), P + 1, Flags) || BoneIdx >= DataModel->Bones.Num())
 		{
 			break;
 		}
-		const FSourceStudioBone& Bone = Bones[BoneIdx];
+		const FSourceStudioBone& Bone = DataModel->Bones[BoneIdx];
 		const int16 NextOffset = ReadI16((*Src), P + 2);
 		const int64 Data = P + STUDIOANIM::SIZE_RLE_HEADER;
 
@@ -1366,8 +1562,12 @@ bool FSourceMDLFile::CalcPoseSingle(int32 SequenceIndex, float Cycle, FSourceLoc
 			Pos = (Flags & STUDIOANIM::FLAG_DELTA) ? FVector3f::ZeroVector : Bone.Pos;
 		}
 
-		Out.Quat[BoneIdx] = Q;
-		Out.Pos[BoneIdx] = Pos;
+		const int32 OurBone = BoneMap ? (*BoneMap)[BoneIdx] : BoneIdx;
+		if (OurBone != INDEX_NONE)
+		{
+			Out.Quat[OurBone] = Q;
+			Out.Pos[OurBone] = Pos;
+		}
 
 		if (NextOffset == 0)
 		{
