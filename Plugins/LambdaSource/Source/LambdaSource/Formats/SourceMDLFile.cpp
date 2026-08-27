@@ -1040,12 +1040,17 @@ int32 FSourceMDLFile::FindOrAddIncludeGroup(const TSharedPtr<FSourceMDLFile>& Fi
 	FIncludeGroup Group;
 	Group.File = File;
 	Group.BoneMap.SetNum(File->Bones.Num());
+	Group.HostToInclude.Init(INDEX_NONE, Bones.Num());
 	int32 Mapped = 0;
 	for (int32 b = 0; b < File->Bones.Num(); ++b)
 	{
 		const int32* Found = ByName.Find(File->Bones[b].Name.ToLower());
 		Group.BoneMap[b] = Found ? *Found : INDEX_NONE;
-		Mapped += Found ? 1 : 0;
+		if (Found)
+		{
+			Group.HostToInclude[*Found] = b;
+			++Mapped;
+		}
 	}
 	UE_LOG(LogLambdaSource, Verbose, TEXT("Model '%s': include group '%s', %d of %d bones map"),
 		*ModelName, *File->ModelName, Mapped, File->Bones.Num());
@@ -1073,7 +1078,6 @@ void FSourceMDLFile::MergeInclude(const TSharedPtr<FSourceMDLFile>& Child)
 		Copy.Group = GroupRemap.IsValidIndex(A.Group) ? GroupRemap[A.Group] : GroupRemap[0];
 		AnimDescs.Add(MoveTemp(Copy));
 	}
-	const TArray<int32>& ChildMap = IncludeGroups[GroupRemap[0] - 1].BoneMap;
 	for (const FSourceStudioSequence& S : Child->Sequences)
 	{
 		FSourceStudioSequence Copy = S;
@@ -1111,20 +1115,11 @@ void FSourceMDLFile::MergeInclude(const TSharedPtr<FSourceMDLFile>& Child)
 				Layer.Sequence += SeqBase;
 			}
 		}
-		// The $weightlist is in the child's bone order and has to arrive in ours.
-		if (Copy.BoneWeights.Num() > 0)
-		{
-			TArray<float> Weights;
-			Weights.Init(1.0f, Bones.Num());
-			for (int32 b = 0; b < Copy.BoneWeights.Num() && b < ChildMap.Num(); ++b)
-			{
-				if (ChildMap[b] != INDEX_NONE)
-				{
-					Weights[ChildMap[b]] = Copy.BoneWeights[b];
-				}
-			}
-			Copy.BoneWeights = MoveTemp(Weights);
-		}
+		// The $weightlist stays in the bone order it was written in; the sequence just remembers whose that is,
+		// and SequenceBoneWeight resolves it when the pose is built. Rewriting it here would push it through
+		// whatever model happens to sit between - and male_shared, the stub every human includes, has no bones
+		// to map onto at all.
+		Copy.WeightGroup = GroupRemap.IsValidIndex(S.WeightGroup) ? GroupRemap[S.WeightGroup] : GroupRemap[0];
 		Sequences.Add(MoveTemp(Copy));
 	}
 }
@@ -1491,6 +1486,60 @@ void FSourceMDLFile::BuildBoneToModel(const FSourceLocalPose& Pose, TArray<FSour
 	}
 }
 
+void FSourceMDLFile::LocalPoseParameter(const FSourceStudioSequence& Seq, int32 Axis,
+	const TArray<float>* PoseParamValues, int32& OutIndex, float& OutFraction) const
+{
+	// Studio_LocalPoseParameter. The cell the value sits in, and how far through that cell it is - which is
+	// what turns a grid lookup into a blend. Source normalises through the pose parameter's own range and then
+	// through the sequence's sub-range; the two divisions cancel to this, which also copes with the reversed
+	// ranges some sequences are authored with.
+	OutIndex = 0;
+	OutFraction = 0.0f;
+	const int32 Size = Seq.GroupSize[Axis];
+	const int32 Param = Seq.ParamIndex[Axis];
+	if (Size <= 1)
+	{
+		return;
+	}
+	float Setting = 0.5f;	// undriven: the middle of the grid, where straight-ahead lives
+	if (PoseParamValues && Param >= 0 && PoseParamValues->IsValidIndex(Param))
+	{
+		const float Span = Seq.ParamEnd[Axis] - Seq.ParamStart[Axis];
+		if (!FMath::IsNearlyZero(Span))
+		{
+			Setting = FMath::Clamp(((*PoseParamValues)[Param] - Seq.ParamStart[Axis]) / Span, 0.0f, 1.0f);
+		}
+	}
+	// The last cell has no cell above it to blend toward, so it is approached as the far end of the one below.
+	OutIndex = FMath::Clamp((int32)(Setting * (Size - 1)), 0, Size - 2);
+	OutFraction = FMath::Clamp(Setting * (Size - 1) - OutIndex, 0.0f, 1.0f);
+}
+
+namespace
+{
+	/** BlendBones: q1/pos1 moved toward q2/pos2 by S, in place. */
+	void BlendPose(FSourceLocalPose& A, const FSourceLocalPose& B, float S)
+	{
+		if (S <= 0.0f)
+		{
+			return;
+		}
+		if (S >= 1.0f)
+		{
+			A = B;
+			return;
+		}
+		const int32 Num = FMath::Min(A.Quat.Num(), B.Quat.Num());
+		for (int32 i = 0; i < Num; ++i)
+		{
+			A.Quat[i] = FQuat4f::Slerp(A.Quat[i], ((A.Quat[i] | B.Quat[i]) < 0.0f)
+				? FQuat4f(-B.Quat[i].X, -B.Quat[i].Y, -B.Quat[i].Z, -B.Quat[i].W) : B.Quat[i], S);
+			A.Quat[i].Normalize();
+			A.Pos[i] = FMath::Lerp(A.Pos[i], B.Pos[i], S);
+		}
+	}
+}
+
 bool FSourceMDLFile::CalcPoseSingle(int32 SequenceIndex, float Cycle, FSourceLocalPose& Out,
 	const TArray<float>* PoseParamValues) const
 {
@@ -1500,39 +1549,69 @@ bool FSourceMDLFile::CalcPoseSingle(int32 SequenceIndex, float Cycle, FSourceLoc
 	}
 	const FSourceStudioSequence& Seq = Sequences[SequenceIndex];
 
-	// The blend grid, steered by pose parameters when the caller drives them: each axis picks the nearest
-	// cell (Source interpolates between cells; nearest is the honest first step). Per-sequence ranges, which
-	// are sometimes authored reversed - normalising against start and end handles either order.
-	int32 ChosenAnim = Seq.AnimDescIndex;
-	if (PoseParamValues && Seq.BlendAnimDescs.Num() > 1)
+	// A single-cell sequence is just its animation. Anything larger is a blend grid steered by up to two pose
+	// parameters, and the pose is interpolated across the cells the value falls between rather than snapped to
+	// the nearest - four of them at a corner-to-corner blend, which is what an aim matrix is.
+	if (Seq.BlendAnimDescs.Num() <= 1)
 	{
-		int32 Cell[2] = { Seq.GroupSize[0] / 2, Seq.GroupSize[1] / 2 };
-		for (int32 Axis = 0; Axis < 2; ++Axis)
-		{
-			const int32 Param = Seq.ParamIndex[Axis];
-			if (Seq.GroupSize[Axis] > 1 && Param >= 0 && PoseParamValues->IsValidIndex(Param))
-			{
-				const float Span = Seq.ParamEnd[Axis] - Seq.ParamStart[Axis];
-				if (!FMath::IsNearlyZero(Span))
-				{
-					const float T = FMath::Clamp(((*PoseParamValues)[Param] - Seq.ParamStart[Axis]) / Span, 0.0f, 1.0f);
-					Cell[Axis] = FMath::Clamp(FMath::RoundToInt(T * (Seq.GroupSize[Axis] - 1)), 0, Seq.GroupSize[Axis] - 1);
-				}
-			}
-		}
-		const int32 Index = Cell[1] * Seq.GroupSize[0] + Cell[0];
-		if (Seq.BlendAnimDescs.IsValidIndex(Index) && Seq.BlendAnimDescs[Index] != INDEX_NONE)
-		{
-			ChosenAnim = Seq.BlendAnimDescs[Index];
-		}
+		return CalcAnimation(Seq.AnimDescIndex, Cycle, Out);
 	}
-	if (!AnimDescs.IsValidIndex(ChosenAnim))
+
+	int32 I0 = 0, I1 = 0;
+	float S0 = 0.0f, S1 = 0.0f;
+	LocalPoseParameter(Seq, 0, PoseParamValues, I0, S0);
+	LocalPoseParameter(Seq, 1, PoseParamValues, I1, S1);
+
+	auto CellAnim = [&Seq](int32 X, int32 Y)
+	{
+		X = FMath::Clamp(X, 0, Seq.GroupSize[0] - 1);
+		Y = FMath::Clamp(Y, 0, Seq.GroupSize[1] - 1);
+		const int32 Index = Y * Seq.GroupSize[0] + X;
+		return Seq.BlendAnimDescs.IsValidIndex(Index) ? Seq.BlendAnimDescs[Index] : INDEX_NONE;
+	};
+
+	// The row the value sits in, blended along the first axis...
+	if (!CalcAnimation(CellAnim(I0, I1), Cycle, Out))
 	{
 		return false;
 	}
-	const FSourceStudioAnimDesc& Anim = AnimDescs[ChosenAnim];
+	if (S0 > 0.001f)
+	{
+		FSourceLocalPose Next;
+		if (CalcAnimation(CellAnim(I0 + 1, I1), Cycle, Next))
+		{
+			BlendPose(Out, Next, S0);
+		}
+	}
+	// ...then the row above it, blended the same way, and the two rows blended together.
+	if (S1 > 0.001f && Seq.GroupSize[1] > 1)
+	{
+		FSourceLocalPose Upper;
+		if (CalcAnimation(CellAnim(I0, I1 + 1), Cycle, Upper))
+		{
+			if (S0 > 0.001f)
+			{
+				FSourceLocalPose UpperNext;
+				if (CalcAnimation(CellAnim(I0 + 1, I1 + 1), Cycle, UpperNext))
+				{
+					BlendPose(Upper, UpperNext, S0);
+				}
+			}
+			BlendPose(Out, Upper, S1);
+		}
+	}
+	return true;
+}
 
-	// CalcAnimation: bones the animation never moves keep the bind pose - or, for a delta animation, no change
+bool FSourceMDLFile::CalcAnimation(int32 AnimDescIndex, float Cycle, FSourceLocalPose& Out) const
+{
+	if (!AnimDescs.IsValidIndex(AnimDescIndex) || Bones.Num() == 0)
+	{
+		return false;
+	}
+	const FSourceStudioAnimDesc& Anim = AnimDescs[AnimDescIndex];
+
+	// Bones the animation never moves keep the bind pose - or, for a delta animation, no change
 	// at all (identity rotation, zero offset), since the whole thing is added to whatever is underneath.
 	const bool bDelta = (Anim.Flags & STUDIO::SEQ_DELTA) != 0;
 	Out.Quat.SetNum(Bones.Num());
@@ -1700,12 +1779,31 @@ bool FSourceMDLFile::IsSequenceDelta(int32 SequenceIndex) const
 	return AnimDescs.IsValidIndex(Seq.AnimDescIndex) && (AnimDescs[Seq.AnimDescIndex].Flags & STUDIO::SEQ_DELTA) != 0;
 }
 
+float FSourceMDLFile::SequenceBoneWeight(const FSourceStudioSequence& Seq, int32 Bone) const
+{
+	if (Seq.BoneWeights.Num() == 0)
+	{
+		return 1.0f;	// no $weightlist: the sequence moves everything
+	}
+	if (Seq.WeightGroup == 0)
+	{
+		return Seq.BoneWeights.IsValidIndex(Bone) ? Seq.BoneWeights[Bone] : 1.0f;
+	}
+	if (!IncludeGroups.IsValidIndex(Seq.WeightGroup - 1))
+	{
+		return 1.0f;
+	}
+	const TArray<int32>& HostToInclude = IncludeGroups[Seq.WeightGroup - 1].HostToInclude;
+	const int32 Theirs = HostToInclude.IsValidIndex(Bone) ? HostToInclude[Bone] : INDEX_NONE;
+	return (Theirs != INDEX_NONE && Seq.BoneWeights.IsValidIndex(Theirs)) ? Seq.BoneWeights[Theirs] : 1.0f;
+}
+
 void FSourceMDLFile::SlerpBones(FSourceLocalPose& Pose, const FSourceStudioSequence& Seq, const FSourceLocalPose& Layer, float Weight, bool bDelta) const
 {
 	const bool bPost = (Seq.Flags & STUDIO::SEQ_POST) != 0;
 	for (int32 i = 0; i < Bones.Num(); ++i)
 	{
-		float S = Weight * (Seq.BoneWeights.IsValidIndex(i) ? Seq.BoneWeights[i] : 1.0f);
+		float S = Weight * SequenceBoneWeight(Seq, i);
 		if (S <= 0.0f)
 		{
 			continue;
@@ -1806,6 +1904,7 @@ bool FSourceMDLFile::AccumulateSequence(FSourceLocalPose& Pose, int32 SequenceIn
 	{
 		return false;
 	}
+	AddSequenceLayers(Single, SequenceIndex, Cycle, Weight, PoseParams_);
 	SlerpBones(Pose, Sequences[SequenceIndex], Single, Weight, IsSequenceDelta(SequenceIndex));
 	return true;
 }

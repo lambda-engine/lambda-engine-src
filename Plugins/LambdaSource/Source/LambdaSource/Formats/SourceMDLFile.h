@@ -130,6 +130,15 @@ struct LAMBDASOURCE_API FSourceStudioSequence
 	TArray<FSourceStudioAutoLayer> AutoLayers;
 	/** Per-bone blend weights (the $weightlist); empty means 1 everywhere. */
 	TArray<float> BoneWeights;
+	/**
+	 * Which model's bone order BoneWeights are written in: 0 for this one, N for IncludeGroups[N-1].
+	 *
+	 * Same reasoning as an animdesc's Group. A borrowed sequence's weightlist counts the library's bones, and
+	 * the library is not always mappable at the moment it is merged - male_shared is a 500-byte stub with no
+	 * bones at all, so remapping through it turns every weight into 1 and the layers that must not touch the
+	 * legs start overwriting them. Carrying the order and resolving it at use time cannot lose that.
+	 */
+	int32 WeightGroup = 0;
 };
 
 /** mstudiobbox_t: a hitbox - an oriented box on a bone with a hit group (HITGROUP_HEAD, _CHEST, ...). */
@@ -305,11 +314,21 @@ private:
 	/** CalcPoseSingle: one sequence's own animation (no layers) as local bone transforms. */
 	bool CalcPoseSingle(int32 SequenceIndex, float Cycle, FSourceLocalPose& Out,
 		const TArray<float>* PoseParamValues = nullptr) const;
+	/** CalcAnimation: one animdesc decoded at a cycle into a pose of its own. */
+	bool CalcAnimation(int32 AnimDescIndex, float Cycle, FSourceLocalPose& Out) const;
+	/**
+	 * Studio_LocalPoseParameter: where a pose parameter's value falls in one axis of a sequence's blend grid,
+	 * as the cell below it and how far past that cell it sits.
+	 */
+	void LocalPoseParameter(const FSourceStudioSequence& Seq, int32 Axis, const TArray<float>* PoseParamValues,
+		int32& OutIndex, float& OutFraction) const;
 	/** AddSequenceLayers: the sequence's autolayers accumulated into Pose. */
 	void AddSequenceLayers(FSourceLocalPose& Pose, int32 SequenceIndex, float Cycle, float Weight,
 		const TArray<float>* PoseParamValues) const;
 	/** SlerpBones: blends (or adds, for delta sequences) Layer into Pose by Weight and the sequence's bone weights. */
 	void SlerpBones(FSourceLocalPose& Pose, const FSourceStudioSequence& Seq, const FSourceLocalPose& Layer, float Weight, bool bDelta) const;
+	/** A sequence's $weightlist entry for one of this model's bones, whatever bone order it was written in. */
+	float SequenceBoneWeight(const FSourceStudioSequence& Seq, int32 Bone) const;
 
 	FString ModelName;
 	int32 Version = 0;
@@ -338,6 +357,7 @@ private:
 	{
 		TSharedPtr<FSourceMDLFile> File;
 		TArray<int32> BoneMap;	// the include's bone index -> this model's, INDEX_NONE where this model has none
+		TArray<int32> HostToInclude;	// and back the other way, for reading the include's per-bone data
 	};
 	TArray<FIncludeGroup> IncludeGroups;
 	int32 NumLocalSequences = 0;
