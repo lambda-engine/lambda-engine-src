@@ -77,6 +77,31 @@ public:
 	/** Multiplies the rate the cycle advances at (CBaseAnimating::m_flPlaybackRate). */
 	void SetPlaybackRate(float Rate) { PlaybackRate = Rate; }
 
+	/**
+	 * Opts out of the animation LOD. The LOD drops off-screen models to ten poses a second, and "off screen"
+	 * includes a mesh its own player can never see - the shadow body is exactly that, so its shadow walked at
+	 * ten frames a second, which reads as broken rather than as a shadow. The player's own body earns full rate.
+	 */
+	bool bAlwaysComposePose = false;
+
+	/**
+	 * Freezes a bone at a fixed local rotation, in place of whatever the animation says. Children follow, as
+	 * they do under Source's bone controllers - which is the precedent: a pose the game dictates over the one
+	 * the artist authored. The player's shadow uses it to carry a weapon through animations that were made
+	 * empty-handed.
+	 */
+	void SetBoneRotationOverride(const FString& BoneName, const FQuat4f& LocalRotation);
+	void ClearBoneRotationOverrides() { BoneRotationOverrides.Reset(); }
+
+	/**
+	 * Aims a bone so its child lies along a model-space direction, re-solved inside every composed pose - so it
+	 * holds under whatever the parent chain is doing, which a fixed rotation cannot: freeze an elbow's local
+	 * and the swing of the animated shoulder above it carries the forearm wherever it likes. The player's
+	 * shadow carries its weapon on four of these.
+	 */
+	void SetBoneAimConstraint(const FString& BoneName, const FString& ChildName, const FVector3f& ModelSpaceDir);
+	void ClearBoneAimConstraints() { BoneAimConstraints.Reset(); }
+
 	/** Ground speed authored into the current sequence's root motion, in Source units/sec (0 if none). */
 	float GetSequenceGroundSpeed() const;
 
@@ -177,6 +202,15 @@ private:
 
 	/** Bone-to-model transforms for the pose currently displayed, in Source space. */
 	TArray<FSourceMatrix3x4> BoneToModel;
+	TMap<int32, FQuat4f> BoneRotationOverrides;
+	struct FBoneAim
+	{
+		int32 Bone = INDEX_NONE;
+		FVector3f Axis = FVector3f::XAxisVector;	// toward the child, in the bone's own space; fixed by the bind
+		FVector3f Dir = FVector3f::XAxisVector;		// wanted, model space
+	};
+	/** Kept sorted by bone index - parents come before children in a Source skeleton, and the solve leans on it. */
+	TArray<FBoneAim> BoneAimConstraints;
 	TMap<int32, FVector> BonePositionOverrides;
 
 	int32 CurrentSequence = INDEX_NONE;

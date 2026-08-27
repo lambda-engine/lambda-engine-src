@@ -17,6 +17,7 @@
 #include "LambdaCharacter.h"
 
 #include "LambdaEngine.h"
+#include "LambdaWeapon.h"
 
 #include "Core/LambdaSourceSettings.h"
 #include "Formats/SourceMDLFile.h"
@@ -49,6 +50,21 @@ static FAutoConsoleVariableRef CVarLegsOffsetUp(
 	TEXT("cl_legs_offset_up"),
 	GLegsOffsetUp,
 	TEXT("Centimetres to raise or lower the first-person legs."));
+
+// Source's cl_pitchdown / cl_pitchup, with one non-Source default: straight down is 89 in Half-Life, but at 90
+// the player is staring into the open waist of their own legs model, so the floor of the view stops a little
+// higher. Up stays at Source's value.
+static float GPitchDown = 80.0f;
+static FAutoConsoleVariableRef CVarPitchDown(
+	TEXT("cl_pitchdown"),
+	GPitchDown,
+	TEXT("How far below the horizon the view may pitch, in degrees. Source's default is 89."));
+
+static float GPitchUp = 89.0f;
+static FAutoConsoleVariableRef CVarPitchUp(
+	TEXT("cl_pitchup"),
+	GPitchUp,
+	TEXT("How far above the horizon the view may pitch, in degrees."));
 
 static bool GDrawPlayerShadow = true;
 static FAutoConsoleVariableRef CVarDrawPlayerShadow(
@@ -96,6 +112,18 @@ void ALambdaCharacter::SetupPlayerBody()
 			BodyMesh->SetOwnerNoSee(!GLegsDebug);
 			BodyMesh->SetCastShadow(true);
 			BodyMesh->bCastHiddenShadow = true;
+			// Its owner never renders it, so the animation LOD would drop it to ten poses a second - and its
+			// shadow with it, walking at ten frames a second. The player's own shadow earns the full rate.
+			BodyMesh->bAlwaysComposePose = true;
+
+			// The animations were authored empty-handed and swing the arms; a shadow carrying a shotgun with
+			// its arms swinging free reads as wrong in exactly the way the real thing would, so the arms are
+			// frozen into a two-handed carry, the way Source's bone controllers impose a pose the animation
+			// never authored. The rotations are solved here, from this model's own bind skeleton, with the
+			// same quaternion code the pose runs through - an external solver kept landing in a subtly
+			// different frame, and a solve done inside the frames it will be played back in cannot.
+			SolveHoldPose(BodyMesh);
+
 			UE_LOG(LogLambda, Log, TEXT("player body: '%s', %d bones, %d sequences"),
 				*Settings.PlayerBodyModel, BodyMesh->GetModel()->GetBones().Num(),
 				BodyMesh->GetModel()->GetSequences().Num());
@@ -124,7 +152,9 @@ FString ALambdaCharacter::ChoosePlayerBodySequence() const
 	const float Scale = ULambdaSourceSettings::Get().UnitScale;
 	const FVector Velocity = Move->Velocity;
 	const float Speed = Velocity.Size2D() / Scale;		// units/sec, so the thresholds read as Source's
-	const bool bDucked = bIsCrouched;
+	// The key, not the finished duck: bIsCrouched only turns true when TIME_TO_DUCK runs out, and a body that
+	// waits for it starts crouching four tenths of a second after its player did.
+	const bool bDucked = bIsCrouched || Move->bWantsToCrouch;
 
 	if (Speed < 10.0f)
 	{
@@ -173,6 +203,16 @@ void ALambdaCharacter::UpdatePlayerBody(float DeltaSeconds)
 		SetupPlayerBody();
 	}
 
+	// The view's floor and ceiling (CInput::AdjustPitch clamping to cl_pitchdown/cl_pitchup).
+	if (APlayerController* PC = Cast<APlayerController>(GetController()))
+	{
+		if (PC->PlayerCameraManager)
+		{
+			PC->PlayerCameraManager->ViewPitchMin = -GPitchDown;	// UE pitch is positive upward
+			PC->PlayerCameraManager->ViewPitchMax = GPitchUp;
+		}
+	}
+
 	// The body faces where the player is looking, not where the pawn happens to be pointing. Source twists the
 	// spine to split the two apart; with these animations the whole body turns, which reads correctly from
 	// inside the head and from the shadow's point of view alike.
@@ -219,12 +259,20 @@ void ALambdaCharacter::UpdatePlayerBody(float DeltaSeconds)
 			Part->PlaySequence(Sequence);
 		}
 
-		// The walk cycle keeps pace with the ground rather than running at whatever rate it was authored at,
-		// so the feet do not skate (CBaseAnimating::GetSequenceGroundSpeed drives the same thing in Source).
+		// The cycle keeps pace with the ground so the feet do not skate. Source reads the authored speed out of
+		// the sequence's root motion (GetSequenceGroundSpeed); these animations are in place and carry none, so
+		// the authored speed falls back to the speed of the gait the sequence is named for - a walk cycle is
+		// authored to look right at walking speed, a crouch shuffle at crouch speed.
 		float Rate = 1.0f;
 		if (bMoving)
 		{
-			const float Authored = Part->GetSequenceGroundSpeed();
+			float Authored = Part->GetSequenceGroundSpeed();
+			if (Authored <= 1.0f)
+			{
+				if (Wanted.StartsWith(TEXT("run"))) { Authored = 320.0f; }
+				else if (Wanted.StartsWith(TEXT("crouch"))) { Authored = 190.0f * 0.33f; }
+				else if (Wanted.StartsWith(TEXT("walk"))) { Authored = 190.0f; }
+			}
 			if (Authored > 1.0f)
 			{
 				const float Scale = ULambdaSourceSettings::Get().UnitScale;
@@ -232,6 +280,11 @@ void ALambdaCharacter::UpdatePlayerBody(float DeltaSeconds)
 			}
 		}
 		Part->SetPlaybackRate(Rate);
+
+		if (i == 1)
+		{
+			UpdateWeaponShadow(Part);
+		}
 
 		if (GLegsDebug && i == 0)
 		{
@@ -248,4 +301,74 @@ void ALambdaCharacter::UpdatePlayerBody(float DeltaSeconds)
 			}
 		}
 	}
+}
+
+void ALambdaCharacter::SolveHoldPose(USourceStudioModelComponent* Body)
+{
+	// A low two-handed carry: right hand at the grip by the hip, left hand out on the forend. Aim constraints
+	// rather than frozen rotations, because a frozen elbow still rides wherever the animated shoulder above it
+	// swings - the constraint re-solves inside every composed pose, so the carry holds through the walk cycle.
+	// Directions are model space: +x the way the model faces, +y its left, +z up.
+	Body->SetBoneAimConstraint(TEXT("mixamorig:RightArm"), TEXT("mixamorig:RightForeArm"), FVector3f(0.30f, -0.18f, -0.94f));
+	Body->SetBoneAimConstraint(TEXT("mixamorig:RightForeArm"), TEXT("mixamorig:RightHand"), FVector3f(0.90f, 0.25f, 0.15f));
+	Body->SetBoneAimConstraint(TEXT("mixamorig:LeftArm"), TEXT("mixamorig:LeftForeArm"), FVector3f(0.40f, 0.10f, -0.91f));
+	Body->SetBoneAimConstraint(TEXT("mixamorig:LeftForeArm"), TEXT("mixamorig:LeftHand"), FVector3f(0.80f, -0.50f, 0.15f));
+}
+
+void ALambdaCharacter::UpdateWeaponShadow(USourceStudioModelComponent* Body)
+{
+	// The shadow carries what the player carries. The first-person view model is arms and a gun floating at
+	// the camera and casts nothing; the thing on the wall should still be holding something, so the weapon's
+	// *world* model - the one Source shows in everyone else's hands - rides the shadow body's right hand.
+	if (!WeaponShadowMesh)
+	{
+		return;
+	}
+	const FString WantedClass = ActiveWeapon ? ActiveWeapon->GetWeaponClassName() : FString();
+	if (WantedClass != WeaponShadowClass)
+	{
+		WeaponShadowClass = WantedClass;
+		WeaponShadowBone = -1;
+		const FSourceWeaponInfo* Info = ActiveWeapon ? &ActiveWeapon->GetWeaponInfo() : nullptr;
+		if (Info && !Info->PlayerModel.IsEmpty() && WeaponShadowMesh->SetModel(Info->PlayerModel, GetWorldMaterialLibrary()))
+		{
+			WeaponShadowMesh->SetOwnerNoSee(true);
+			WeaponShadowMesh->SetCastShadow(true);
+			WeaponShadowMesh->bCastHiddenShadow = true;
+			// Find the hand once per body model: the rig is Mixamo-named.
+			const TArray<FSourceStudioBone>& Bones = Body->GetModel()->GetBones();
+			for (int32 b = 0; b < Bones.Num(); ++b)
+			{
+				if (Bones[b].Name.EndsWith(TEXT("RightHand")))
+				{
+					WeaponShadowBone = b;
+					break;
+				}
+			}
+			UE_LOG(LogLambda, Log, TEXT("weapon shadow: '%s' in hand bone %d"), *Info->PlayerModel, WeaponShadowBone);
+		}
+		else
+		{
+			WeaponShadowMesh->ClearModel();
+		}
+	}
+
+	const bool bShow = WeaponShadowMesh->HasModel() && WeaponShadowBone >= 0 && Body->IsVisible();
+	WeaponShadowMesh->SetVisibility(bShow);
+	// In debug the body shows itself to its owner, so the weapon in its hand has to as well.
+	if (WeaponShadowMesh->bOwnerNoSee == GLegsDebug)
+	{
+		WeaponShadowMesh->SetOwnerNoSee(!GLegsDebug);
+	}
+	if (bShow)
+	{
+		// Positioned at the hand, oriented by the body rather than by the hand's own axes: a hand bone's local
+		// frame is whatever the rig's author liked, but a carried gun points where its carrier faces, tipped a
+		// little down. Cheaper to state that directly than to divine the hand's conventions.
+		WeaponShadowMesh->SetWorldLocationAndRotation(
+			Body->GetBoneWorldTransform(WeaponShadowBone).GetLocation(),
+			FRotator(-15.0f, GetActorRotation().Yaw, 0.0f));
+		return;
+	}
+
 }

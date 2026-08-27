@@ -218,6 +218,13 @@ ALambdaCharacter::ALambdaCharacter(const FObjectInitializer& ObjectInitializer)
 	BodyMesh->SetupAttachment(GetCapsuleComponent());
 	BodyMesh->SetMobility(EComponentMobility::Movable);
 	BodyMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	// The weapon the shadow holds. Not attached to a bone socket - the pose is composed on the CPU each frame,
+	// so UpdatePlayerBody places it at the hand bone by hand.
+	WeaponShadowMesh = CreateDefaultSubobject<USourceStudioModelComponent>(TEXT("WeaponShadow"));
+	WeaponShadowMesh->SetupAttachment(GetCapsuleComponent());
+	WeaponShadowMesh->SetMobility(EComponentMobility::Movable);
+	WeaponShadowMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	// Source draws the view model in its own pass with a compressed depth range so it can never intersect the
 	// world; UE's first-person primitive path is the same idea, and it is what stops the gun pushing into a wall
 	// the player stands against.

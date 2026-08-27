@@ -184,7 +184,7 @@ Clip sizes, ammo types, sounds and damage come from `scripts/weapon_*.txt`, `scr
 | | Status |
 |---|---|
 | Runtime skeletal meshes, GPU skinning, bodygroups | Done |
-| Shadow-casting player body in first person | Done |
+| Shadow-casting player body in first person | Done — animated at full rate, facing the view, pacing its cycle to the ground, holding the active weapon's world model (which casts too) |
 | First-person legs | Partial — the model and its animation are correct; it tears seen from inside the player (see below) |
 | glTF/GLB -> .mdl compilation (Tools/ImportGLTFModel.py, via studiomdl) | Done — mesh, skeleton, materials, bind pose and animation |
 | Impact decals, blood, ragdolls, particles | Done |

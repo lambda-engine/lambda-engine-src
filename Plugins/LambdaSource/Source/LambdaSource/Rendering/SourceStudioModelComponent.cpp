@@ -211,6 +211,10 @@ bool USourceStudioModelComponent::ShouldComposePoseThisFrame()
 	// GetLastRenderTimeOnScreen, not WasRecentlyRendered: the latter counts a model rendered into a shadow pass
 	// as rendered, and an NPC behind the player casting a shadow into view still answers yes to it - which is
 	// why gating on it saved almost nothing here. What matters is whether the model itself was on screen.
+	if (bAlwaysComposePose)
+	{
+		return true;
+	}
 	const UWorld* World = GetWorld();
 	const float Now = World ? World->GetTimeSeconds() : 0.0f;
 	if (Now - GetLastRenderTimeOnScreen() < 0.15f)
@@ -251,6 +255,44 @@ void USourceStudioModelComponent::ComposePose()
 	{
 		Model->AccumulateSequence(Pose, Gesture.Sequence, Gesture.Cycle, 1.0f);
 	}
+	// Bones the code owns pose where they are told, and their children follow (SetBoneRotationOverride).
+	for (const TPair<int32, FQuat4f>& Override : BoneRotationOverrides)
+	{
+		if (Pose.Quat.IsValidIndex(Override.Key))
+		{
+			Pose.Quat[Override.Key] = Override.Value;
+		}
+	}
+
+	// The aim constraints, solved inside this frame's pose (SetBoneAimConstraint). Parents first - the list is
+	// sorted by bone index and Source skeletons are parent-before-child - so an elbow is solved under the
+	// shoulder this same pass just corrected.
+	if (BoneAimConstraints.Num() > 0)
+	{
+		const TArray<FSourceStudioBone>& AimBones = Model->GetBones();
+		auto PoseGlobal = [&AimBones, &Pose](int32 Bone)
+		{
+			FQuat4f Q = Pose.Quat[Bone];
+			for (int32 P = AimBones[Bone].Parent; P != INDEX_NONE; P = AimBones[P].Parent)
+			{
+				Q = Pose.Quat[P] * Q;
+			}
+			return Q;
+		};
+		for (const FBoneAim& Aim : BoneAimConstraints)
+		{
+			if (!Pose.Quat.IsValidIndex(Aim.Bone))
+			{
+				continue;
+			}
+			const int32 Parent = AimBones[Aim.Bone].Parent;
+			const FQuat4f ParentGlobal = Parent != INDEX_NONE ? PoseGlobal(Parent) : FQuat4f::Identity;
+			const FQuat4f GlobalNow = ParentGlobal * Pose.Quat[Aim.Bone];
+			const FVector3f DirNow = GlobalNow.RotateVector(Aim.Axis);
+			const FQuat4f GlobalNew = FQuat4f::FindBetweenNormals(DirNow, Aim.Dir) * GlobalNow;
+			Pose.Quat[Aim.Bone] = ParentGlobal.Inverse() * GlobalNew;
+		}
+	}
 	Model->BuildBoneToModel(Pose, BoneToModel);
 
 	// Bones the code owns keep the animation's rotation but go where they are told (the barnacle's tongue).
@@ -268,6 +310,62 @@ void USourceStudioModelComponent::ComposePose()
 		}
 	}
 	RefreshPose();
+}
+
+void USourceStudioModelComponent::SetBoneRotationOverride(const FString& BoneName, const FQuat4f& LocalRotation)
+{
+	if (!HasModel())
+	{
+		return;
+	}
+	const TArray<FSourceStudioBone>& Bones = Model->GetBones();
+	for (int32 i = 0; i < Bones.Num(); ++i)
+	{
+		if (Bones[i].Name.Equals(BoneName, ESearchCase::IgnoreCase))
+		{
+			BoneRotationOverrides.Add(i, LocalRotation);
+			return;
+		}
+	}
+}
+
+void USourceStudioModelComponent::SetBoneAimConstraint(const FString& BoneName, const FString& ChildName, const FVector3f& ModelSpaceDir)
+{
+	if (!HasModel())
+	{
+		return;
+	}
+	const TArray<FSourceStudioBone>& Bones = Model->GetBones();
+	int32 Bone = INDEX_NONE, Child = INDEX_NONE;
+	for (int32 i = 0; i < Bones.Num(); ++i)
+	{
+		if (Bones[i].Name.Equals(BoneName, ESearchCase::IgnoreCase)) { Bone = i; }
+		if (Bones[i].Name.Equals(ChildName, ESearchCase::IgnoreCase)) { Child = i; }
+	}
+	if (Bone == INDEX_NONE || Child == INDEX_NONE)
+	{
+		return;
+	}
+
+	// The axis that points at the child, in the bone's own space: fixed by the bind pose, true in any pose.
+	TArray<FQuat4f> GlobalQuat;
+	TArray<FVector3f> GlobalPos;
+	GlobalQuat.SetNum(Bones.Num());
+	GlobalPos.SetNum(Bones.Num());
+	for (int32 i = 0; i < Bones.Num(); ++i)
+	{
+		const int32 P = Bones[i].Parent;
+		GlobalQuat[i] = P != INDEX_NONE ? GlobalQuat[P] * Bones[i].Quat : Bones[i].Quat;
+		GlobalPos[i] = P != INDEX_NONE ? GlobalPos[P] + GlobalQuat[P].RotateVector(Bones[i].Pos) : Bones[i].Pos;
+	}
+
+	FBoneAim Aim;
+	Aim.Bone = Bone;
+	Aim.Axis = GlobalQuat[Bone].Inverse().RotateVector((GlobalPos[Child] - GlobalPos[Bone]).GetSafeNormal());
+	Aim.Dir = ModelSpaceDir.GetSafeNormal();
+	BoneAimConstraints.RemoveAll([Bone](const FBoneAim& A) { return A.Bone == Bone; });
+	BoneAimConstraints.Add(Aim);
+	BoneAimConstraints.Sort([](const FBoneAim& A, const FBoneAim& B) { return A.Bone < B.Bone; });
 }
 
 void USourceStudioModelComponent::SetBonePositionOverride(const FString& BoneName, const FVector& ComponentPosition)

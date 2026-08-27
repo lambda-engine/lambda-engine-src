@@ -172,6 +172,10 @@ public:
 	void UpdatePlayerBody(float DeltaSeconds);
 	/** The sequence label the current movement calls for ("run_forward", "crouch_idle", ...). */
 	FString ChoosePlayerBodySequence() const;
+	/** Keeps the active weapon's world model in the shadow body's hand. */
+	void UpdateWeaponShadow(USourceStudioModelComponent* Body);
+	/** Freezes the shadow body's arms into a two-handed carry, solved from the model's own bind skeleton. */
+	void SolveHoldPose(USourceStudioModelComponent* Body);
 
 	UFUNCTION(BlueprintPure, Category = "Lambda") float GetHealth() const { return Health; }
 	UFUNCTION(BlueprintPure, Category = "Lambda") float GetArmor() const { return Armor; }
@@ -437,6 +441,13 @@ protected:
 	/** Drawn for everyone else, and casting even when hidden: the shadow the player throws. */
 	UPROPERTY(VisibleAnywhere, Category = "Lambda")
 	TObjectPtr<USourceStudioModelComponent> BodyMesh;
+	/** The active weapon's world model, in the shadow body's hand, so the shadow is armed too. */
+	UPROPERTY(VisibleAnywhere, Category = "Lambda")
+	TObjectPtr<USourceStudioModelComponent> WeaponShadowMesh;
+	/** The class whose world model the shadow is holding, so a weapon switch reloads it. */
+	FString WeaponShadowClass;
+	/** The shadow body's right-hand bone, found once per model. */
+	int32 WeaponShadowBone = -1;
 
 	UPROPERTY(EditAnywhere, Category = "Lambda")
 	float Health = 100.0f;

@@ -107,6 +107,26 @@ BASIS = [
 BASIS_INV = mat_inverse(BASIS)
 
 
+def set_import_yaw(degrees):
+    """
+    Turns the whole model about the up axis, baked into the export.
+
+    A Source model faces +x; what a GLB calls forward is whatever way its author happened to point it, so this
+    is per-model data, not something a convention can absorb. Positive is counter-clockwise seen from above.
+    """
+    global BASIS, BASIS_INV
+    r = math.radians(degrees)
+    c, s = math.cos(r), math.sin(r)
+    rz = [
+        [c, -s, 0.0, 0.0],
+        [s, c, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+    BASIS = mat_mul(rz, BASIS)
+    BASIS_INV = mat_inverse(BASIS)
+
+
 def to_source_matrix(m):
     """A transform expressed in glTF axes, re-expressed in Source's."""
     return mat_mul(mat_mul(BASIS, m), BASIS_INV)
@@ -538,6 +558,8 @@ def main():
     ap.add_argument("--name", required=True, help="model path without extension, e.g. player/gordon")
     ap.add_argument("--out", required=True, help="mod directory (the one holding models/ and materials/)")
     ap.add_argument("--scale", type=float, default=1.0)
+    ap.add_argument("--yaw", type=float, default=0.0,
+                    help="degrees to turn the model about the up axis; positive is counter-clockwise from above")
     ap.add_argument("--studiomdl", help="studiomdl.exe (default: Source SDK Base 2013 Singleplayer)")
     ap.add_argument("--game", help="game dir for studiomdl (default: the SDK's hl2)")
     ap.add_argument("--no-textures", action="store_true", help="reuse the materials already on disk")
@@ -549,6 +571,9 @@ def main():
     game = args.game or os.path.join(sdk, "hl2")
     if not os.path.isfile(studiomdl):
         sys.exit(f"studiomdl not found at {studiomdl} - pass --studiomdl")
+
+    if args.yaw:
+        set_import_yaw(args.yaw)
 
     tools_dir = os.path.dirname(os.path.abspath(__file__))
     g = GLTF(args.gltf)
