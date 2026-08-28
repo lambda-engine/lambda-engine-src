@@ -25,6 +25,16 @@
 #include "TimerManager.h"
 #include "NavMesh/RecastNavMesh.h"
 #include "LambdaLoadingScreen.h"
+#include "GameFramework/GameUserSettings.h"
+#include "Misc/CoreDelegates.h"
+#include "Engine/GameEngine.h"
+#include "Widgets/SWindow.h"
+
+#if PLATFORM_WINDOWS
+#include "Windows/AllowWindowsPlatformTypes.h"
+#include <windows.h>
+#include "Windows/HideWindowsPlatformTypes.h"
+#endif
 
 DEFINE_LOG_CATEGORY(LogLambda);
 
@@ -32,6 +42,290 @@ namespace
 {
 	/** Everything a "+command" on the command line asked for, in the order it was written. */
 	TArray<FString> GStartupCommands;
+
+	/** What the command line asked the window to be, for ApplyWindowSettings to carry out. */
+	struct FWindowRequest
+	{
+		bool bModeAsked = false;		// the line named a window mode, in either engine's spelling
+		bool bModeFromUnreal = false;	// ...and it was Unreal's own spelling, which Unreal has acted on
+		EWindowMode::Type Mode = EWindowMode::Fullscreen;
+		int32 Width = 0;
+		int32 Height = 0;
+		int32 PosX = 0;
+		int32 PosY = 0;
+		bool bHasPosition = false;
+		bool bBorderless = false;	// -noborder: no frame, whatever size it ends up
+	};
+
+	FWindowRequest GWindowRequest;
+
+	/**
+	 * Source's window switches.
+	 *
+	 * The two engines want the same things by different names, and a modder launching this one reaches for the
+	 * ones Source taught them:
+	 *
+	 *     -windowed, -window, -sw     windowed
+	 *     -fullscreen, -full, -fs     full screen
+	 *     -noborder                   no frame: a window of the given size without one, or the whole
+	 *                                 display when no size is given
+	 *     -w <n>, -width <n>          width
+	 *     -h <n>, -height <n>         height
+	 *     -x <n>, -y <n>              where the window goes
+	 *
+	 * Unreal's own -Windowed/-FullScreen/-ResX=/-ResY= are recognised too and left to Unreal, which reads them
+	 * itself (UGameEngine::ConditionallyOverrideSettings).
+	 *
+	 * Whatever the Source spellings ask for is recorded rather than rewritten into Unreal's: the window is built
+	 * from the command line before this module is loaded, so a switch translated here would arrive too late to
+	 * be read. ApplyWindowSettings does the work once the engine is up.
+	 *
+	 * The tokens are still taken off the line. Source writes a value as its own token ("-w 1280"), and a bare
+	 * "1280" left behind is read by UGameInstance::GetMapOverrideName as a map to travel to - the same trap
+	 * "+map" falls into.
+	 *
+	 * @param Tokens  The whole command line, tokenised.
+	 * @param i       The token being looked at; advanced past a consumed value.
+	 * @return Whether the token was one of Source's and has been taken.
+	 */
+	bool TakeWindowArg(const TArray<FString>& Tokens, int32& i)
+	{
+		const FString& Token = Tokens[i];
+
+		if (!Token.StartsWith(TEXT("-")) || Token.Len() < 2)
+		{
+			return false;
+		}
+
+		const FString Switch = Token.RightChop(1);
+
+		// Unreal's own spellings are read here as well as being left on the line for Unreal. Reading them
+		// rather than deferring is what lets "-windowed -w 1280 -h 720" work: Unreal takes the mode from the
+		// line but knows nothing of Source's -w, and there is no way to ask it afterwards what it decided -
+		// its override never reaches the settings object. So the mode is decided here, from either spelling,
+		// and Unreal's copy of it only saves a resize as the window first appears.
+		if (Switch.StartsWith(TEXT("Res="), ESearchCase::IgnoreCase)
+			|| Switch.StartsWith(TEXT("ResX="), ESearchCase::IgnoreCase)
+			|| Switch.StartsWith(TEXT("ResY="), ESearchCase::IgnoreCase))
+		{
+			GWindowRequest.bModeFromUnreal = true;
+			return false;
+		}
+
+		if (Switch.Equals(TEXT("windowed"), ESearchCase::IgnoreCase))
+		{
+			GWindowRequest.bModeAsked = true;
+			GWindowRequest.bModeFromUnreal = true;
+			GWindowRequest.Mode = EWindowMode::Windowed;
+			return false;   // Unreal's own; left for it to read too
+		}
+
+		if (Switch.Equals(TEXT("fullscreen"), ESearchCase::IgnoreCase))
+		{
+			GWindowRequest.bModeAsked = true;
+			GWindowRequest.bModeFromUnreal = true;
+			GWindowRequest.Mode = EWindowMode::Fullscreen;
+			return false;   // Unreal's own; left for it to read too
+		}
+
+		if (Switch.Equals(TEXT("window"), ESearchCase::IgnoreCase)
+			|| Switch.Equals(TEXT("sw"), ESearchCase::IgnoreCase))
+		{
+			GWindowRequest.bModeAsked = true;
+			GWindowRequest.Mode = EWindowMode::Windowed;
+			return true;
+		}
+
+		if (Switch.Equals(TEXT("full"), ESearchCase::IgnoreCase)
+			|| Switch.Equals(TEXT("fs"), ESearchCase::IgnoreCase))
+		{
+			GWindowRequest.bModeAsked = true;
+			GWindowRequest.Mode = EWindowMode::Fullscreen;
+			return true;
+		}
+
+		if (Switch.Equals(TEXT("noborder"), ESearchCase::IgnoreCase))
+		{
+			// The mode it turns into depends on whether a size comes with it, which may not have been read
+			// yet - so it is only noted here and decided in ApplyWindowSettings.
+			GWindowRequest.bModeAsked = true;
+			GWindowRequest.bBorderless = true;
+			return true;
+		}
+
+		// The ones that carry a value in the next token.
+		const bool bWidth = Switch.Equals(TEXT("w"), ESearchCase::IgnoreCase)
+			|| Switch.Equals(TEXT("width"), ESearchCase::IgnoreCase);
+		const bool bHeight = Switch.Equals(TEXT("h"), ESearchCase::IgnoreCase)
+			|| Switch.Equals(TEXT("height"), ESearchCase::IgnoreCase);
+		const bool bPosX = Switch.Equals(TEXT("x"), ESearchCase::IgnoreCase);
+		const bool bPosY = Switch.Equals(TEXT("y"), ESearchCase::IgnoreCase);
+
+		if (bWidth || bHeight || bPosX || bPosY)
+		{
+			// Only when a value actually follows, so a switch of the same name carrying none is left alone
+			// rather than swallowing whatever came after it. Quoted because a launcher writing the line
+			// for us may well quote it - "-w \"1280\"" is the same request as "-w 1280".
+			const FString Next = i + 1 < Tokens.Num() ? Tokens[i + 1].TrimQuotes() : FString();
+
+			if (Next.IsEmpty() || !Next.IsNumeric())
+			{
+				return false;
+			}
+
+			++i;
+			const int32 Value = FCString::Atoi(*Next);
+			if (bWidth)
+			{
+				GWindowRequest.Width = Value;
+			}
+			else if (bHeight)
+			{
+				GWindowRequest.Height = Value;
+			}
+			else
+			{
+				(bPosX ? GWindowRequest.PosX : GWindowRequest.PosY) = Value;
+				GWindowRequest.bHasPosition = true;
+			}
+			return true;
+		}
+
+		return false;
+	}
+
+	/**
+	 * Takes the frame off the game's window, leaving it the size it already is.
+	 *
+	 * Unreal has three window modes and none of them is "a window of this size with no frame" - full screen
+	 * and windowed-full-screen both take the whole display. Source has it, `-noborder` is how a modder asks
+	 * for it, and it is what a window has to be to sit inside another program's tab without a title bar
+	 * across the top of it. So the mode stays Windowed and the frame comes off the native window.
+	 */
+	void RemoveWindowFrame()
+	{
+#if PLATFORM_WINDOWS
+		UGameEngine* GameEngine = Cast<UGameEngine>(GEngine);
+		TSharedPtr<SWindow> Window = GameEngine ? GameEngine->GameViewportWindow.Pin() : nullptr;
+		TSharedPtr<FGenericWindow> NativeWindow = Window.IsValid() ? Window->GetNativeWindow() : nullptr;
+
+		if (!NativeWindow.IsValid())
+		{
+			UE_LOG(LogLambda, Warning, TEXT("Window: -noborder had no window to take the frame off"));
+			return;
+		}
+
+		const HWND Hwnd = static_cast<HWND>(NativeWindow->GetOSWindowHandle());
+		if (!Hwnd)
+		{
+			return;
+		}
+
+		// The frame styles come off and nothing goes on in their place. Not WS_POPUP in particular: a popup
+		// answers GetParent with its owner rather than its parent, so a tool that puts this window inside one
+		// of its own - which is how the modding tool embeds it - can no longer tell where it ended up.
+		LONG_PTR Style = GetWindowLongPtr(Hwnd, GWL_STYLE);
+		Style &= ~(WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
+		SetWindowLongPtr(Hwnd, GWL_STYLE, Style);
+
+		// SWP_FRAMECHANGED is what makes the style change take; the window is left exactly where and as big
+		// as it already is, so the client area grows into what the frame was using.
+		//
+		// Nothing is moved or resized here on purpose. By the time this runs the window may already have been
+		// made a child of somebody else's - the modding tool embeds the game in one of its tabs - and a child
+		// is positioned relative to its parent, not to the screen. Passing it the screen coordinates it had a
+		// moment ago would shove it that far into the corner of whatever it is now inside.
+		SetWindowPos(Hwnd, nullptr, 0, 0, 0, 0,
+			SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+#endif
+	}
+
+	/**
+	 * Puts the window into the mode the command line asked for, once there is an engine to ask.
+	 *
+	 * Source's switches cannot be answered while the window is being built - this module is not loaded yet - so
+	 * they are answered immediately afterwards, through the same settings the game would change from a video
+	 * options menu. A game launched without any of them goes full screen, which is where Source starts too.
+	 */
+	void ApplyWindowSettings()
+	{
+		if (GIsEditor || !GEngine)
+		{
+			return;
+		}
+
+		const bool bHasSize = GWindowRequest.Width > 0 && GWindowRequest.Height > 0;
+
+		// The line spoke to Unreal in its own words and added nothing of Source's: Unreal has already built
+		// the window it asked for, and setting the same mode over the top of a window that is already in it
+		// is enough to bring the game down.
+		if (GWindowRequest.bModeFromUnreal && !bHasSize && !GWindowRequest.bHasPosition)
+		{
+			return;
+		}
+
+		UGameUserSettings* Settings = GEngine->GetGameUserSettings();
+		if (!Settings)
+		{
+			return;
+		}
+
+		// Whatever the line named, and full screen when it named nothing - which is where Source starts too.
+		EWindowMode::Type Mode = GWindowRequest.bModeAsked ? GWindowRequest.Mode : EWindowMode::Fullscreen;
+
+		// -noborder with a size is a window of that size with its frame taken off, the way Source's is - the
+		// frame comes off further down, once the window exists. Without a size there is nothing to size it
+		// to, so it becomes the borderless window that covers the display.
+		if (GWindowRequest.bBorderless)
+		{
+			Mode = bHasSize ? EWindowMode::Windowed : EWindowMode::WindowedFullscreen;
+		}
+
+		Settings->SetFullscreenMode(Mode);
+
+		FIntPoint Resolution(GWindowRequest.Width, GWindowRequest.Height);
+
+		if (Resolution.X <= 0 || Resolution.Y <= 0)
+		{
+			// Nothing was asked for. Full screen means the whole display, so it is taken from the display
+			// rather than from whatever size the settings happened to be left at - otherwise "full screen"
+			// comes up as a 1280x720 window on a 1920x1080 monitor. A window keeps the size it had.
+			if (Mode == EWindowMode::Windowed)
+			{
+				Resolution = Settings->GetScreenResolution();
+			}
+			else
+			{
+				Resolution = Settings->GetDesktopResolution();
+			}
+		}
+
+		if (Resolution.X > 0 && Resolution.Y > 0)
+		{
+			Settings->SetScreenResolution(Resolution);
+		}
+
+		// Only a window can be put somewhere; a full screen one is where the display is.
+		if (GWindowRequest.bHasPosition && Mode == EWindowMode::Windowed)
+		{
+			Settings->SetWindowPosition(GWindowRequest.PosX, GWindowRequest.PosY);
+		}
+
+		// Not saved: a switch on the command line says what this run should look like, not what every run
+		// after it should.
+		Settings->ApplyResolutionSettings(false);
+
+		if (GWindowRequest.bBorderless && Mode == EWindowMode::Windowed)
+		{
+			RemoveWindowFrame();
+		}
+
+		UE_LOG(LogLambda, Log, TEXT("Window: %s%s %dx%d"),
+			GWindowRequest.bBorderless ? TEXT("borderless ") : TEXT(""),
+			Mode == EWindowMode::Windowed ? TEXT("windowed")
+				: Mode == EWindowMode::WindowedFullscreen ? TEXT("windowed fullscreen") : TEXT("fullscreen"),
+			Settings->GetScreenResolution().X, Settings->GetScreenResolution().Y);
+	}
 
 	/**
 	 * Source-style launcher arguments. Anything written "+command arg arg" is a console command to run once the
@@ -88,6 +382,11 @@ namespace
 		{
 			if (!Tokens[i].StartsWith(TEXT("+")) || Tokens[i].Len() < 2)
 			{
+				if (TakeWindowArg(Tokens, i))
+				{
+					continue;
+				}
+
 				Kept.Add(Tokens[i]);
 				continue;
 			}
@@ -112,18 +411,20 @@ namespace
 			GStartupCommands.Add(Line);
 		}
 
-		if (MapName.IsEmpty() && GStartupCommands.Num() == 0)
-		{
-			return;
-		}
-
 		FString NewCmdLine = FString::Join(Kept, TEXT(" "));
 		if (!MapName.IsEmpty())
 		{
 			NewCmdLine += FString::Printf(TEXT(" -sourcemap=%s"), *MapName);
 			UE_LOG(LogLambda, Log, TEXT("+map %s -> -sourcemap=%s"), *MapName, *MapName);
 		}
+
+		if (NewCmdLine == CmdLine)
+		{
+			return;
+		}
+
 		FCommandLine::Set(*NewCmdLine);
+		UE_LOG(LogLambda, Log, TEXT("command line: %s"), *NewCmdLine);
 
 		for (const FString& Line : GStartupCommands)
 		{
@@ -162,6 +463,9 @@ void FLambdaEngineModule::StartupModule()
 {
 	UE_LOG(LogLambda, Log, TEXT("LambdaEngine game module started"));
 	TranslateSourceLauncherArgs();
+	// The window is already built by the time this module is loaded, so what the command line asked of it is
+	// carried out as soon as there is an engine to ask rather than from the line itself.
+	FCoreDelegates::OnPostEngineInit.AddStatic(&ApplyWindowSettings);
 	// Armed before the engine loads its first level, so the game's startup is covered rather than showing black
 	// until the menu appears.
 	FLambdaLoadingScreen::Arm();
