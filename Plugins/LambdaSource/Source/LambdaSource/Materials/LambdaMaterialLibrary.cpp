@@ -616,6 +616,29 @@ FString ULambdaMaterialLibrary::GetSurfaceProp(const FString& SourceMaterialName
 	return SurfaceProp;
 }
 
+FIntPoint ULambdaMaterialLibrary::GetMaterialMappingSize(const FString& SourceMaterialName)
+{
+	Initialize();
+	const FString Name = NormalizeMaterialName(SourceMaterialName);
+	if (const FIntPoint* Cached = MappingSizeCache.Find(Name))
+	{
+		return *Cached;
+	}
+
+	FIntPoint Size(128, 128);
+	FSourceMaterialInfo Info;
+	if (LoadMaterialInfo(Name, Info))
+	{
+		FString TextureName = Info.BaseTexture.IsEmpty() ? Info.BaseTexture2 : Info.BaseTexture;
+		if (const UTexture2D* Texture = TextureName.IsEmpty() ? nullptr : GetTexture(TextureName))
+		{
+			Size = FIntPoint(FMath::Max(1, (int32)Texture->GetSizeX()), FMath::Max(1, (int32)Texture->GetSizeY()));
+		}
+	}
+	MappingSizeCache.Add(Name, Size);
+	return Size;
+}
+
 bool ULambdaMaterialLibrary::LoadDecalSubrect(const FString& NormalizedName, FSourceDecalSubrect& OutSubrect, FString& OutSheetTexture)
 {
 	// A "Subrect" VMT does not carry a texture: it names an atlas material plus the tile to cut from it.

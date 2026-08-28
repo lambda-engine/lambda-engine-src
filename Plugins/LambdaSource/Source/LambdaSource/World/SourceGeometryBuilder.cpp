@@ -115,11 +115,31 @@ void SourceGeometry::BuildModel(const FSourceBSPFile& Map, int32 ModelIndex, flo
 			SOffset = TexInfo->textureVecsTexelsPerWorldUnits[0][3];
 			TAxis = FVector3f(TexInfo->textureVecsTexelsPerWorldUnits[1][0], TexInfo->textureVecsTexelsPerWorldUnits[1][1], TexInfo->textureVecsTexelsPerWorldUnits[1][2]);
 			TOffset = TexInfo->textureVecsTexelsPerWorldUnits[1][3];
-			if (Map.TexDatas.IsValidIndex(TexInfo->texdata))
+			// Source divides by the material's own mapping size, never by the width and height vbsp baked into
+			// the BSP (SurfComputeTextureCoordinate). Those two disagree more often than it looks: when vbsp
+			// cannot find a material it writes zero, and a map compiled against content the compiler could not
+			// see still has to draw. The texdata size is only the fallback for when there is no library to ask.
+			FIntPoint Mapping(0, 0);
+			if (MaterialLibrary)
 			{
-				TexWidth = (float)FMath::Max(1, Map.TexDatas[TexInfo->texdata].width);
-				TexHeight = (float)FMath::Max(1, Map.TexDatas[TexInfo->texdata].height);
+				if (const FIntPoint* Cached = MappingSizes.Find(TexInfo->texdata))
+				{
+					Mapping = *Cached;
+				}
+				else
+				{
+					Mapping = MaterialLibrary->GetMaterialMappingSize(Map.GetTexDataName(TexInfo->texdata));
+					MappingSizes.Add(TexInfo->texdata, Mapping);
+				}
 			}
+			if (Mapping.X <= 0 || Mapping.Y <= 0)
+			{
+				Mapping = Map.TexDatas.IsValidIndex(TexInfo->texdata)
+					? FIntPoint(Map.TexDatas[TexInfo->texdata].width, Map.TexDatas[TexInfo->texdata].height)
+					: FIntPoint(0, 0);
+			}
+			TexWidth = (float)FMath::Max(1, Mapping.X);
+			TexHeight = (float)FMath::Max(1, Mapping.Y);
 		}
 		FVector TangentUE = FSourceCoords::ToUEDirection(SAxis);
 		if (TangentUE.IsNearlyZero())

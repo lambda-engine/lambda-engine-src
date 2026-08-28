@@ -76,6 +76,20 @@ public:
 	FString GetSurfaceProp(const FString& SourceMaterialName);
 
 	/**
+	 * The size a world surface's texture coordinates are measured in - Source's IMaterial::GetMappingWidth/Height.
+	 *
+	 * A face's texture axes are stored in texels per world unit, so dividing by this is what turns them into the
+	 * 0..1 range a sampler wants. It is the base texture's own size, read at load time, and deliberately not the
+	 * width and height vbsp wrote into the BSP: those are the compiler's record of what it found on disk, and
+	 * when it found nothing it records zero. Source never consults them for rendering either - see
+	 * SurfComputeTextureCoordinate in engine/matsys_interface.cpp.
+	 *
+	 * Falls back to 128x128 for a material with no readable texture, which is the size of the dev textures a map
+	 * missing its content ends up drawing anyway.
+	 */
+	FIntPoint GetMaterialMappingSize(const FString& SourceMaterialName);
+
+	/**
 	 * Builds a decal material for a Source decal name ("decals/concrete/shot3_subrect"), resolving the Subrect
 	 * indirection every HL2 impact decal uses. OutSizeUnits is the decal's world size in Hammer units.
 	 */
@@ -163,6 +177,9 @@ private:
 
 	/** $surfaceprop per material name, so a bullet impact does not re-parse the VMT every shot. */
 	TMap<FString, FString> SurfacePropCache;
+
+	/** Base texture size by normalised material name; see GetMaterialMappingSize. */
+	TMap<FString, FIntPoint> MappingSizeCache;
 
 	UPROPERTY(Transient)
 	TMap<FString, TObjectPtr<UMaterialInterface>> MaterialCache;
