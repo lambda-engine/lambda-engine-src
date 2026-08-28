@@ -32,6 +32,7 @@ void ALambdaCharacterAddPickupHistory(TArray<ALambdaCharacter::FPickupEvent>& Hi
 #include "Materials/LambdaMaterialLibrary.h"
 #include "Core/LambdaSourceSettings.h"
 #include "World/SourceBSPWorldActor.h"
+#include "EngineUtils.h"	// TActorIterator, for entfire.auto
 #include "Kismet/GameplayStatics.h"
 #include "Materials/SourceSurfaceProps.h"
 #include "Audio/LambdaSoundLibrary.h"
@@ -119,6 +120,22 @@ static FAutoConsoleVariableRef CVarThirdPersonAuto(
 	TEXT("thirdperson.auto"),
 	GThirdPersonAuto,
 	TEXT("\"<delay_s> [return_s]\": third person after that long, and back to first at return_s"));
+
+// use.auto "<delay_s> [second_delay_s]" presses +USE on whatever the player is looking at, once or twice, so a
+// button and the thing it is wired to can be tested together without injecting a keypress.
+static FString GUseAuto;
+static FAutoConsoleVariableRef CVarUseAuto(
+	TEXT("use.auto"),
+	GUseAuto,
+	TEXT("\"<delay_s> [second_delay_s]\": press +USE that long after play begins"));
+
+// entfire.auto "<target> <input> [parameter] [delay_s]" fires one entity input a set number of seconds into
+// play. ent_fire itself runs from -ExecCmds before the map's entities exist, so there is nothing to fire at.
+static FString GEntFireAuto;
+static FAutoConsoleVariableRef CVarEntFireAuto(
+	TEXT("entfire.auto"),
+	GEntFireAuto,
+	TEXT("\"<target> <input> [parameter|-] [delay_s] | ...\": fire entity inputs once play begins"));
 
 // playermodel.auto "<models/path.mdl>" wears a model from the moment play starts, so a rig can be looked at
 // without anything typing cl_playermodel - the command itself runs before there is a player to dress.
@@ -1116,6 +1133,50 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 			if (!GPlayerModelAuto.IsEmpty())
 			{
 				SetPlayerModel(GPlayerModelAuto);
+			}
+			if (!GUseAuto.IsEmpty())
+			{
+				TArray<FString> Parts;
+				GUseAuto.ParseIntoArrayWS(Parts);
+				for (int32 i = 0; i < Parts.Num() && i < 2; ++i)
+				{
+					FTimerHandle Handle;
+					GetWorldTimerManager().SetTimer(Handle,
+						FTimerDelegate::CreateUObject(this, &ALambdaCharacter::Input_Use),
+						FMath::Max(0.01f, FCString::Atof(*Parts[i])), false);
+				}
+			}
+			if (!GEntFireAuto.IsEmpty())
+			{
+				// Several inputs at once, separated by '|', so one run can walk a whole sequence - turn a light
+				// on, give it a pattern, fade it to another - instead of needing a launch apiece. Not ';':
+				// the console splits its own command lines on that before a cvar ever sees it.
+				TArray<FString> Commands;
+				GEntFireAuto.ParseIntoArray(Commands, TEXT("|"), true);
+				for (TActorIterator<ASourceBSPWorldActor> It(GetWorld()); It; ++It)
+				{
+					for (const FString& Command : Commands)
+					{
+						TArray<FString> Parts;
+						Command.ParseIntoArrayWS(Parts);
+						if (Parts.Num() < 2)
+						{
+							continue;
+						}
+						// A lone '-' stands in for "no parameter", so an input that takes none can still be
+						// given a delay without an empty argument the command line cannot carry.
+						FString Parameter = Parts.Num() > 2 ? Parts[2] : FString();
+						if (Parameter == TEXT("-"))
+						{
+							Parameter.Reset();
+						}
+						const float Delay = Parts.Num() > 3 ? FCString::Atof(*Parts[3]) : 0.0f;
+						It->QueueEntityEvent(Parts[0], Parts[1], Parameter, this, this, Delay);
+						UE_LOG(LogLambda, Display, TEXT("entfire.auto %s %s '%s' in %gs"),
+							*Parts[0], *Parts[1], *Parameter, Delay);
+					}
+					break;
+				}
 			}
 			AutoSpawnDelay = 0.25f;
 			PendingNPCCreate = GNPCCreateAuto;
