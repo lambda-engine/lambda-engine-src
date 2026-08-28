@@ -193,6 +193,15 @@ public:
 	 * away along the view.
 	 */
 	void SetThirdPerson(bool bEnable);
+
+	/**
+	 * cl_playermodel: swaps the model the player wears, without a restart.
+	 *
+	 * Both meshes change together - they are the same character seen two ways, and a shadow and a pair of legs
+	 * that disagree about whose legs they are would be worse than either alone. The body and the legs are
+	 * rebuilt from scratch, because the legs mesh is cut at a bone when it is built, not hidden afterwards.
+	 */
+	void SetPlayerModel(const FString& ModelPath);
 	bool IsThirdPerson() const { return bThirdPerson; }
 
 protected:

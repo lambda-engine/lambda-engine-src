@@ -513,6 +513,29 @@ static FAutoConsoleCommandWithWorldAndArgs GLambdaWeaponMenuCommand(
 	TEXT("Open the weapon selection on a bucket and leave it open: weaponmenu [bucket]"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaWeaponMenuCommand));
 
+// cl_playermodel <models/player/x.mdl> - the model the player wears, as in HL2 Deathmatch. With no argument it
+// says which one that currently is.
+static FAutoConsoleCommandWithWorldAndArgs GLambdaPlayerModelCommand(
+	TEXT("cl_playermodel"),
+	TEXT("Set the player's model, body and legs together."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(
+		[](const TArray<FString>& Args, UWorld* World)
+		{
+			APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
+			ALambdaCharacter* Player = PC ? Cast<ALambdaCharacter>(PC->GetPawn()) : nullptr;
+			if (!Player)
+			{
+				return;
+			}
+			if (Args.Num() == 0)
+			{
+				UE_LOG(LogLambda, Display, TEXT("cl_playermodel is \"%s\""),
+					*ULambdaSourceSettings::Get().PlayerBodyModel);
+				return;
+			}
+			Player->SetPlayerModel(Args[0]);
+		}));
+
 // thirdperson / firstperson - Source's own pair, and they mean the same thing here.
 static void LambdaViewModeCommand(UWorld* World, bool bThird)
 {

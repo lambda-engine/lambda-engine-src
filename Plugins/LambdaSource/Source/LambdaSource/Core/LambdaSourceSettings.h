@@ -189,12 +189,18 @@ public:
 	 * The player's own body. Two models rather than one: a legs-only mesh for what the player sees looking
 	 * down, and the whole body for the shadow it throws. A full body worn in first person puts its own neck
 	 * through the near plane, which is why every game that draws legs draws only legs.
+	 *
+	 * Both are the same character, and cl_playermodel changes them together at runtime. Gordon comes out of
+	 * plugins/gordon-freeman; the citizen, "models/humans/group03/male_01.mdl", is the other model this has
+	 * been run against and is the fallback if that pack is not installed. Any Source character works, so long
+	 * as it is rigged to ValveBiped and includes an animation library - a model carries no locomotion of its
+	 * own, and one without a library stands in its bind pose.
 	 */
 	UPROPERTY(EditAnywhere, config, Category = "Player Body")
-	FString PlayerLegsModel = TEXT("models/humans/group03/male_01.mdl");
+	FString PlayerLegsModel = TEXT("models/gordon/gordon.mdl");
 
 	UPROPERTY(EditAnywhere, config, Category = "Player Body")
-	FString PlayerBodyModel = TEXT("models/humans/group03/male_01.mdl");
+	FString PlayerBodyModel = TEXT("models/gordon/gordon.mdl");
 
 	/** Everything above this bone is erased from the legs model, so looking down does not show a chest. */
 	UPROPERTY(EditAnywhere, config, Category = "Player Body")

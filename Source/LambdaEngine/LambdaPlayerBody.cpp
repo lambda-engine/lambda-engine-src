@@ -21,6 +21,7 @@
 
 #include "Core/LambdaSourceSettings.h"
 #include "Core/SourceCoordinates.h"
+#include "FileSystem/LambdaFileSystem.h"
 #include "Formats/SourceMDLFile.h"
 #include "Rendering/SourceStudioModelComponent.h"
 
@@ -148,17 +149,64 @@ void ALambdaCharacter::UpdateCameraDistance()
 	FirstPersonCamera->SetWorldLocation(Eye + Back * Distance);
 }
 
+void ALambdaCharacter::SetPlayerModel(const FString& ModelPath)
+{
+	FString Path = ModelPath.Replace(TEXT("\\"), TEXT("/"));
+	if (!Path.EndsWith(TEXT(".mdl")))
+	{
+		Path += TEXT(".mdl");
+	}
+	if (!Path.StartsWith(TEXT("models/")))
+	{
+		Path = TEXT("models/") + Path;	// cl_playermodel takes the short name; the loader wants the whole path
+	}
+
+	ULambdaSourceSettings& Settings = *GetMutableDefault<ULambdaSourceSettings>();
+	Settings.PlayerBodyModel = Path;
+	Settings.PlayerLegsModel = Path;
+
+	// Everything cached off the old skeleton, so nothing is read against bone indices that no longer mean what
+	// they meant. SetupPlayerBody rebuilds the rest.
+	WeaponShadowClass.Reset();
+	WeaponShadowBone = -1;
+	bWeaponShadowBonemerged = false;
+	if (WeaponShadowMesh)
+	{
+		WeaponShadowMesh->SetVisibility(false);
+	}
+
+	SetupPlayerBody();
+	UE_LOG(LogLambda, Display, TEXT("cl_playermodel %s"), *Path);
+}
+
 void ALambdaCharacter::SetupPlayerBody()
 {
 	const ULambdaSourceSettings& Settings = ULambdaSourceSettings::Get();
 	const float HalfHeight = GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+
+	// The model ships in a content pack, and a pack is a folder a mod is free to delete. Rather than leave the
+	// player as a shadow with nothing casting it, the citizen stands in - he comes from Half-Life's own files,
+	// so anything that can run this at all has him.
+	auto Resolve = [](const FString& Wanted)
+	{
+		static const FString Fallback = TEXT("models/humans/group03/male_01.mdl");
+		if (Wanted.IsEmpty() || FLambdaFileSystem::Get().FileExists(Wanted) || Wanted == Fallback)
+		{
+			return Wanted;
+		}
+		UE_LOG(LogLambda, Warning, TEXT("player model '%s' is not installed - falling back to '%s'"),
+			*Wanted, *Fallback);
+		return Fallback;
+	};
+	const FString LegsModel = Resolve(Settings.PlayerLegsModel);
+	const FString BodyModel = Resolve(Settings.PlayerBodyModel);
 
 	// A Source model stands on its origin, so both meshes hang from the capsule's centre down to the feet.
 	if (LegsMesh)
 	{
 		// Before the model: the cut decides which mesh gets built.
 		LegsMesh->SetHiddenBoneSubtree(Settings.PlayerLegsCutBone);
-		if (LegsMesh->SetModel(Settings.PlayerLegsModel, GetWorldMaterialLibrary()))
+		if (LegsMesh->SetModel(LegsModel, GetWorldMaterialLibrary()))
 		{
 			LegsMesh->SetRelativeLocation(FVector(0.0f, 0.0f, -HalfHeight));
 			// Only its owner sees these, and they must not cast - the body behind them is doing that, and two
@@ -172,18 +220,18 @@ void ALambdaCharacter::SetupPlayerBody()
 			// too large, and no offset fixes both at once.
 			LegsMesh->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::None);
 			UE_LOG(LogLambda, Log, TEXT("player legs: '%s', %d bones, %d sequences"),
-				*Settings.PlayerLegsModel, LegsMesh->GetModel()->GetBones().Num(),
+				*LegsModel, LegsMesh->GetModel()->GetBones().Num(),
 				LegsMesh->GetModel()->GetSequences().Num());
 		}
 		else
 		{
-			UE_LOG(LogLambda, Warning, TEXT("player legs: '%s' would not load"), *Settings.PlayerLegsModel);
+			UE_LOG(LogLambda, Warning, TEXT("player legs: '%s' would not load"), *LegsModel);
 		}
 	}
 
 	if (BodyMesh)
 	{
-		if (BodyMesh->SetModel(Settings.PlayerBodyModel, GetWorldMaterialLibrary()))
+		if (BodyMesh->SetModel(BodyModel, GetWorldMaterialLibrary()))
 		{
 			BodyMesh->SetRelativeLocation(FVector(0.0f, 0.0f, -HalfHeight));
 			// The point of this one: invisible to the player it belongs to, but its shadow is not.
@@ -203,12 +251,12 @@ void ALambdaCharacter::SetupPlayerBody()
 			SolveHoldPose(BodyMesh);
 
 			UE_LOG(LogLambda, Log, TEXT("player body: '%s', %d bones, %d sequences"),
-				*Settings.PlayerBodyModel, BodyMesh->GetModel()->GetBones().Num(),
+				*BodyModel, BodyMesh->GetModel()->GetBones().Num(),
 				BodyMesh->GetModel()->GetSequences().Num());
 		}
 		else
 		{
-			UE_LOG(LogLambda, Warning, TEXT("player body: '%s' would not load"), *Settings.PlayerBodyModel);
+			UE_LOG(LogLambda, Warning, TEXT("player body: '%s' would not load"), *BodyModel);
 		}
 	}
 }

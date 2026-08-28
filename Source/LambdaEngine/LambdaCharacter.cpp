@@ -120,6 +120,14 @@ static FAutoConsoleVariableRef CVarThirdPersonAuto(
 	GThirdPersonAuto,
 	TEXT("\"<delay_s> [return_s]\": third person after that long, and back to first at return_s"));
 
+// playermodel.auto "<models/path.mdl>" wears a model from the moment play starts, so a rig can be looked at
+// without anything typing cl_playermodel - the command itself runs before there is a player to dress.
+static FString GPlayerModelAuto;
+static FAutoConsoleVariableRef CVarPlayerModelAuto(
+	TEXT("playermodel.auto"),
+	GPlayerModelAuto,
+	TEXT("\"<models/player/x.mdl>\": wear that model once play begins"));
+
 static FString GSpeedLogAuto;
 static FAutoConsoleVariableRef CVarSpeedLogAuto(
 	TEXT("speedlog.auto"),
@@ -1104,6 +1112,10 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 					}
 					UE_LOG(LogLambda, Display, TEXT("setpos %s"), *GetActorLocation().ToString());
 				}
+			}
+			if (!GPlayerModelAuto.IsEmpty())
+			{
+				SetPlayerModel(GPlayerModelAuto);
 			}
 			AutoSpawnDelay = 0.25f;
 			PendingNPCCreate = GNPCCreateAuto;
