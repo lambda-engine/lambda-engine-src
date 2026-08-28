@@ -37,6 +37,43 @@ NUM_COMPONENTS = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4, "MAT4": 16}
 
 FPS = 30.0
 
+# Mixamo's rig onto Half-Life's, bone for bone.
+#
+# A model is only as useful as the animations it can play, and every animation this engine has for a human is
+# authored against ValveBiped. The two rigs are the same skeleton under different names for everything that
+# matters - hips, spine, limbs, four fingers and a thumb a side - so renaming makes a Mixamo character eligible
+# for the whole Half-Life animation set. What the names cannot fix is that the two bind poses point their bones
+# in different directions; that is the engine's job, and it retargets on the way in.
+#
+# Bones with no counterpart (Mixamo's *4 finger tips, HeadTop_End, Toe_End) keep their own names. Nothing
+# animates them, which for a leaf bone means they simply follow their parent.
+MIXAMO_TO_VALVEBIPED = {
+    "Hips": "Pelvis", "Spine": "Spine", "Spine1": "Spine1", "Spine2": "Spine2",
+    "Neck": "Neck1", "Head": "Head1",
+    "LeftShoulder": "L_Clavicle", "LeftArm": "L_UpperArm", "LeftForeArm": "L_Forearm", "LeftHand": "L_Hand",
+    "RightShoulder": "R_Clavicle", "RightArm": "R_UpperArm", "RightForeArm": "R_Forearm", "RightHand": "R_Hand",
+    "LeftUpLeg": "L_Thigh", "LeftLeg": "L_Calf", "LeftFoot": "L_Foot", "LeftToeBase": "L_Toe0",
+    "RightUpLeg": "R_Thigh", "RightLeg": "R_Calf", "RightFoot": "R_Foot", "RightToeBase": "R_Toe0",
+}
+for _side in ("Left", "Right"):
+    _s = _side[0]
+    for _digit, _num in (("Thumb", "0"), ("Index", "1"), ("Middle", "2"), ("Ring", "3"), ("Pinky", "4")):
+        MIXAMO_TO_VALVEBIPED[f"{_side}Hand{_digit}1"] = f"{_s}_Finger{_num}"
+        MIXAMO_TO_VALVEBIPED[f"{_side}Hand{_digit}2"] = f"{_s}_Finger{_num}1"
+        MIXAMO_TO_VALVEBIPED[f"{_side}Hand{_digit}3"] = f"{_s}_Finger{_num}2"
+
+
+# Set from the command line before the skeleton is read.
+RENAME_TO_VALVEBIPED = [False]
+
+
+def valvebiped_name(name):
+    """The ValveBiped name for a Mixamo bone, or the name unchanged when there is no counterpart."""
+    bare = name.split(":", 1)[-1]           # "mixamorig:LeftArm" -> "LeftArm"
+    mapped = MIXAMO_TO_VALVEBIPED.get(bare)
+    return f"ValveBiped.Bip01_{mapped}" if mapped else name
+
+
 
 # ----------------------------------------------------------------------------------------------- small matrix math
 def mat_identity():
@@ -263,7 +300,8 @@ class Skeleton:
         for i, n in enumerate(g.j["nodes"]):
             pass
         for n in self.joints:
-            self.names.append(g.j["nodes"][n].get("name") or f"bone_{n}")
+            raw = g.j["nodes"][n].get("name") or f"bone_{n}"
+            self.names.append(valvebiped_name(raw) if RENAME_TO_VALVEBIPED[0] else raw)
 
         # The bind pose, from the inverse bind matrices - the pose the mesh vertices were authored in.
         ibm = g.accessor(skin["inverseBindMatrices"]) if "inverseBindMatrices" in skin else None
@@ -560,6 +598,12 @@ def main():
     ap.add_argument("--scale", type=float, default=1.0)
     ap.add_argument("--yaw", type=float, default=0.0,
                     help="degrees to turn the model about the up axis; positive is counter-clockwise from above")
+    ap.add_argument("--valvebiped", action="store_true",
+                    help="rename a Mixamo rig's bones to ValveBiped's, so the model can play Half-Life animations")
+    ap.add_argument("--includemodel", action="append", default=[],
+                    help="an animation library to borrow sequences from, e.g. models/humans/male_shared.mdl")
+    ap.add_argument("--noanims", action="store_true",
+                    help="export the mesh only, and leave the animation to whatever --includemodel brings")
     ap.add_argument("--studiomdl", help="studiomdl.exe (default: Source SDK Base 2013 Singleplayer)")
     ap.add_argument("--game", help="game dir for studiomdl (default: the SDK's hl2)")
     ap.add_argument("--no-textures", action="store_true", help="reuse the materials already on disk")
@@ -574,6 +618,7 @@ def main():
 
     if args.yaw:
         set_import_yaw(args.yaw)
+    RENAME_TO_VALVEBIPED[0] = args.valvebiped
 
     tools_dir = os.path.dirname(os.path.abspath(__file__))
     g = GLTF(args.gltf)
@@ -601,7 +646,7 @@ def main():
     write_reference_smd(ref, g, skel, args.scale, names)
 
     sequences = []
-    for anim in g.j.get("animations", []):
+    for anim in ([] if args.noanims else g.j.get("animations", [])):
         seq = safe_name(anim.get("name"), f"anim_{len(sequences)}")
         poses = sample_animation(g, skel, anim)
         write_anim_smd(os.path.join(work, seq + ".smd"), skel, poses)
@@ -609,9 +654,10 @@ def main():
         print(f"  {seq}: {len(poses)} frames")
 
     if not sequences:
-        # studiomdl insists on at least one sequence; the bind pose serves.
-        write_anim_smd(os.path.join(work, "idle.smd"), skel, [skel.bind_locals()])
-        sequences.append(("idle", 1))
+        # studiomdl insists on at least one sequence; the bind pose serves. It is deliberately given a name no
+        # activity maps to, so a model that borrows its whole animation set never picks this one by accident.
+        write_anim_smd(os.path.join(work, "bindpose.smd"), skel, [skel.bind_locals()])
+        sequences.append(("bindpose", 1))
 
     qc_path = os.path.join(work, base + ".qc")
     with open(qc_path, "w", encoding="ascii") as f:
@@ -619,6 +665,9 @@ def main():
         f.write(f'$model "{base}" "{base}_reference.smd"\n')
         f.write(f'$cdmaterials "{material_path}"\n')
         f.write(f'$surfaceprop "{args.surfaceprop}"\n')
+        for include in args.includemodel:
+            # The model borrows every sequence the library has, exactly as a citizen borrows male_shared's.
+            f.write(f'$includemodel "{include}"\n')
         f.write('$staticprop\n' if not sequences else '')
         f.write('$cbox 0 0 0 0 0 0\n')
         f.write('$bbox -16 -16 0 16 16 72\n\n')
@@ -637,7 +686,7 @@ def main():
                     f'{t[0]:.6f} {t[1]:.6f} {t[2]:.6f} {r[0]:.6f} {r[1]:.6f} {r[2]:.6f} 0 0 0 0 0 0\n')
         f.write("\n")
         for seq, frames in sequences:
-            loop = "" if seq in ("death", "fall") else " loop"
+            loop = "" if seq in ("death", "fall", "bindpose") else " loop"
             f.write(f'$sequence "{seq}" "{seq}.smd" fps {FPS:.0f}{loop}\n')
 
     print(f"  qc: {qc_path}")
