@@ -176,7 +176,7 @@ Clip sizes, ammo types, sounds and damage come from `scripts/weapon_*.txt`, `scr
 | BSP (v19–21), KeyValues, VPK | Done |
 | VMT, VTF (7.0–7.5, DXT1/3/5 and the uncompressed formats) | Done |
 | MDL/VVD/VTX (v44+), PHY ledge trees | Done |
-| `$includemodel` animation libraries (Source's virtual model: merged sequences, bones mapped by name) | Done — how a citizen borrows the hl2mp player set |
+| `$includemodel` animation libraries (Source's virtual model: merged sequences, bones mapped by name) | Done — how the player model borrows the hl2mp set. Bones map by name, and where the two rigs' bind poses disagree the borrowed pose is retargeted through the wearer's own hierarchy |
 | WAV, soundscripts (`game_sounds_*.txt`), `surfaceproperties`, `decals_subrect` | Done |
 | `sentences.txt` (the VOX sentence system: words, `(pNNN)` parameter blocks, per-word trims) | Done |
 
@@ -185,9 +185,9 @@ Clip sizes, ammo types, sounds and damage come from `scripts/weapon_*.txt`, `scr
 | | Status |
 |---|---|
 | Runtime skeletal meshes, GPU skinning, bodygroups | Done |
-| Shadow-casting player body in first person | Done — an HL2DM player model (citizen) playing the real hl2mp animation set: idle/run/crouch/jump, each holding the active weapon, whose world model rides the hand and casts too. First-person legs are the same model with the torso cut away at mesh build (SetHiddenBoneSubtree). Aim matrices sample their centre; pose parameters are not driven yet |
+| Shadow-casting player body, first and third person | Done — a Source player model (Gordon by default, the citizen as fallback) playing the real hl2mp set: idle/run/crouch/jump, each holding the active weapon, whose world model rides the hand and casts too. Aim follows the view through the rig's pose parameters, blended rather than snapped; attacks and reloads play as gestures. First-person legs are the same model with the torso cut away at mesh build (SetHiddenBoneSubtree). `thirdperson`/`firstperson` switch; `cl_playermodel` changes the model without a restart |
 | First-person legs | Partial — the model and its animation are correct; it tears seen from inside the player (see below) |
-| glTF/GLB -> .mdl compilation (Tools/ImportGLTFModel.py, via studiomdl) | Done — mesh, skeleton, materials, bind pose and animation |
+| glTF/GLB -> .mdl compilation (Tools/ImportGLTFModel.py, via studiomdl) | Done — mesh, skeleton, materials, bind pose and animation. `Tools/ReskeletonToValveBiped.py` renames an imported rig onto ValveBiped and recompiles it against Half-Life's animation libraries, so a model that arrived with none can wear the whole set |
 | Impact decals, blood, ragdolls, particles | Done |
 | HUD (health, suit, ammo), weapon selection with icons, damage-type icons | Done |
 | Player damage: armour absorption, damage types, death | Done — no death camera or respawn yet |
@@ -203,8 +203,8 @@ and animate correctly, and the body throws a proper humanoid shadow on the floor
 owner. What does not work is the other half: looking down at your own legs shows torn geometry.
 
 The model is not the problem, and that is worth stating plainly because it took a while to establish. Stood out
-in front of the player - `cl_legs_debug 1` does exactly that - the same model playing the same sequence draws two
-clean legs with boots on. It is only wrong seen from the eye position it is meant to be seen from.
+in front of the player, or looked at in `thirdperson`, the same model playing the same sequence draws two clean
+legs with boots on. It is only wrong seen from the eye position it is meant to be seen from.
 
 What that leaves is the geometry of looking at yourself from inside yourself:
 
@@ -220,7 +220,9 @@ What that leaves is the geometry of looking at yourself from inside yourself:
 
 The real fix is a mesh authored for this - a legs model with its waist capped - or a dedicated render pass for
 the legs with its own near plane and no depth scaling. `cl_drawlegs 0` turns them off meanwhile;
-`cl_legs_offset_forward` and `cl_legs_offset_up` move them if a different model needs different placement.
+`cl_legs_offset_forward` and `cl_legs_offset_up` move them if a different model needs different placement. In practice
+the view's floor (`cl_pitchdown`, 70 degrees) keeps the open waist out of frame, which is why this is a defect
+you have to go looking for rather than one you meet.
 
 Two genuine bugs were found and fixed on the way, and they are the reason animation works at all:
 
