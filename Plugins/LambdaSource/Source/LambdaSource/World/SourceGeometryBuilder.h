@@ -64,7 +64,8 @@ namespace SourceGeometry
 	 * "origin" keyvalue, so the result is already pivoted correctly for the entity to rotate around.
 	 */
 	LAMBDASOURCE_API void BuildModel(const FSourceBSPFile& Map, int32 ModelIndex, float Scale,
-		TArray<FSourceMeshSection>& OutSections, FSourceGeometryStats& OutStats);
+		TArray<FSourceMeshSection>& OutSections, FSourceGeometryStats& OutStats,
+		ULambdaMaterialLibrary* MaterialLibrary);
 
 	/**
 	 * Pushes sections into a procedural mesh component, assigning materials and hiding collision-only sections.

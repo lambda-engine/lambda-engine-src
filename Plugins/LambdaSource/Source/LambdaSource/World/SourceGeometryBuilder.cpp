@@ -5,8 +5,11 @@
 #include "Core/SourceCoordinates.h"
 
 void SourceGeometry::BuildModel(const FSourceBSPFile& Map, int32 ModelIndex, float Scale,
-	TArray<FSourceMeshSection>& OutSections, FSourceGeometryStats& OutStats)
+	TArray<FSourceMeshSection>& OutSections, FSourceGeometryStats& OutStats,
+	ULambdaMaterialLibrary* MaterialLibrary)
 {
+	// One lookup per material rather than per face; a map is thousands of faces over a few dozen materials.
+	TMap<int32, FIntPoint> MappingSizes;
 	using namespace SourceBSP;
 
 	OutSections.Reset();

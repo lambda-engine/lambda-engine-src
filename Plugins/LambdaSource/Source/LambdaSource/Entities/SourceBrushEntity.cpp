@@ -39,7 +39,7 @@ void ASourceBrushEntity::InitializeFromEntity(const FSourceBSPFile& Map, int32 M
 	// mesh is then pivoted exactly where Source rotates the brush model about.
 	TArray<FSourceMeshSection> Sections;
 	FSourceGeometryStats GeoStats;
-	SourceGeometry::BuildModel(Map, ModelIndex, Scale, Sections, GeoStats);
+	SourceGeometry::BuildModel(Map, ModelIndex, Scale, Sections, GeoStats, MaterialLibrary);
 	SourceGeometry::ApplyToComponent(BrushMesh, Sections, MaterialLibrary);
 
 	LocalBounds = FBox(ForceInit);

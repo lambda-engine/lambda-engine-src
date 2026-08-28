@@ -187,7 +187,7 @@ void ASourceBSPWorldActor::BuildWorldGeometry()
 	// Model 0 is the world; models 1..N belong to brush entities and are built by those actors instead.
 	TArray<FSourceMeshSection> Sections;
 	FSourceGeometryStats GeoStats;
-	SourceGeometry::BuildModel(*BSP, 0, Scale, Sections, GeoStats);
+	SourceGeometry::BuildModel(*BSP, 0, Scale, Sections, GeoStats, MaterialLibrary);
 	SourceGeometry::ApplyToComponent(WorldMesh, Sections, MaterialLibrary);
 
 	Stats.NumRenderedFaces = GeoStats.NumRenderedFaces;
