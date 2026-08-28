@@ -1052,8 +1052,42 @@ int32 FSourceMDLFile::FindOrAddIncludeGroup(const TSharedPtr<FSourceMDLFile>& Fi
 			++Mapped;
 		}
 	}
-	UE_LOG(LogLambdaSource, Verbose, TEXT("Model '%s': include group '%s', %d of %d bones map"),
-		*ModelName, *File->ModelName, Mapped, File->Bones.Num());
+	// The bind poses, both skeletons, in model space - what the retarget correction is the difference between.
+	auto BindGlobals = [](const TArray<FSourceStudioBone>& B)
+	{
+		TArray<FQuat4f> Out;
+		Out.SetNum(B.Num());
+		for (int32 i = 0; i < B.Num(); ++i)
+		{
+			Out[i] = (B[i].Parent != INDEX_NONE && B[i].Parent < i) ? Out[B[i].Parent] * B[i].Quat : B[i].Quat;
+		}
+		return Out;
+	};
+	const TArray<FQuat4f> SrcBind = BindGlobals(File->Bones);
+	const TArray<FQuat4f> TgtBind = BindGlobals(Bones);
+
+	Group.Correction.Init(FQuat4f::Identity, File->Bones.Num());
+	float WorstDegrees = 0.0f;
+	for (int32 b = 0; b < File->Bones.Num(); ++b)
+	{
+		const int32 Host = Group.BoneMap[b];
+		if (Host != INDEX_NONE && SrcBind.IsValidIndex(b) && TgtBind.IsValidIndex(Host))
+		{
+			Group.Correction[b] = SrcBind[b].Inverse() * TgtBind[Host];
+			Group.Correction[b].Normalize();
+			WorstDegrees = FMath::Max(WorstDegrees,
+				FMath::RadiansToDegrees(2.0f * FMath::Acos(FMath::Min(1.0f, FMath::Abs(Group.Correction[b].W)))));
+		}
+	}
+	// Measured as an angle, and with room to spare, because two models built from the same rig do not come out
+	// bit-identical: studiomdl stores a bone's bind rotation as euler degrees and rebuilds the quaternion from
+	// them, and the citizen's four animation libraries each land about a twelfth of a degree away from the
+	// citizen himself. That is not a different skeleton, and treating it as one would put every stock character
+	// through a retarget to fix nothing. A rig that genuinely needs one is out by tens of degrees.
+	Group.bNeedsRetarget = WorstDegrees > 1.0f;
+	UE_LOG(LogLambdaSource, Log, TEXT("Model '%s': include group '%s', %d of %d bones map, bind differs by %.2f deg%s"),
+		*ModelName, *File->ModelName, Mapped, File->Bones.Num(), WorstDegrees,
+		Group.bNeedsRetarget ? TEXT(" - retargeting") : TEXT(""));
 	IncludeGroups.Add(MoveTemp(Group));
 	return IncludeGroups.Num() - 1;
 }
@@ -1656,10 +1690,31 @@ bool FSourceMDLFile::CalcAnimation(int32 AnimDescIndex, float Cycle, FSourceLoca
 	// library's; the group's map says which of our bones each one is.
 	const FSourceMDLFile* DataModel = this;
 	const TArray<int32>* BoneMap = nullptr;
+	const FIncludeGroup* Group = nullptr;
 	if (Anim.Group > 0 && IncludeGroups.IsValidIndex(Anim.Group - 1))
 	{
-		DataModel = IncludeGroups[Anim.Group - 1].File.Get();
-		BoneMap = &IncludeGroups[Anim.Group - 1].BoneMap;
+		Group = &IncludeGroups[Anim.Group - 1];
+		DataModel = Group->File.Get();
+		BoneMap = &Group->BoneMap;
+	}
+
+	// A retargeted animation is collected in the library's own space first and converted in one pass at the
+	// end, because a bone's local rotation says nothing on its own - it is only meaningful next to the parent
+	// it was measured against, and that parent is not always the same bone on both rigs. Deltas are exempt:
+	// they are an offset inside a single bone's frame, so conjugating by that bone's correction is the whole
+	// job and no hierarchy is involved.
+	const bool bRetarget = Group && Group->bNeedsRetarget && !bDelta;
+	TArray<FQuat4f> LibQuat;
+	TArray<FVector3f> LibPos;
+	if (bRetarget)
+	{
+		LibQuat.SetNumUninitialized(DataModel->Bones.Num());
+		LibPos.SetNumUninitialized(DataModel->Bones.Num());
+		for (int32 b = 0; b < DataModel->Bones.Num(); ++b)
+		{
+			LibQuat[b] = DataModel->Bones[b].Quat;	// bones the animation leaves alone stay at the library's bind
+			LibPos[b] = DataModel->Bones[b].Pos;
+		}
 	}
 
 	// Block 0 is inside the .mdl, relative to the animdesc; any other block is a byte range of the .ani file.
@@ -1748,11 +1803,27 @@ bool FSourceMDLFile::CalcAnimation(int32 AnimDescIndex, float Cycle, FSourceLoca
 			Pos = (Flags & STUDIOANIM::FLAG_DELTA) ? FVector3f::ZeroVector : Bone.Pos;
 		}
 
-		const int32 OurBone = BoneMap ? (*BoneMap)[BoneIdx] : BoneIdx;
-		if (OurBone != INDEX_NONE)
+		if (bRetarget)
 		{
-			Out.Quat[OurBone] = Q;
-			Out.Pos[OurBone] = Pos;
+			LibQuat[BoneIdx] = Q;
+			LibPos[BoneIdx] = Pos;
+		}
+		else if (const int32 OurBone = BoneMap ? (*BoneMap)[BoneIdx] : BoneIdx; OurBone != INDEX_NONE)
+		{
+			if (Group && Group->bNeedsRetarget)
+			{
+				// A delta never leaves its own bone's frame, so it only has to be turned into the frame this
+				// skeleton uses for that bone: conjugation by the correction, and nothing else.
+				const FQuat4f& C = Group->Correction[BoneIdx];
+				Out.Quat[OurBone] = C.Inverse() * Q * C;
+				Out.Quat[OurBone].Normalize();
+				Out.Pos[OurBone] = C.Inverse().RotateVector(Pos);
+			}
+			else
+			{
+				Out.Quat[OurBone] = Q;
+				Out.Pos[OurBone] = Pos;
+			}
 		}
 
 		if (NextOffset == 0)
@@ -1762,7 +1833,60 @@ bool FSourceMDLFile::CalcAnimation(int32 AnimDescIndex, float Cycle, FSourceLoca
 		P += NextOffset;
 	}
 
+	if (bRetarget)
+	{
+		RetargetPose(*Group, LibQuat, LibPos, Out);
+	}
+
 	return true;
+}
+
+void FSourceMDLFile::RetargetPose(const FIncludeGroup& Group, const TArray<FQuat4f>& LibQuat,
+	const TArray<FVector3f>& LibPos, FSourceLocalPose& Out) const
+{
+	const TArray<FSourceStudioBone>& LibBones = Group.File->Bones;
+
+	// The library's pose, in the library's model space. Source stores parents before children, so one pass
+	// down the array is enough.
+	TArray<FQuat4f> LibGlobalRot;
+	LibGlobalRot.SetNumUninitialized(LibBones.Num());
+	for (int32 b = 0; b < LibBones.Num(); ++b)
+	{
+		const int32 Parent = LibBones[b].Parent;
+		LibGlobalRot[b] = (Parent >= 0 && Parent < b) ? LibGlobalRot[Parent] * LibQuat[b] : LibQuat[b];
+	}
+
+	// And back out through our own hierarchy. A bone we have a counterpart for takes the library's model-space
+	// orientation, corrected onto our bind; one we do not keeps whatever the pose already had, which is our own
+	// bind - and either way its children measure themselves against the result, so the chain stays whole even
+	// where the two skeletons disagree about its shape.
+	TArray<FQuat4f> OurGlobalRot;
+	OurGlobalRot.SetNumUninitialized(Bones.Num());
+	for (int32 h = 0; h < Bones.Num(); ++h)
+	{
+		const int32 Parent = Bones[h].Parent;
+		const FQuat4f ParentRot = (Parent >= 0 && Parent < h) ? OurGlobalRot[Parent] : FQuat4f::Identity;
+		const int32 Theirs = Group.HostToInclude.IsValidIndex(h) ? Group.HostToInclude[h] : INDEX_NONE;
+		if (Theirs == INDEX_NONE)
+		{
+			OurGlobalRot[h] = ParentRot * Out.Quat[h];
+			continue;
+		}
+
+		OurGlobalRot[h] = LibGlobalRot[Theirs] * Group.Correction[Theirs];
+		OurGlobalRot[h].Normalize();
+		Out.Quat[h] = ParentRot.Inverse() * OurGlobalRot[h];
+		Out.Quat[h].Normalize();
+
+		// Bone offsets belong to the skeleton wearing them - taking the library's would hand this model
+		// somebody else's proportions. Only the movement is borrowed: how far the bone has travelled from its
+		// own bind, put into model space and read back in ours. For everything but the root that is zero, which
+		// is why a borrowed walk does not stretch anybody's legs.
+		const int32 TheirParent = LibBones[Theirs].Parent;
+		const FQuat4f TheirParentRot = LibGlobalRot.IsValidIndex(TheirParent) ? LibGlobalRot[TheirParent] : FQuat4f::Identity;
+		const FVector3f Motion = TheirParentRot.RotateVector(LibPos[Theirs] - LibBones[Theirs].Pos);
+		Out.Pos[h] = Bones[h].Pos + ParentRot.UnrotateVector(Motion);
+	}
 }
 
 bool FSourceMDLFile::IsSequenceDelta(int32 SequenceIndex) const

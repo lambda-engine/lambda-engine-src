@@ -315,7 +315,12 @@ private:
 	bool CalcPoseSingle(int32 SequenceIndex, float Cycle, FSourceLocalPose& Out,
 		const TArray<float>* PoseParamValues = nullptr) const;
 	/** CalcAnimation: one animdesc decoded at a cycle into a pose of its own. */
+	struct FIncludeGroup;	// declared below, with the rest of the include-model state
+
 	bool CalcAnimation(int32 AnimDescIndex, float Cycle, FSourceLocalPose& Out) const;
+	/** Re-expresses a borrowed pose, gathered in the library's skeleton, in this model's. See FIncludeGroup. */
+	void RetargetPose(const FIncludeGroup& Group, const TArray<FQuat4f>& LibQuat, const TArray<FVector3f>& LibPos,
+		FSourceLocalPose& Out) const;
 	/**
 	 * Studio_LocalPoseParameter: where a pose parameter's value falls in one axis of a sequence's blend grid,
 	 * as the cell below it and how far past that cell it sits.
@@ -358,6 +363,28 @@ private:
 		TSharedPtr<FSourceMDLFile> File;
 		TArray<int32> BoneMap;	// the include's bone index -> this model's, INDEX_NONE where this model has none
 		TArray<int32> HostToInclude;	// and back the other way, for reading the include's per-bone data
+
+		/**
+		 * Retargeting, per bone of the library.
+		 *
+		 * Sharing bone names is not the same as sharing a bind pose. A rig converted from elsewhere can carry
+		 * Half-Life's names on bones that point in entirely different directions, and a local rotation authored
+		 * for one bind means something else on the other - the animation plays, and the model ties itself in a
+		 * knot. Correction is that difference, per bone, in model space: SrcBindGlobal^-1 * TgtBindGlobal. Turn
+		 * the library's pose into model space, apply it, and read the result back out in this skeleton's own
+		 * hierarchy, and a walk authored for one rig is a walk on the other.
+		 *
+		 * It has to go through model space rather than bone by bone, because the two rigs are not only aimed
+		 * differently, they are not always shaped the same: ValveBiped hangs the clavicles off a Spine4 that a
+		 * Mixamo rig does not have at all. A local rotation is meaningless without the parent it was measured
+		 * against, so the parent chain is re-walked on the way out - which also drops the bones this model has
+		 * no counterpart for, instead of applying their rotation to the wrong joint.
+		 *
+		 * Two rigs that already agree produce identity everywhere and bNeedsRetarget stays false, so a citizen
+		 * borrowing male_shared pays nothing for this.
+		 */
+		TArray<FQuat4f> Correction;
+		bool bNeedsRetarget = false;
 	};
 	TArray<FIncludeGroup> IncludeGroups;
 	int32 NumLocalSequences = 0;
