@@ -250,13 +250,22 @@ FString ALambdaCharacter::ChoosePlayerBodyActivity() const
 	// and pose parameters are not driven yet.
 	const UCharacterMovementComponent* Move = GetCharacterMovement();
 	const FString Suffix = WeaponActivitySuffix();
-	if (Move && Move->IsFalling())
-	{
-		return FString::Printf(TEXT("ACT_HL2MP_JUMP_%s"), *Suffix);
-	}
 	const float Scale = ULambdaSourceSettings::Get().UnitScale;
 	const float Speed = Move ? Move->Velocity.Size2D() / Scale : 0.0f;
 	const bool bDucked = bIsCrouched || (Move && Move->bWantsToCrouch);
+
+	if (Move && Move->IsFalling())
+	{
+		// Ducking beats falling here, and it has to. A crouch jump lifts the feet by the whole difference
+		// between the hulls - that is what the mechanic is - and the model hangs from the hull's floor, so its
+		// origin rises 36 units in one frame. A standing jump pose on a risen origin puts the model's head
+		// above the camera it belongs to, which reads as the body snapping upward. The crouch pose brings the
+		// knees up by the same amount the origin did, so the head stays where the player's eyes are. The
+		// hl2mp set has no crouch-jump of its own, so its crouched idle stands in.
+		return bDucked
+			? FString::Printf(TEXT("ACT_HL2MP_IDLE_CROUCH_%s"), *Suffix)
+			: FString::Printf(TEXT("ACT_HL2MP_JUMP_%s"), *Suffix);
+	}
 	const TCHAR* State;
 	if (bDucked)
 	{
@@ -370,6 +379,7 @@ void ALambdaCharacter::UpdatePlayerBody(float DeltaSeconds)
 	const float HalfHeight = GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
 	const FVector Offset(0.0f, 0.0f, -HalfHeight);
 
+	const bool bDucked = bIsCrouched || (GetCharacterMovement() && GetCharacterMovement()->bWantsToCrouch);
 	const FString WantedActivity = ChoosePlayerBodyActivity();
 	const FString Wanted = ChoosePlayerBodySequence();
 	const bool bMoving = GetCharacterMovement() && GetCharacterMovement()->Velocity.Size2D() > 1.0f;
@@ -426,7 +436,14 @@ void ALambdaCharacter::UpdatePlayerBody(float DeltaSeconds)
 		}
 		if (Sequence != INDEX_NONE && Sequence != Part->GetSequence())
 		{
-			Part->PlaySequence(Sequence);
+			// A duck that begins in mid air is instant in every other respect - the hull swaps, the feet come
+			// up the whole 36 units and the eye drops to meet them, all in one frame - so the body must change
+			// in that frame too. Blending it over a fifth of a second leaves the model standing on an origin
+			// that has already risen, which reads as the body lurching upward and then settling. On the ground
+			// nothing jumps, and the blend is what keeps a crouch from being a snap, so it is kept there.
+			const bool bAirborneDuckChange = bDucked != bLastBodyDucked
+				&& GetCharacterMovement() && GetCharacterMovement()->IsFalling();
+			Part->PlaySequence(Sequence, !bAirborneDuckChange);
 		}
 
 		// The cycle keeps pace with the ground so the feet do not skate. Source reads the authored speed out of
@@ -457,6 +474,10 @@ void ALambdaCharacter::UpdatePlayerBody(float DeltaSeconds)
 		}
 
 	}
+
+	// Once per frame, after both meshes have looked at it: whichever ran first would otherwise consume the
+	// change and leave the other believing nothing had happened.
+	bLastBodyDucked = bDucked;
 }
 
 void ALambdaCharacter::SolveHoldPose(USourceStudioModelComponent* Body)

@@ -199,6 +199,8 @@ protected:
 	/** Pulls the camera back to cam_idealdist behind the eye, stopping short of whatever is in the way. */
 	void UpdateCameraDistance();
 	bool bThirdPerson = false;
+	/** What the body last posed as, so a duck begun in mid air can change the pose in one frame. */
+	bool bLastBodyDucked = false;
 
 public:
 	/** Freezes the shadow body's arms into a two-handed carry, solved from the model's own bind skeleton. */
