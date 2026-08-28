@@ -1883,6 +1883,11 @@ void ALambdaCharacter::DoMuzzleFlash()
 		return;
 	}
 
+	if (bThirdPerson)
+	{
+		return;	// the flash belongs to the view model, and in third person there is no view model to flash
+	}
+
 	MuzzleFlashMesh->SetVisibility(true);
 	// m_flDieTime is 0.01s, well under a frame at any sane framerate, so hold the flash for one rendered frame
 	// rather than letting it be skipped entirely.

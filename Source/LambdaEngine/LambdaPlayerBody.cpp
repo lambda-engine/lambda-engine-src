@@ -53,14 +53,15 @@ static FAutoConsoleVariableRef CVarLegsOffsetUp(
 	GLegsOffsetUp,
 	TEXT("Centimetres to raise or lower the first-person legs."));
 
-// Source's cl_pitchdown / cl_pitchup, with one non-Source default: straight down is 89 in Half-Life, but at 90
-// the player is staring into the open waist of their own legs model, so the floor of the view stops a little
-// higher. Up stays at Source's value.
-static float GPitchDown = 80.0f;
+// Source's cl_pitchdown / cl_pitchup, with one non-Source default: straight down is 89 in Half-Life, but the
+// legs model is cut off at the waist and open there, so the last stretch of the look-down has the player
+// staring into his own hips. The floor of the view stops short of it. Only in first person - from behind, the
+// legs are not in the way and there is nothing to stop short of, so third person keeps Source's own value.
+static float GPitchDown = 70.0f;
 static FAutoConsoleVariableRef CVarPitchDown(
 	TEXT("cl_pitchdown"),
 	GPitchDown,
-	TEXT("How far below the horizon the view may pitch, in degrees. Source's default is 89."));
+	TEXT("How far below the horizon the view may pitch in first person, in degrees. Source's default is 89."));
 
 static float GPitchUp = 89.0f;
 static FAutoConsoleVariableRef CVarPitchUp(
@@ -110,11 +111,7 @@ void ALambdaCharacter::SetThirdPerson(bool bEnable)
 		WeaponShadowMesh->SetOwnerNoSee(!bThirdPerson);
 	}
 	// The view model is the first-person illusion; in third person the world model in the body's hand is the
-	// weapon, and drawing both means carrying two.
-	if (ViewModelMesh)
-	{
-		ViewModelMesh->SetVisibility(!bThirdPerson, true);
-	}
+	// weapon, and drawing both means carrying two. UpdatePlayerBody keeps it that way from here.
 	if (MuzzleFlashMesh)
 	{
 		MuzzleFlashMesh->SetVisibility(false, true);
@@ -340,6 +337,14 @@ void ALambdaCharacter::UpdatePlayerBody(float DeltaSeconds)
 		SetupPlayerBody();
 	}
 
+	// The view model belongs to first person, and the mode says so every frame rather than once at the switch.
+	// A weapon change rebuilds that component from scratch, and anything rebuilt after the switch would
+	// otherwise come back visible - the gun reappearing in third person the moment you changed weapons.
+	if (ViewModelMesh && ViewModelMesh->IsVisible() == bThirdPerson)
+	{
+		ViewModelMesh->SetVisibility(!bThirdPerson, true);
+	}
+
 	UpdateCameraDistance();
 
 	// The view's floor and ceiling (CInput::AdjustPitch clamping to cl_pitchdown/cl_pitchup).
@@ -347,7 +352,9 @@ void ALambdaCharacter::UpdatePlayerBody(float DeltaSeconds)
 	{
 		if (PC->PlayerCameraManager)
 		{
-			PC->PlayerCameraManager->ViewPitchMin = -GPitchDown;	// UE pitch is positive upward
+			// UE pitch is positive upward. The floor is only raised in first person; third person watches
+			// from behind and can look straight down at the player without meeting the inside of anything.
+			PC->PlayerCameraManager->ViewPitchMin = bThirdPerson ? -89.0f : -GPitchDown;
 			PC->PlayerCameraManager->ViewPitchMax = GPitchUp;
 		}
 	}
@@ -511,14 +518,25 @@ void ALambdaCharacter::UpdateWeaponShadow(USourceStudioModelComponent* Body)
 			bWeaponShadowBonemerged = false;
 			WeaponShadowRootBind = FTransform::Identity;
 			const float Scale = ULambdaSourceSettings::Get().UnitScale;
-			for (const FSourceStudioBone& WBone : WeaponShadowMesh->GetModel()->GetBones())
+			const TArray<FSourceStudioBone>& WBones = WeaponShadowMesh->GetModel()->GetBones();
+			for (int32 wb = 0; wb < WBones.Num(); ++wb)
 			{
-				if (WBone.Name.Equals(TEXT("ValveBiped.Bip01_R_Hand"), ESearchCase::IgnoreCase))
+				if (!WBones[wb].Name.Equals(TEXT("ValveBiped.Bip01_R_Hand"), ESearchCase::IgnoreCase))
 				{
-					WeaponShadowRootBind = FSourceMatrix3x4::FromQuatPos(WBone.Quat, WBone.Pos).ToUETransform(Scale);
-					bWeaponShadowBonemerged = true;
-					break;
+					continue;
 				}
+				// The hand bone in model space, not just its own local: some world models hang the hand off a
+				// bare "ValveBiped" root that carries a rotation of its own - w_smg1's is ninety degrees, which
+				// is exactly how far wrong the gun sat when only the local transform was undone. The shotgun's
+				// hand is the root, so for it the walk is a single step and nothing changes.
+				FTransform Bind = FSourceMatrix3x4::FromQuatPos(WBones[wb].Quat, WBones[wb].Pos).ToUETransform(Scale);
+				for (int32 P = WBones[wb].Parent; P != INDEX_NONE && WBones.IsValidIndex(P); P = WBones[P].Parent)
+				{
+					Bind = Bind * FSourceMatrix3x4::FromQuatPos(WBones[P].Quat, WBones[P].Pos).ToUETransform(Scale);
+				}
+				WeaponShadowRootBind = Bind;
+				bWeaponShadowBonemerged = true;
+				break;
 			}
 
 			// Find the hand once per body model: the rig is Mixamo-named.
