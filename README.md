@@ -142,7 +142,7 @@ Clip sizes, ammo types, sounds and damage come from `scripts/weapon_*.txt`, `scr
 | Entity | Status |
 |---|---|
 | `info_player_start`, `info_player_deathmatch`, `info_player_coop`, `info_player_terrorist`, `info_player_counterterrorist` | Done |
-| `light`, `light_spot`, `light_environment` | Done |
+| `light`, `light_spot`, `light_environment` | Done — `light` and `light_spot` carry Source's appearances (the twelve preset styles and a custom `pattern`), start dark on the spawnflag, and answer to TurnOn, TurnOff, Toggle, SetPattern and FadeToPattern. `light_environment` is a sun and takes no style |
 | `prop_physics`, `prop_physics_override`, `prop_physics_multiplayer`, `physics_prop` | Done |
 | `point_template` | Done |
 | `item_ammo_*`, `item_box_*`, `item_large_box_*`, `item_rpg_round`, `item_ar2_grenade` | Done |

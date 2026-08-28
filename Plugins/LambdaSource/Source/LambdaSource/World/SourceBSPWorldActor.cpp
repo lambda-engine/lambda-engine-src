@@ -1,4 +1,6 @@
 #include "World/SourceBSPWorldActor.h"
+
+#include "Entities/SourceLight.h"
 #include "Rendering/SourceImpactEffects.h"
 #include "Creatures/SourceNPCHeadcrab.h"
 #include "Creatures/SourceNPCAntlion.h"
@@ -670,16 +672,23 @@ void ASourceBSPWorldActor::SpawnPointLight(const FSourceEntity& Entity)
 	FActorSpawnParameters Params;
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 	Params.ObjectFlags |= RF_Transient;
-	APointLight* Actor = World->SpawnActor<APointLight>(APointLight::StaticClass(), FSourceCoords::ToUE(Origin), FRotator::ZeroRotator, Params);
+	// An ASourceLight rather than a bare APointLight: a light carries an appearance and answers to TurnOn,
+	// TurnOff and the rest, so it has to be an entity the I/O queue can find by name.
+	ASourceLight* Actor = World->SpawnActor<ASourceLight>(ASourceLight::StaticClass(), FSourceCoords::ToUE(Origin), FRotator::ZeroRotator, Params);
 	if (!Actor)
 	{
 		return;
 	}
-	ConfigureLocalLight(Actor->PointLightComponent, Entity);
+	ULocalLightComponent* Light = Actor->CreateLightComponent(Entity);
+	ConfigureLocalLight(Light, Entity);
+	// After the intensity is set, because the appearance scales whatever the light is worth at full brightness.
+	Actor->InitializeLight(Entity, this);
+	RegisterEntity(Actor);
 	SpawnedActors.Add(Actor);
 	++Stats.NumLights;
-	UE_LOG(LogLambdaSource, Log, TEXT("light at Source(%s): %s cd, colour %s, radius %.0f cm"), *Origin.ToString(),
-		*FString::SanitizeFloat(Actor->PointLightComponent->Intensity), *Actor->PointLightComponent->GetLightColor().ToString(), Actor->PointLightComponent->AttenuationRadius);
+	UE_LOG(LogLambdaSource, Log, TEXT("light at Source(%s): %s cd, colour %s, radius %.0f cm, pattern '%s'"), *Origin.ToString(),
+		*FString::SanitizeFloat(Light->Intensity), *Light->GetLightColor().ToString(), Light->AttenuationRadius,
+		*Actor->GetActivePattern());
 }
 
 void ASourceBSPWorldActor::SpawnSpotLight(const FSourceEntity& Entity)
@@ -696,17 +705,23 @@ void ASourceBSPWorldActor::SpawnSpotLight(const FSourceEntity& Entity)
 	FActorSpawnParameters Params;
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 	Params.ObjectFlags |= RF_Transient;
-	ASpotLight* Actor = World->SpawnActor<ASpotLight>(ASpotLight::StaticClass(), FSourceCoords::ToUE(Origin), FSourceCoords::LightAnglesToUE(Pitch, Yaw), Params);
+	ASourceLight* Actor = World->SpawnActor<ASourceLight>(ASourceLight::StaticClass(), FSourceCoords::ToUE(Origin), FSourceCoords::LightAnglesToUE(Pitch, Yaw), Params);
 	if (!Actor)
 	{
 		return;
 	}
-	USpotLightComponent* Light = Actor->SpotLightComponent;
+	USpotLightComponent* Light = Cast<USpotLightComponent>(Actor->CreateLightComponent(Entity));
+	if (!Light)
+	{
+		return;
+	}
 	ConfigureLocalLight(Light, Entity);
 	const float OuterCone = FMath::Clamp(Entity.GetFloat(TEXT("_cone"), 45.0f), 1.0f, 80.0f);
 	const float InnerCone = FMath::Clamp(Entity.GetFloat(TEXT("_inner_cone"), 30.0f), 0.0f, OuterCone);
 	Light->SetOuterConeAngle(OuterCone);
 	Light->SetInnerConeAngle(InnerCone);
+	Actor->InitializeLight(Entity, this);
+	RegisterEntity(Actor);
 	SpawnedActors.Add(Actor);
 	++Stats.NumLights;
 }
