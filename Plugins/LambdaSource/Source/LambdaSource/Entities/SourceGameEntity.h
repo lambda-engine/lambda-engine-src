@@ -47,7 +47,8 @@ public:
 	 * far is left to go is measured each tick from where the entity is, so a swing reversed part way turns
 	 * back through what it travelled.
 	 */
-	void BeginAxisMove(const FVector3f& Axis, const FVector3f& DestinationAngles, float Speed);
+	void BeginAxisMove(const FVector3f& AxisPoint, const FVector3f& AxisDir,
+		const FVector3f& DestinationOrigin, const FVector3f& DestinationAngles, float Speed);
 	void CancelLinearMove();
 
 private:
@@ -73,9 +74,11 @@ private:
 	bool bMoving = false;
 	bool bMovingAngular = false;
 
-	/** Set for a BeginAxisMove, whose destination is an orientation rather than a triple of angles. */
+	/** Set for a BeginAxisMove, whose destination is a whole pose rather than a triple of angles. */
 	bool bMovingAxis = false;
 	FQuat AxisTargetRotation = FQuat::Identity;
+	FVector3f AxisTargetOrigin = FVector3f::ZeroVector;
+	FVector AxisPivotUE = FVector::ZeroVector;
 	FVector AxisUnitUE = FVector::ZAxisVector;
 	FVector3f MoveTarget = FVector3f::ZeroVector;		// a position, or an angle when bMovingAngular
 	float MoveSpeed = 0.0f;

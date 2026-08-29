@@ -49,8 +49,10 @@ public:
 	virtual void GetBoundsSize(lambda::EntityId Entity, lambda::Vec3* OutSize) const override;
 	virtual void LinearMove(lambda::EntityId Entity, const lambda::Vec3& Destination, float Speed) override;
 	virtual void AngularMove(lambda::EntityId Entity, const lambda::Vec3& DestinationAngles, float Speed) override;
-	virtual void AngularMoveAxis(lambda::EntityId Entity, const lambda::Vec3& Axis, const lambda::Vec3& DestinationAngles, float Speed) override;
-	virtual void RotateAngles(const lambda::Vec3& Angles, const lambda::Vec3& Axis, float Degrees, lambda::Vec3* OutAngles) const override;
+	virtual void AngularMoveAxis(lambda::EntityId Entity, const lambda::Vec3& AxisPoint, const lambda::Vec3& AxisDir,
+		const lambda::Vec3& DestinationOrigin, const lambda::Vec3& DestinationAngles, float Speed) override;
+	virtual void RotateAboutAxis(const lambda::Vec3& Origin, const lambda::Vec3& Angles, const lambda::Vec3& AxisPoint,
+		const lambda::Vec3& AxisDir, float Degrees, lambda::Vec3* OutOrigin, lambda::Vec3* OutAngles) const override;
 	virtual void StopMove(lambda::EntityId Entity) override;
 	virtual void SetSolid(lambda::EntityId Entity, bool bSolid) override;
 	virtual void SetTriggerVolume(lambda::EntityId Entity, bool bTrigger) override;

@@ -111,9 +111,10 @@ void ASourceGameEntity::BeginAngularMove(const FVector3f& DestinationAngles, flo
 	bMovingAxis = false;
 }
 
-void ASourceGameEntity::BeginAxisMove(const FVector3f& Axis, const FVector3f& DestinationAngles, float Speed)
+void ASourceGameEntity::BeginAxisMove(const FVector3f& AxisPoint, const FVector3f& AxisDir,
+	const FVector3f& DestinationOrigin, const FVector3f& DestinationAngles, float Speed)
 {
-	const FVector Unit = FSourceCoords::ToUEDirection(Axis);
+	const FVector Unit = FSourceCoords::ToUEDirection(AxisDir);
 
 	// No axis is no hinge. Rather than turn about an arbitrary one, go nowhere and report arrival: a door
 	// with a broken hinge stays shut instead of tearing itself out of its frame.
@@ -129,7 +130,9 @@ void ASourceGameEntity::BeginAxisMove(const FVector3f& Axis, const FVector3f& De
 	}
 
 	AxisUnitUE = Unit;
+	AxisPivotUE = FSourceCoords::ToUE(AxisPoint, FSourceCoords::GetUnitScale());
 	AxisTargetRotation = FSourceCoords::AnglesToUE(DestinationAngles).Quaternion();
+	AxisTargetOrigin = DestinationOrigin;
 
 	MoveSpeed = FMath::Max(1.0f, Speed);
 	bMoving = true;
@@ -154,6 +157,7 @@ bool ASourceGameEntity::StepAxisMove(float DeltaSeconds)
 	if (FMath::Abs(Remaining) <= Step || FMath::Abs(Remaining) < KINDA_SMALL_NUMBER)
 	{
 		SetSourceAngles(FSourceCoords::AnglesFromUE(AxisTargetRotation.Rotator()));
+		SetSourceOrigin(AxisTargetOrigin);
 		return true;
 	}
 
@@ -162,6 +166,13 @@ bool ASourceGameEntity::StepAxisMove(float DeltaSeconds)
 	// Back through Source angles rather than straight onto the actor: SourceAngles is what GetAngles answers
 	// and what the next move starts from, so it has to stay the truth about where the entity is pointing.
 	SetSourceAngles(FSourceCoords::AnglesFromUE((Turn * Current).Rotator()));
+
+	// A hinge that misses the entity's own origin carries it around the line, so the same turn is applied to
+	// where it is as to which way it faces. One that runs through the origin leaves this a no-op.
+	const float Scale = FSourceCoords::GetUnitScale();
+	const FVector Position = FSourceCoords::ToUE(GetSourceOrigin(), Scale);
+	SetSourceOrigin(FSourceCoords::ToSource(AxisPivotUE + Turn.RotateVector(Position - AxisPivotUE), Scale));
+
 	return false;
 }
 

@@ -266,31 +266,51 @@ void FLambdaGameDll::AngularMove(lambda::EntityId Entity, const lambda::Vec3& De
 	}
 }
 
-void FLambdaGameDll::AngularMoveAxis(lambda::EntityId Entity, const lambda::Vec3& Axis, const lambda::Vec3& DestinationAngles, float Speed)
+void FLambdaGameDll::AngularMoveAxis(lambda::EntityId Entity, const lambda::Vec3& AxisPoint, const lambda::Vec3& AxisDir,
+	const lambda::Vec3& DestinationOrigin, const lambda::Vec3& DestinationAngles, float Speed)
 {
 	if (ASourceGameEntity* Actor = Cast<ASourceGameEntity>(ResolveEntity(Entity)))
 	{
-		Actor->BeginAxisMove(FVector3f(Axis.x, Axis.y, Axis.z),
+		Actor->BeginAxisMove(FVector3f(AxisPoint.x, AxisPoint.y, AxisPoint.z), FVector3f(AxisDir.x, AxisDir.y, AxisDir.z),
+			FVector3f(DestinationOrigin.x, DestinationOrigin.y, DestinationOrigin.z),
 			FVector3f(DestinationAngles.x, DestinationAngles.y, DestinationAngles.z), Speed);
 	}
 }
 
-void FLambdaGameDll::RotateAngles(const lambda::Vec3& Angles, const lambda::Vec3& Axis, float Degrees,
-	lambda::Vec3* OutAngles) const
+void FLambdaGameDll::RotateAboutAxis(const lambda::Vec3& Origin, const lambda::Vec3& Angles, const lambda::Vec3& AxisPoint,
+	const lambda::Vec3& AxisDir, float Degrees, lambda::Vec3* OutOrigin, lambda::Vec3* OutAngles) const
 {
-	if (!OutAngles)
+	const FVector Unit = FSourceCoords::ToUEDirection(FVector3f(AxisDir.x, AxisDir.y, AxisDir.z));
+
+	// No hinge to turn about: the entity stays exactly where it is, so a door with a broken one stays shut
+	// rather than swinging off somewhere arbitrary.
+	if (Unit.IsNearlyZero())
 	{
+		if (OutOrigin) { *OutOrigin = Origin; }
+		if (OutAngles) { *OutAngles = Angles; }
 		return;
 	}
 
-	const FQuat Start = FSourceCoords::AnglesToUE(FVector3f(Angles.x, Angles.y, Angles.z)).Quaternion();
-	const FVector Unit = FSourceCoords::ToUEDirection(FVector3f(Axis.x, Axis.y, Axis.z));
+	const FQuat Turn(Unit, FMath::DegreesToRadians(Degrees));
 
-	const FVector3f Result = Unit.IsNearlyZero()
-		? FVector3f(Angles.x, Angles.y, Angles.z)
-		: FSourceCoords::AnglesFromUE((FQuat(Unit, FMath::DegreesToRadians(Degrees)) * Start).Rotator());
+	if (OutAngles)
+	{
+		const FVector3f Result = FSourceCoords::AnglesFromUE(
+			(Turn * FSourceCoords::AnglesToUE(FVector3f(Angles.x, Angles.y, Angles.z)).Quaternion()).Rotator());
+		*OutAngles = lambda::Vec3{ Result.X, Result.Y, Result.Z };
+	}
 
-	*OutAngles = lambda::Vec3{ Result.X, Result.Y, Result.Z };
+	if (OutOrigin)
+	{
+		// Turning about a line that misses the entity carries it round the line, so where it ends up is part
+		// of the answer and not only which way it faces.
+		const float Scale = FSourceCoords::GetUnitScale();
+		const FVector Pivot = FSourceCoords::ToUE(FVector3f(AxisPoint.x, AxisPoint.y, AxisPoint.z), Scale);
+		const FVector Start = FSourceCoords::ToUE(FVector3f(Origin.x, Origin.y, Origin.z), Scale);
+
+		const FVector3f Result = FSourceCoords::ToSource(Pivot + Turn.RotateVector(Start - Pivot), Scale);
+		*OutOrigin = lambda::Vec3{ Result.X, Result.Y, Result.Z };
+	}
 }
 
 void FLambdaGameDll::SetSolid(lambda::EntityId Entity, bool bSolid)
