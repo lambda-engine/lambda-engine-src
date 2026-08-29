@@ -1,6 +1,9 @@
 #include "World/SourceBSPWorldActor.h"
 
 #include "Entities/SourceLight.h"
+#include "Entities/SourceGameEntity.h"
+#include "Entities/SourceGamePointEntity.h"
+#include "Game/LambdaGameDll.h"
 #include "Rendering/SourceImpactEffects.h"
 #include "Creatures/SourceNPCHeadcrab.h"
 #include "Creatures/SourceNPCAntlion.h"
@@ -112,6 +115,9 @@ bool ASourceBSPWorldActor::LoadBSPFile(const FString& RelativePath)
 
 	MaterialLibrary = NewObject<ULambdaMaterialLibrary>(this);
 	MaterialLibrary->Initialize();
+
+	// Before any entity exists, so the first one spawned can already be a game-module entity.
+	FLambdaGameDll::Get().Load();
 
 	// CPropData::LevelInitPreEntity: how much punishment each kind of prop takes, read before any prop spawns.
 	FSourcePropData::Get().Load();
@@ -525,13 +531,39 @@ ASourceNPCBase* ASourceBSPWorldActor::SpawnNPC(const FSourceEntity& Entity, TSub
 	return NPC;
 }
 
+// Entities the game module implements are driven from LambdaGame.dll. Turned off, every entity falls back to
+// its native C++ class, which is how the two are compared: same map, same button, one switch apart.
+//
+// A command-line switch and not only a cvar, because -ExecCmds applies its cvars after the map has loaded -
+// by which point every entity has already been spawned one way or the other. A cvar set then reads as though
+// it worked and changes nothing, which is worse than not having it.
+static bool GUseGameModule = true;
+static FAutoConsoleVariableRef CVarUseGameModule(
+	TEXT("game_module"),
+	GUseGameModule,
+	TEXT("Let LambdaGame.dll implement the entities it claims. Takes effect on the next map load; use -nogamemodule to change this one."));
+
+/** Whether the game module should be consulted for this map, switch included. */
+static bool ShouldUseGameModule()
+{
+	static const bool bDisabledOnCommandLine = FParse::Param(FCommandLine::Get(), TEXT("nogamemodule"));
+	return GUseGameModule && !bDisabledOnCommandLine;
+}
+
 void ASourceBSPWorldActor::SpawnBrushEntity(const FSourceEntity& Entity, int32 ModelIndex)
 {
 	UWorld* World = GetWorld();
 	const FString& Class = Entity.ClassName;
 
+	// The game module gets first refusal. An entity it implements is spawned as a bare ASourceGameEntity and
+	// driven from the DLL; anything it does not claim keeps the native class below, which is what lets entities
+	// move across one at a time instead of all at once.
 	TSubclassOf<ASourceBrushEntity> ActorClass;
-	if (Class.Equals(TEXT("func_door_rotating"), ESearchCase::IgnoreCase))
+	if (ShouldUseGameModule() && FLambdaGameDll::Get().HandlesClass(Class))
+	{
+		ActorClass = ASourceGameEntity::StaticClass();
+	}
+	else if (Class.Equals(TEXT("func_door_rotating"), ESearchCase::IgnoreCase))
 	{
 		ActorClass = ASourceFuncDoorRotating::StaticClass();
 	}
@@ -672,6 +704,23 @@ void ASourceBSPWorldActor::SpawnPointLight(const FSourceEntity& Entity)
 	FActorSpawnParameters Params;
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 	Params.ObjectFlags |= RF_Transient;
+	// The game module gets first refusal here too. A light it claims becomes a bare point-entity host whose
+	// appearance is animated from the DLL; anything unclaimed keeps ASourceLight below.
+	if (ShouldUseGameModule() && FLambdaGameDll::Get().HandlesClass(Entity.ClassName))
+	{
+		if (ASourceGamePointEntity* GameActor = World->SpawnActor<ASourceGamePointEntity>(
+			ASourceGamePointEntity::StaticClass(), FSourceCoords::ToUE(Origin), FRotator::ZeroRotator, Params))
+		{
+			ULocalLightComponent* GameLight = GameActor->CreateLightComponent(Entity);
+			ConfigureLocalLight(GameLight, Entity);
+			GameActor->InitializeGameEntity(Entity, this, GameLight);
+			RegisterEntity(GameActor);
+			SpawnedActors.Add(GameActor);
+			++Stats.NumLights;
+			return;
+		}
+	}
+
 	// An ASourceLight rather than a bare APointLight: a light carries an appearance and answers to TurnOn,
 	// TurnOff and the rest, so it has to be an entity the I/O queue can find by name.
 	ASourceLight* Actor = World->SpawnActor<ASourceLight>(ASourceLight::StaticClass(), FSourceCoords::ToUE(Origin), FRotator::ZeroRotator, Params);
