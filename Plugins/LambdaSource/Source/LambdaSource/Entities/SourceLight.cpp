@@ -55,7 +55,9 @@ namespace
 // Logs a line whenever a light's appearance steps to a new brightness. An animated light is hard to judge by
 // eye - a strobe and a flicker look much the same at a glance, and a pattern that is subtly wrong looks like a
 // pattern - so this prints what it is actually playing, character by character, to be read rather than watched.
-static bool GLightDebug = false;
+// Shared with the game-module light host, so one flag reports both implementations and the two can be
+// compared line for line.
+bool GLightDebug = false;
 static FAutoConsoleVariableRef CVarLightDebug(
 	TEXT("light_debug"),
 	GLightDebug,
