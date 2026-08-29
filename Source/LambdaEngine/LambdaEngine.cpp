@@ -1,4 +1,5 @@
 #include "LambdaEngine.h"
+#include "RenderUtils.h"
 #include "FileSystem/LambdaFileSystem.h"
 #include "Misc/CommandLine.h"
 #include "Engine/World.h"
@@ -459,6 +460,75 @@ namespace
 	}
 }
 
+namespace
+{
+	// ---- rtx ----------------------------------------------------------------------------------------------
+	//
+	// Two lighting paths, chosen per machine rather than per project:
+	//
+	//   rtx    - Lumen GI and reflections over hardware ray tracing. The only Lumen this project can ever
+	//            have: software Lumen reads mesh distance fields, those are generated in the editor alone,
+	//            and every mesh here is built at runtime from a BSP.
+	//   legacy - no GI. Direct light, virtual shadow maps, screen-space reflections, and the ambient fill
+	//            the world actor already places. What every card can do.
+	//
+	// The default is rtx wherever the card can trace; -nortx forces legacy from the first frame, and the rtx
+	// console command moves between the two afterwards. All three cvars are render-thread safe, and the boot
+	// config asked for ERayTracingMode::Dynamic, which is what makes r.RayTracing.Enable a live switch
+	// instead of one read once at startup.
+
+	void ApplyRtx(bool bOn)
+	{
+		const TCHAR* Values[][2] = {
+			{ TEXT("r.RayTracing.Enable"),               bOn ? TEXT("1") : TEXT("0") },
+			{ TEXT("r.DynamicGlobalIlluminationMethod"), bOn ? TEXT("1") : TEXT("0") },
+			{ TEXT("r.ReflectionMethod"),                bOn ? TEXT("1") : TEXT("2") },	// Lumen / SSR
+		};
+		for (const auto& Pair : Values)
+		{
+			if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(Pair[0]))
+			{
+				// Console priority, or the project settings the ini wrote would win the argument.
+				Var->Set(Pair[1], ECVF_SetByConsole);
+			}
+		}
+		UE_LOG(LogLambda, Log, TEXT("rtx %s: %s"), bOn ? TEXT("1") : TEXT("0"),
+			bOn ? TEXT("Lumen over hardware ray tracing") : TEXT("legacy lighting (no GI, SSR)"));
+	}
+
+	/** Decides the boot value: rtx wherever the card can trace, unless -nortx said otherwise. */
+	void ApplyStartupRtx()
+	{
+		const bool bForcedOff = FParse::Param(FCommandLine::Get(), TEXT("nortx"));
+		const bool bAllowed = IsRayTracingAllowed();
+		if (!bAllowed)
+		{
+			UE_LOG(LogLambda, Log, TEXT("rtx: this GPU cannot ray trace; legacy lighting only"));
+		}
+		ApplyRtx(bAllowed && !bForcedOff);
+	}
+
+	FAutoConsoleCommand GRtxCommand(
+		TEXT("rtx"),
+		TEXT("rtx 1|0: Lumen over hardware ray tracing, or the legacy lighting path. No restart needed."),
+		FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
+		{
+			if (Args.Num() == 0)
+			{
+				UE_LOG(LogLambda, Display, TEXT("rtx is %d (%s)"), IsRayTracingEnabled() ? 1 : 0,
+					IsRayTracingAllowed() ? TEXT("supported by this GPU") : TEXT("not supported by this GPU"));
+				return;
+			}
+			const bool bOn = FCString::Atoi(*Args[0]) != 0;
+			if (bOn && !IsRayTracingAllowed())
+			{
+				UE_LOG(LogLambda, Display, TEXT("rtx: this GPU cannot ray trace; staying on legacy lighting"));
+				return;
+			}
+			ApplyRtx(bOn);
+		}));
+}
+
 void FLambdaEngineModule::StartupModule()
 {
 	UE_LOG(LogLambda, Log, TEXT("LambdaEngine game module started"));
@@ -466,6 +536,8 @@ void FLambdaEngineModule::StartupModule()
 	// The window is already built by the time this module is loaded, so what the command line asked of it is
 	// carried out as soon as there is an engine to ask rather than from the line itself.
 	FCoreDelegates::OnPostEngineInit.AddStatic(&ApplyWindowSettings);
+	// After the RHI exists, which is what IsRayTracingAllowed() needs to answer for this machine.
+	FCoreDelegates::OnPostEngineInit.AddStatic(&ApplyStartupRtx);
 	// Armed before the engine loads its first level, so the game's startup is covered rather than showing black
 	// until the menu appears.
 	FLambdaLoadingScreen::Arm();
