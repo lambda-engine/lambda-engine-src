@@ -51,12 +51,14 @@ void ASourceBrushEntity::InitializeFromEntity(const FSourceBSPFile& Map, int32 M
 		}
 	}
 
+	SourceGeometry::BuildModelBrushHulls(Map, ModelIndex, Scale, BrushHulls);
+
 	SetActorLocation(FSourceCoords::ToUE(SourceOrigin, Scale));
 	SetSourceAngles(SourceAngles);
 
-	UE_LOG(LogLambdaSource, Log, TEXT("%s (*%d) at Source(%s): %d faces, %d tris, %d sections, spawnflags %d"),
+	UE_LOG(LogLambdaSource, Log, TEXT("%s (*%d) at Source(%s): %d faces, %d tris, %d sections, %d brushes, spawnflags %d"),
 		*Entity.ClassName, ModelIndex, *SourceOrigin.ToString(), GeoStats.NumFaces, GeoStats.NumTriangles,
-		Sections.Num(), SpawnFlags);
+		Sections.Num(), BrushHulls.Num(), SpawnFlags);
 }
 
 void ASourceBrushEntity::SetSourceOrigin(const FVector3f& InOrigin)

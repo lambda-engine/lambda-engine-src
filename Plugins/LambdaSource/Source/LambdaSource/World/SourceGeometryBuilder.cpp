@@ -45,12 +45,16 @@ void SourceGeometry::BuildModel(const FSourceBSPFile& Map, int32 ModelIndex, flo
 
 		const texinfo_t* TexInfo = Map.TexInfos.IsValidIndex(Face.texinfo) ? &Map.TexInfos[Face.texinfo] : nullptr;
 		const int32 SurfFlags = TexInfo ? TexInfo->flags : 0;
-		if (SurfFlags & (SURF_HINT | SURF_SKIP | SURF_TRIGGER))
+		// Hint and skip are instructions to the compiler and describe nothing in the world, so they go.
+		// A trigger surface is not one of those: Source has the brush model itself to make a volume out of and
+		// never needs the faces, but here the faces ARE the model - drop them and a trigger_multiple has no
+		// shape for anything to walk into. It survives as collision-only, below, and is never drawn.
+		if (SurfFlags & (SURF_HINT | SURF_SKIP))
 		{
 			++OutStats.NumSkippedFaces;
 			continue;
 		}
-		const bool bCollisionOnly = (SurfFlags & (SURF_NODRAW | SURF_SKY | SURF_SKY2D)) != 0;
+		const bool bCollisionOnly = (SurfFlags & (SURF_NODRAW | SURF_SKY | SURF_SKY2D | SURF_TRIGGER)) != 0;
 
 		// Pick/create the section for this face.
 		int32 SectionIndex = INDEX_NONE;
@@ -193,6 +197,162 @@ void SourceGeometry::BuildModel(const FSourceBSPFile& Map, int32 ModelIndex, flo
 	for (const FSourceMeshSection& Section : OutSections)
 	{
 		OutStats.NumVertices += Section.Vertices.Num();
+	}
+}
+
+namespace
+{
+	/** Every leaf under a model's head node, following Source's own collision tree for the submodel. */
+	void CollectModelLeaves(const FSourceBSPFile& Map, int32 HeadNode, TArray<int32>& OutLeaves)
+	{
+		TArray<int32> Pending;
+		Pending.Push(HeadNode);
+		while (Pending.Num() > 0)
+		{
+			const int32 Index = Pending.Pop();
+			if (Index < 0)
+			{
+				// Children are stored as -(leaf + 1), so a negative child is a leaf and not a node.
+				const int32 Leaf = -1 - Index;
+				if (Map.Leafs.IsValidIndex(Leaf))
+				{
+					OutLeaves.AddUnique(Leaf);
+				}
+				continue;
+			}
+			if (!Map.Nodes.IsValidIndex(Index))
+			{
+				continue;
+			}
+			Pending.Push(Map.Nodes[Index].children[0]);
+			Pending.Push(Map.Nodes[Index].children[1]);
+		}
+	}
+
+	/** Where three planes meet, or false if any two of them are parallel enough not to. */
+	bool IntersectPlanes(const SourceBSP::dplane_t& A, const SourceBSP::dplane_t& B, const SourceBSP::dplane_t& C,
+		FVector3f& Out)
+	{
+		const FVector3f Na = A.normal.ToVector3f();
+		const FVector3f Nb = B.normal.ToVector3f();
+		const FVector3f Nc = C.normal.ToVector3f();
+		const float Denom = FVector3f::DotProduct(Na, FVector3f::CrossProduct(Nb, Nc));
+		if (FMath::Abs(Denom) < 1e-6f)
+		{
+			return false;
+		}
+		Out = (FVector3f::CrossProduct(Nb, Nc) * A.dist
+			+ FVector3f::CrossProduct(Nc, Na) * B.dist
+			+ FVector3f::CrossProduct(Na, Nb) * C.dist) / Denom;
+		return true;
+	}
+}
+
+void SourceGeometry::BuildModelBrushHulls(const FSourceBSPFile& Map, int32 ModelIndex, float Scale,
+	TArray<TArray<FVector>>& OutHulls)
+{
+	OutHulls.Reset();
+	if (!Map.Models.IsValidIndex(ModelIndex))
+	{
+		return;
+	}
+
+	TArray<int32> Leaves;
+	CollectModelLeaves(Map, Map.Models[ModelIndex].headnode, Leaves);
+
+	// A brush spanning several leaves is listed by each of them, and wants building once.
+	TArray<int32> BrushIndices;
+	for (int32 Leaf : Leaves)
+	{
+		const SourceBSP::dleaf_t& L = Map.Leafs[Leaf];
+		for (int32 i = 0; i < L.numleafbrushes; ++i)
+		{
+			const int32 At = L.firstleafbrush + i;
+			if (Map.LeafBrushes.IsValidIndex(At))
+			{
+				BrushIndices.AddUnique(Map.LeafBrushes[At]);
+			}
+		}
+	}
+
+	// Source's own tolerance for "on the plane" (ON_EPSILON), in Source units, which is what the planes are in.
+	constexpr float OnEpsilon = 0.1f;
+
+	TArray<SourceBSP::dplane_t> Sides;
+	for (int32 BrushIndex : BrushIndices)
+	{
+		if (!Map.Brushes.IsValidIndex(BrushIndex))
+		{
+			continue;
+		}
+		const SourceBSP::dbrush_t& Brush = Map.Brushes[BrushIndex];
+
+		Sides.Reset();
+		for (int32 i = 0; i < Brush.numsides; ++i)
+		{
+			const int32 At = Brush.firstside + i;
+			if (!Map.BrushSides.IsValidIndex(At))
+			{
+				continue;
+			}
+			const SourceBSP::dbrushside_t& Side = Map.BrushSides[At];
+			if (Side.bevel || !Map.Planes.IsValidIndex(Side.planenum))
+			{
+				continue;
+			}
+			Sides.Add(Map.Planes[Side.planenum]);
+		}
+		if (Sides.Num() < 4)
+		{
+			continue;		// fewer than four planes bound nothing
+		}
+
+		TArray<FVector> Points;
+		for (int32 i = 0; i < Sides.Num() - 2; ++i)
+		{
+			for (int32 j = i + 1; j < Sides.Num() - 1; ++j)
+			{
+				for (int32 k = j + 1; k < Sides.Num(); ++k)
+				{
+					FVector3f P;
+					if (!IntersectPlanes(Sides[i], Sides[j], Sides[k], P))
+					{
+						continue;
+					}
+					// The planes face out of the brush, so a corner is behind every one of them. A point in
+					// front of any plane is where two faces would have met had a third not cut them off first.
+					bool bInside = true;
+					for (int32 m = 0; m < Sides.Num() && bInside; ++m)
+					{
+						bInside = FVector3f::DotProduct(Sides[m].normal.ToVector3f(), P) - Sides[m].dist <= OnEpsilon;
+					}
+					if (!bInside)
+					{
+						continue;
+					}
+					// Every corner is found once per triple of planes that meets there, which for a plain box
+					// is three times over, and the arithmetic does not land on the same float each way round.
+					const FVector Point = FSourceCoords::ToUE(P, Scale);
+					bool bKnown = false;
+					for (const FVector& Existing : Points)
+					{
+						if (FVector::DistSquared(Existing, Point) < 0.01)
+						{
+							bKnown = true;
+							break;
+						}
+					}
+					if (!bKnown)
+					{
+						Points.Add(Point);
+					}
+				}
+			}
+		}
+		if (Points.Num() >= 4)
+		{
+			OutHulls.Emplace(MoveTemp(Points));
+		}
 	}
 }
 

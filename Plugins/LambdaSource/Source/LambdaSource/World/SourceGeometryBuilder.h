@@ -74,6 +74,21 @@ namespace SourceGeometry
 	 * EVERY pose update, which costs far more than the drawing does. Models collide by capsule and are shot at
 	 * through their hitboxes, so their mesh needs none.
 	 */
+	/**
+	 * Collects the convex hulls of the brushes a BSP model is made of, in the model's own space, UE units.
+	 *
+	 * This is the shape Source actually collides against. The faces are only the visible skin of it: a brush
+	 * model's triangles form a hollow shell, so a point in the middle of one touches nothing, which is no way
+	 * to ask whether somebody is standing inside a trigger. The brushes are convex by construction (that is
+	 * what a brush is), so each becomes one convex element and a concave entity becomes several.
+	 *
+	 * Vertices are recovered from the brush's own planes: every three of them meet at a point, and the points
+	 * that lie behind all the others are the corners. Bevel sides are skipped - vbsp adds those for sweeping
+	 * boxes against, and they only ever touch the brush's existing corners.
+	 */
+	LAMBDASOURCE_API void BuildModelBrushHulls(const FSourceBSPFile& Map, int32 ModelIndex, float Scale,
+		TArray<TArray<FVector>>& OutHulls);
+
 	LAMBDASOURCE_API void ApplyToComponent(UProceduralMeshComponent* Mesh, TArray<FSourceMeshSection>& Sections,
 		ULambdaMaterialLibrary* MaterialLibrary, bool bCreateCollision = true);
 }

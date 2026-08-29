@@ -53,4 +53,13 @@ protected:
 
 	/** Local-space bounds of the brush mesh in UE units (used by the door's open-away-from-player logic). */
 	FBox LocalBounds = FBox(ForceInit);
+
+	/**
+	 * The brushes this model is made of, as convex hulls in the same local space, UE units.
+	 *
+	 * Kept because the mesh cannot answer "is this point inside me" and some entities need to ask - a trigger
+	 * spends its whole life asking. Built once here rather than on demand, since it needs the BSP file and
+	 * this is the last moment the entity has one.
+	 */
+	TArray<TArray<FVector>> BrushHulls;
 };
