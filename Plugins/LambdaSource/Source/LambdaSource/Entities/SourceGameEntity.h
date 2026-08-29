@@ -38,7 +38,23 @@ public:
 	void BeginLinearMove(const FVector3f& Destination, float Speed);
 	/** CBaseToggle::AngularMove - turn toward a Source-space angle at a constant degrees per second. */
 	void BeginAngularMove(const FVector3f& DestinationAngles, float Speed);
+	/**
+	 * Turn to a Source-space angle about an arbitrary axis through the entity origin, at Speed degrees per
+	 * second.
+	 *
+	 * Unlike BeginAngularMove this follows the axis rather than walking the three angles independently, which
+	 * is the difference between a door on a tilted hinge swinging and the same door wobbling into place. How
+	 * far is left to go is measured each tick from where the entity is, so a swing reversed part way turns
+	 * back through what it travelled.
+	 */
+	void BeginAxisMove(const FVector3f& Axis, const FVector3f& DestinationAngles, float Speed);
 	void CancelLinearMove();
+
+private:
+	/** One tick of a hinge swing. Returns true once it has arrived. */
+	bool StepAxisMove(float DeltaSeconds);
+
+public:
 
 	void SetSolidity(bool bSolid);
 	/** Makes the brush a volume things pass through, reporting what enters and leaves. */
@@ -56,6 +72,11 @@ private:
 
 	bool bMoving = false;
 	bool bMovingAngular = false;
+
+	/** Set for a BeginAxisMove, whose destination is an orientation rather than a triple of angles. */
+	bool bMovingAxis = false;
+	FQuat AxisTargetRotation = FQuat::Identity;
+	FVector AxisUnitUE = FVector::ZAxisVector;
 	FVector3f MoveTarget = FVector3f::ZeroVector;		// a position, or an angle when bMovingAngular
 	float MoveSpeed = 0.0f;
 

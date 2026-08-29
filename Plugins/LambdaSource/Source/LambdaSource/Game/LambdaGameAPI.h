@@ -92,6 +92,26 @@ public:
 	virtual void LinearMove(EntityId Entity, const Vec3& Destination, float Speed) = 0;
 	/** The same, turning instead of sliding: degrees per second toward a destination angle. */
 	virtual void AngularMove(EntityId Entity, const Vec3& DestinationAngles, float Speed) = 0;
+	/**
+	 * The same again, but turning about one given axis rather than walking the three angles independently.
+	 *
+	 * AngularMove moves each of pitch, yaw and roll towards its destination on its own. That traces the swing
+	 * of a hinge only when the hinge is one of the three axes; on any other the entity arrives in the right
+	 * place having visibly wobbled its way there. This follows the axis, so any hinge swings like a hinge.
+	 *
+	 * Axis is a direction in Source space and need not be normalised. It is measured from wherever the entity
+	 * is now, so a door reversed half way through turns back through the part it actually travelled. Swings
+	 * of more than half a turn are not expressible: the short way round is always the way taken.
+	 */
+	virtual void AngularMoveAxis(EntityId Entity, const Vec3& Axis, const Vec3& DestinationAngles, float Speed) = 0;
+	/**
+	 * The angles reached by turning Degrees about Axis from Angles - the question "where does this hinge put
+	 * the door when it is open?".
+	 *
+	 * A query, not a movement: nothing is moved and nothing is remembered. It is here rather than in the game
+	 * because composing two rotations wants a quaternion, and the engine already has one.
+	 */
+	virtual void RotateAngles(const Vec3& Angles, const Vec3& Axis, float Degrees, Vec3* OutAngles) const = 0;
 	virtual void StopMove(EntityId Entity) = 0;
 	/** Whether the entity blocks anything. A door set passable stops shoving the player around. */
 	virtual void SetSolid(EntityId Entity, bool bSolid) = 0;

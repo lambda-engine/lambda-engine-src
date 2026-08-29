@@ -266,6 +266,33 @@ void FLambdaGameDll::AngularMove(lambda::EntityId Entity, const lambda::Vec3& De
 	}
 }
 
+void FLambdaGameDll::AngularMoveAxis(lambda::EntityId Entity, const lambda::Vec3& Axis, const lambda::Vec3& DestinationAngles, float Speed)
+{
+	if (ASourceGameEntity* Actor = Cast<ASourceGameEntity>(ResolveEntity(Entity)))
+	{
+		Actor->BeginAxisMove(FVector3f(Axis.x, Axis.y, Axis.z),
+			FVector3f(DestinationAngles.x, DestinationAngles.y, DestinationAngles.z), Speed);
+	}
+}
+
+void FLambdaGameDll::RotateAngles(const lambda::Vec3& Angles, const lambda::Vec3& Axis, float Degrees,
+	lambda::Vec3* OutAngles) const
+{
+	if (!OutAngles)
+	{
+		return;
+	}
+
+	const FQuat Start = FSourceCoords::AnglesToUE(FVector3f(Angles.x, Angles.y, Angles.z)).Quaternion();
+	const FVector Unit = FSourceCoords::ToUEDirection(FVector3f(Axis.x, Axis.y, Axis.z));
+
+	const FVector3f Result = Unit.IsNearlyZero()
+		? FVector3f(Angles.x, Angles.y, Angles.z)
+		: FSourceCoords::AnglesFromUE((FQuat(Unit, FMath::DegreesToRadians(Degrees)) * Start).Rotator());
+
+	*OutAngles = lambda::Vec3{ Result.X, Result.Y, Result.Z };
+}
+
 void FLambdaGameDll::SetSolid(lambda::EntityId Entity, bool bSolid)
 {
 	if (ASourceGameEntity* Actor = Cast<ASourceGameEntity>(ResolveEntity(Entity)))

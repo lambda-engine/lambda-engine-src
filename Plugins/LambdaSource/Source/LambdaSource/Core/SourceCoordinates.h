@@ -43,6 +43,12 @@ struct LAMBDASOURCE_API FSourceCoords
 		return FRotator(-Angles.X, -Angles.Y, -Angles.Z);
 	}
 
+	/** The way back, for anything that works out an orientation in UE space and has to store it as Source angles. */
+	static FORCEINLINE FVector3f AnglesFromUE(const FRotator& Rotation)
+	{
+		return FVector3f((float)-Rotation.Pitch, (float)-Rotation.Yaw, (float)-Rotation.Roll);
+	}
+
 	/**
 	 * Light entities (light_spot, light_environment) use vrad's convention: normal.z = +sin(pitch), so pitch -90 = straight
 	 * down. That matches UE's pitch sign directly; only yaw is mirrored.

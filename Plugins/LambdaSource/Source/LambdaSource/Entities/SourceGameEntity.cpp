@@ -1,6 +1,7 @@
 #include "Entities/SourceGameEntity.h"
 
 #include "Core/LambdaSourceModule.h"
+#include "Core/SourceCoordinates.h"
 #include "Audio/LambdaSoundLibrary.h"
 #include "Game/LambdaGameDll.h"
 #include "Kismet/GameplayStatics.h"
@@ -43,7 +44,24 @@ void ASourceGameEntity::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
-	if (bMoving)
+	if (bMoving && bMovingAxis)
+	{
+		if (StepAxisMove(DeltaSeconds))
+		{
+			bMoving = false;
+			bMovingAxis = false;
+			StopLoopingSoundNow();
+			if (Behaviour)
+			{
+				Behaviour->OnMoveDone(lambda::MoveResult::Arrived);
+			}
+		}
+		else
+		{
+			CheckBlocked();
+		}
+	}
+	else if (bMoving)
 	{
 		// LinearMove / AngularMove: constant speed towards the destination, and the last step lands exactly on
 		// it rather than overshooting - a door that stops a hair past its frame never quite closes.
@@ -81,6 +99,7 @@ void ASourceGameEntity::BeginLinearMove(const FVector3f& Destination, float Spee
 	MoveSpeed = FMath::Max(1.0f, Speed);
 	bMoving = true;
 	bMovingAngular = false;		// cleared, or a slide after a turn would keep turning
+	bMovingAxis = false;
 }
 
 void ASourceGameEntity::BeginAngularMove(const FVector3f& DestinationAngles, float Speed)
@@ -89,6 +108,61 @@ void ASourceGameEntity::BeginAngularMove(const FVector3f& DestinationAngles, flo
 	MoveSpeed = FMath::Max(1.0f, Speed);
 	bMoving = true;
 	bMovingAngular = true;
+	bMovingAxis = false;
+}
+
+void ASourceGameEntity::BeginAxisMove(const FVector3f& Axis, const FVector3f& DestinationAngles, float Speed)
+{
+	const FVector Unit = FSourceCoords::ToUEDirection(Axis);
+
+	// No axis is no hinge. Rather than turn about an arbitrary one, go nowhere and report arrival: a door
+	// with a broken hinge stays shut instead of tearing itself out of its frame.
+	if (Unit.IsNearlyZero())
+	{
+		bMoving = false;
+		bMovingAxis = false;
+		if (Behaviour)
+		{
+			Behaviour->OnMoveDone(lambda::MoveResult::Arrived);
+		}
+		return;
+	}
+
+	AxisUnitUE = Unit;
+	AxisTargetRotation = FSourceCoords::AnglesToUE(DestinationAngles).Quaternion();
+
+	MoveSpeed = FMath::Max(1.0f, Speed);
+	bMoving = true;
+	bMovingAngular = false;
+	bMovingAxis = true;
+}
+
+bool ASourceGameEntity::StepAxisMove(float DeltaSeconds)
+{
+	const FQuat Current = FSourceCoords::AnglesToUE(GetSourceAngles()).Quaternion();
+
+	// How far round the axis the target still is. Taking it from where the entity is now, every tick, is what
+	// makes a swing interrupted and sent back turn through the part it travelled rather than the whole of it.
+	const FQuat Delta = AxisTargetRotation * Current.Inverse();
+	const float Remaining = FMath::RadiansToDegrees(
+		2.0f * FMath::Atan2(FVector::DotProduct(FVector(Delta.X, Delta.Y, Delta.Z), AxisUnitUE), Delta.W));
+
+	const float Step = MoveSpeed * DeltaSeconds;
+
+	// The last step lands exactly on the target rather than overshooting - a door that stops a hair past its
+	// frame never quite closes.
+	if (FMath::Abs(Remaining) <= Step || FMath::Abs(Remaining) < KINDA_SMALL_NUMBER)
+	{
+		SetSourceAngles(FSourceCoords::AnglesFromUE(AxisTargetRotation.Rotator()));
+		return true;
+	}
+
+	const FQuat Turn(AxisUnitUE, FMath::DegreesToRadians(Remaining < 0.0f ? -Step : Step));
+
+	// Back through Source angles rather than straight onto the actor: SourceAngles is what GetAngles answers
+	// and what the next move starts from, so it has to stay the truth about where the entity is pointing.
+	SetSourceAngles(FSourceCoords::AnglesFromUE((Turn * Current).Rotator()));
+	return false;
 }
 
 void ASourceGameEntity::SetSolidity(bool bSolid)
@@ -220,6 +294,7 @@ void ASourceGameEntity::CancelLinearMove()
 	if (bMoving)
 	{
 		bMoving = false;
+		bMovingAxis = false;
 		StopLoopingSoundNow();
 		if (Behaviour)
 		{
