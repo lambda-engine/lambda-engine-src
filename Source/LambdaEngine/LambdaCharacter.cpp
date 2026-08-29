@@ -129,13 +129,17 @@ static FAutoConsoleVariableRef CVarUseAuto(
 	GUseAuto,
 	TEXT("\"<delay_s> [second_delay_s]\": press +USE that long after play begins"));
 
-// shot.auto "<delay_s> [name]" takes a screenshot that long into play. For comparing one lighting path
+// grab.auto "<delay_s>" takes a screenshot that long into play.
+//
+// Not "shot.auto": the engine has a SHOT exec command, and FParse::Command matches it as a PREFIX, so the
+// engine swallowed the whole line, took a screenshot on frame one, and the cvar was never set - the same trap
+// as +map being eaten by GetMapOverrideName. A name that is not another command's prefix is the fix. For comparing one lighting path
 // against another: the two runs are identical but for a cvar, so the pictures can be measured against each
 // other rather than looked at. A delay rather than immediately, because Lumen accumulates over frames and a
 // picture taken on the first one shows it still converging.
 static FString GShotAuto;
 static FAutoConsoleVariableRef CVarShotAuto(
-	TEXT("shot.auto"),
+	TEXT("grab.auto"),
 	GShotAuto,
 	TEXT("\"<delay_s> [name]\": take a screenshot that long after play begins"));
 
@@ -1160,16 +1164,14 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 			{
 				TArray<FString> Parts;
 				GShotAuto.ParseIntoArrayWS(Parts);
-				const FString ShotName = Parts.Num() > 1 ? Parts[1] : TEXT("shot");
+				const FString ShotName = Parts.Num() > 1 ? Parts[1] : TEXT("grab");
 				FTimerHandle Handle;
-				GetWorldTimerManager().SetTimer(Handle, FTimerDelegate::CreateLambda([this, ShotName]()
+				GetWorldTimerManager().SetTimer(Handle, FTimerDelegate::CreateLambda([ShotName]()
 				{
-					// Through the console, so it is the same screenshot a player would take.
-					if (GEngine)
-					{
-						GEngine->Exec(GetWorld(), *FString::Printf(TEXT("HighResShot 640x480 filename=%s"), *ShotName));
-					}
-					UE_LOG(LogLambda, Display, TEXT("shot.auto: wrote %s"), *ShotName);
+					// The automation path rather than the HighResShot console command, which writes nothing in
+					// -game. The name is ours, so two runs can be told apart without guessing at a counter.
+					FScreenshotRequest::RequestScreenshot(ShotName, false, false);
+					UE_LOG(LogLambda, Display, TEXT("grab.auto: requested %s"), *ShotName);
 				}), FMath::Max(0.01f, Parts.Num() > 0 ? FCString::Atof(*Parts[0]) : 5.0f), false);
 			}
 			if (!GEntFireAuto.IsEmpty())

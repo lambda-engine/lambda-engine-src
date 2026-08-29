@@ -477,7 +477,7 @@ namespace
 	// config asked for ERayTracingMode::Dynamic, which is what makes r.RayTracing.Enable a live switch
 	// instead of one read once at startup.
 
-	void ApplyRtx(bool bOn)
+	void ApplyRtx(bool bOn, const TCHAR* Who)
 	{
 		const TCHAR* Values[][2] = {
 			{ TEXT("r.RayTracing.Enable"),               bOn ? TEXT("1") : TEXT("0") },
@@ -499,7 +499,7 @@ namespace
 				Var->Set(Pair[1], ECVF_SetByConsole);
 			}
 		}
-		UE_LOG(LogLambda, Log, TEXT("rtx %s: %s"), bOn ? TEXT("1") : TEXT("0"),
+		UE_LOG(LogLambda, Log, TEXT("rtx %s [%s]: %s"), bOn ? TEXT("1") : TEXT("0"), Who,
 			bOn ? TEXT("Lumen over hardware ray tracing") : TEXT("legacy lighting (no GI, SSR)"));
 	}
 
@@ -512,7 +512,7 @@ namespace
 		{
 			UE_LOG(LogLambda, Log, TEXT("rtx: this GPU cannot ray trace; legacy lighting only"));
 		}
-		ApplyRtx(bAllowed && !bForcedOff);
+		ApplyRtx(bAllowed && !bForcedOff, TEXT("startup"));
 	}
 
 	FAutoConsoleCommand GRtxCommand(
@@ -532,7 +532,7 @@ namespace
 				UE_LOG(LogLambda, Display, TEXT("rtx: this GPU cannot ray trace; staying on legacy lighting"));
 				return;
 			}
-			ApplyRtx(bOn);
+			ApplyRtx(bOn, TEXT("console"));
 		}));
 }
 
