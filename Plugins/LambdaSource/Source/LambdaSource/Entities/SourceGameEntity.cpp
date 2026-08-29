@@ -5,6 +5,8 @@
 #include "Audio/LambdaSoundLibrary.h"
 #include "Game/LambdaGameDll.h"
 #include "Kismet/GameplayStatics.h"
+#include "GameFramework/Pawn.h"
+#include "EngineUtils.h"
 
 ASourceGameEntity::ASourceGameEntity()
 {
@@ -46,6 +48,8 @@ void ASourceGameEntity::Tick(float DeltaSeconds)
 
 	if (bMoving && bMovingAxis)
 	{
+		const FTransform Before = GetActorTransform();
+
 		if (StepAxisMove(DeltaSeconds))
 		{
 			bMoving = false;
@@ -58,6 +62,7 @@ void ASourceGameEntity::Tick(float DeltaSeconds)
 		}
 		else
 		{
+			PushOccupants(Before);
 			CheckBlocked();
 		}
 	}
@@ -65,6 +70,7 @@ void ASourceGameEntity::Tick(float DeltaSeconds)
 	{
 		// LinearMove / AngularMove: constant speed towards the destination, and the last step lands exactly on
 		// it rather than overshooting - a door that stops a hair past its frame never quite closes.
+		const FTransform Before = GetActorTransform();
 		const FVector3f Current = bMovingAngular ? GetSourceAngles() : GetSourceOrigin();
 		const FVector3f ToTarget = MoveTarget - Current;
 		const float Remaining = ToTarget.Size();
@@ -83,6 +89,7 @@ void ASourceGameEntity::Tick(float DeltaSeconds)
 		{
 			const FVector3f Next = Current + ToTarget / Remaining * Step;
 			bMovingAngular ? SetSourceAngles(Next) : SetSourceOrigin(Next);
+			PushOccupants(Before);
 			CheckBlocked();
 		}
 	}
@@ -276,6 +283,64 @@ void ASourceGameEntity::StopLoopingSoundNow()
 	{
 		LoopingSound->Stop();
 		LoopingSound = nullptr;
+	}
+}
+
+void ASourceGameEntity::PushOccupants(const FTransform& Before)
+{
+	// A trigger is meant to be walked through, and a brush with no bounds has nothing to be inside of.
+	if (!BrushMesh || bIsTriggerVolume || !LocalBounds.IsValid)
+	{
+		return;
+	}
+
+	const FTransform After = GetActorTransform();
+
+	if (After.Equals(Before))
+	{
+		return;
+	}
+
+	for (TActorIterator<APawn> It(GetWorld()); It; ++It)
+	{
+		APawn* Pawn = *It;
+
+		if (!Pawn)
+		{
+			continue;
+		}
+
+		const FVector At = Pawn->GetActorLocation();
+
+		// Against the brush's own box, in the brush's own space, grown by the pawn's girth: a moving brush
+		// is a box often enough - a door always - and asking the collision geometry costs a query per pawn
+		// per frame for an answer no better.
+		FVector Extent = FVector(34.0f, 34.0f, 72.0f);
+
+		if (const UPrimitiveComponent* Body = Cast<UPrimitiveComponent>(Pawn->GetRootComponent()))
+		{
+			Extent = Body->Bounds.BoxExtent;
+		}
+
+		if (!LocalBounds.ExpandBy(Extent).IsInside(After.InverseTransformPosition(At)))
+		{
+			continue;
+		}
+
+		// How far the brush moved at the point this pawn is standing on - which for a swinging door is
+		// further out at the handle than in at the hinge, so being leaned on near the hinge barely shifts
+		// you and being caught by the swinging edge shoves you along.
+		const FVector Delta = After.TransformPosition(Before.InverseTransformPosition(At)) - At;
+
+		if (Delta.IsNearlyZero())
+		{
+			continue;
+		}
+
+		// Swept, so a pawn shoved into a wall stops at the wall rather than being put through it. Whatever
+		// is left over is what CheckBlocked reports as the door being blocked.
+		FHitResult Hit;
+		Pawn->AddActorWorldOffset(Delta, true, &Hit);
 	}
 }
 

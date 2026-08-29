@@ -55,6 +55,15 @@ private:
 	/** One tick of a hinge swing. Returns true once it has arrived. */
 	bool StepAxisMove(float DeltaSeconds);
 
+	/**
+	 * Carry anything the brush has just moved into, given where the brush was before the step.
+	 *
+	 * A Source mover pushes what is in its way. This one is moved by writing its transform, which sweeps
+	 * nothing, so without this a closing door passes straight through the player instead of shoving him
+	 * clear of the frame.
+	 */
+	void PushOccupants(const FTransform& Before);
+
 public:
 
 	void SetSolidity(bool bSolid);
