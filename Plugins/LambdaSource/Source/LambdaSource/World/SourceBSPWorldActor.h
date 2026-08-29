@@ -78,6 +78,9 @@ public:
 	/** Queues an input to be delivered to every entity matching Target after Delay seconds. */
 	void QueueEntityEvent(const FString& Target, const FString& Input, const FString& Parameter,
 		AActor* Activator, AActor* Caller, float Delay);
+
+	/** CEventQueue::CancelEvents - forgets every queued event this entity fired. */
+	void CancelQueuedEventsFrom(const AActor* Caller);
 	/** Resolves a target name, including Source's !activator / !caller / !self / !player keywords. */
 	void ResolveTargets(const FString& Target, AActor* Activator, AActor* Caller, TArray<ASourceEntity*>& Out) const;
 	/** Registers an entity so it can be found by targetname. */
@@ -139,6 +142,8 @@ private:
 	static constexpr float NavInvokerRemovalRadius = 9000.0f;
 	void SpawnPlayerStart(const FSourceEntity& Entity);
 	void SpawnPointLight(const FSourceEntity& Entity);
+	/** A point entity the game module implements that needs nothing built for it - logic_relay and its kind. */
+	AActor* SpawnGamePointEntity(const FSourceEntity& Entity);
 	void SpawnSpotLight(const FSourceEntity& Entity);
 	void SpawnEnvironmentLight(const FSourceEntity& Entity);
 	void SpawnAmbientFill(const FLinearColor& Color, float Intensity);

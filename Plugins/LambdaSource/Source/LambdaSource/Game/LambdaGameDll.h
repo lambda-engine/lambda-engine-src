@@ -57,6 +57,9 @@ public:
 	virtual void EmitSoundLooping(lambda::EntityId Entity, const char* SoundNameOrPath) override;
 	virtual void StopLoopingSound(lambda::EntityId Entity) override;
 	virtual void FireOutput(lambda::EntityId Entity, const char* OutputName, lambda::EntityId Activator) override;
+	virtual float GetOutputMaxDelay(lambda::EntityId Entity, const char* OutputName) const override;
+	virtual void CancelPendingOutputs(lambda::EntityId Entity) override;
+	virtual void Remove(lambda::EntityId Entity) override;
 	virtual bool IsPlayer(lambda::EntityId Entity) const override;
 	virtual bool IsNPC(lambda::EntityId Entity) const override;
 	virtual float GetTime() const override;

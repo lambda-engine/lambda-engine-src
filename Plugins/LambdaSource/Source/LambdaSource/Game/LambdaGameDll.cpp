@@ -378,6 +378,38 @@ void FLambdaGameDll::FireOutput(lambda::EntityId Entity, const char* OutputName,
 	Actor->FireOutput(ANSI_TO_TCHAR(OutputName), ResolveEntity(Activator));
 }
 
+float FLambdaGameDll::GetOutputMaxDelay(lambda::EntityId Entity, const char* OutputName) const
+{
+	const ASourceEntity* Actor = const_cast<FLambdaGameDll*>(this)->ResolveSourceEntity(Entity);
+	if (!Actor || !OutputName)
+	{
+		return -1.0f;
+	}
+	return Actor->GetOutputMaxDelay(ANSI_TO_TCHAR(OutputName));
+}
+
+void FLambdaGameDll::CancelPendingOutputs(lambda::EntityId Entity)
+{
+	ASourceEntity* Actor = ResolveSourceEntity(Entity);
+	if (Actor)
+	{
+		Actor->CancelPendingOutputs();
+	}
+}
+
+void FLambdaGameDll::Remove(lambda::EntityId Entity)
+{
+	AActor* Actor = ResolveEntity(Entity);
+	if (!Actor)
+	{
+		return;
+	}
+	// Not Destroy(): the entity is almost always asking for this from inside an input it is still handling, and
+	// destroying it here would pull the ground out from under the call that asked. A lifespan takes it away on
+	// the world's own time instead, which is what UTIL_Remove does.
+	Actor->SetLifeSpan(KINDA_SMALL_NUMBER);
+}
+
 float FLambdaGameDll::GetTime() const
 {
 	// Any live entity can answer this; they all share one world.

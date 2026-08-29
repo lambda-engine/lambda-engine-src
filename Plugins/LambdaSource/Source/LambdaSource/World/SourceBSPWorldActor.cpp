@@ -384,6 +384,14 @@ AActor* ASourceBSPWorldActor::SpawnEntityFromKeyValues(const FSourceEntity& Enti
 		{
 			SpawnPropPhysics(Entity);
 		}
+		else if (FLambdaGameDll::Get().HandlesClass(Class))
+		{
+			// A point entity the game module implements and the engine has nothing special to build for -
+			// logic_relay and its kind, which are somewhere for outputs to live and nothing else. The lights
+			// above are the exception rather than the rule: they need a component made and configured first,
+			// which is why they have their own paths and reach the module from inside them.
+			return SpawnGamePointEntity(Entity);
+		}
 		else
 		{
 			UnhandledEntityCounts.FindOrAdd(Class)++;
@@ -865,6 +873,27 @@ void ASourceBSPWorldActor::RegisterEntity(ASourceEntity* InEntity)
 	}
 }
 
+AActor* ASourceBSPWorldActor::SpawnGamePointEntity(const FSourceEntity& Entity)
+{
+	FVector3f Origin = FVector3f::ZeroVector;
+	Entity.GetVector(TEXT("origin"), Origin);		// a logic entity need not have one, and 0,0,0 will do
+
+	UWorld* World = GetWorld();
+	FActorSpawnParameters Params;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	Params.ObjectFlags |= RF_Transient;
+	ASourceGamePointEntity* Actor = World->SpawnActor<ASourceGamePointEntity>(
+		ASourceGamePointEntity::StaticClass(), FSourceCoords::ToUE(Origin), FRotator::ZeroRotator, Params);
+	if (!Actor)
+	{
+		return nullptr;
+	}
+	Actor->InitializeGameEntity(Entity, this, nullptr);		// nothing to light
+	RegisterEntity(Actor);
+	SpawnedActors.Add(Actor);
+	return Actor;
+}
+
 void ASourceBSPWorldActor::QueueEntityEvent(const FString& Target, const FString& Input, const FString& Parameter,
 	AActor* Activator, AActor* Caller, float Delay)
 {
@@ -882,6 +911,15 @@ void ASourceBSPWorldActor::QueueEntityEvent(const FString& Target, const FString
 	EventQueue.Add(MoveTemp(Event));
 
 	UE_LOG(LogLambdaSource, Verbose, TEXT("I/O queued: %s.%s(%s) in %gs"), *Target, *Input, *Parameter, Delay);
+}
+
+void ASourceBSPWorldActor::CancelQueuedEventsFrom(const AActor* Caller)
+{
+	if (!Caller)
+	{
+		return;
+	}
+	EventQueue.RemoveAll([Caller](const FSourceQueuedEvent& Event) { return Event.Caller.Get() == Caller; });
 }
 
 void ASourceBSPWorldActor::ResolveTargets(const FString& Target, AActor* Activator, AActor* Caller,

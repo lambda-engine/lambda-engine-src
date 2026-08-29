@@ -78,3 +78,28 @@ void ASourceEntity::FireOutput(const FString& OutputName, AActor* Activator, flo
 		}
 	}
 }
+
+float ASourceEntity::GetOutputMaxDelay(const FString& OutputName) const
+{
+	float MaxDelay = -1.0f;
+	for (const FSourceOutput& Output : Outputs)
+	{
+		if (!Output.Name.Equals(OutputName, ESearchCase::IgnoreCase))
+		{
+			continue;
+		}
+		for (const FSourceEventAction& Action : Output.Actions)
+		{
+			MaxDelay = FMath::Max(MaxDelay, Action.Delay);
+		}
+	}
+	return MaxDelay;
+}
+
+void ASourceEntity::CancelPendingOutputs()
+{
+	if (ASourceBSPWorldActor* World = WorldActor.Get())
+	{
+		World->CancelQueuedEventsFrom(this);
+	}
+}

@@ -18,7 +18,7 @@
 #pragma once
 
 // Bumped whenever anything below changes shape. A DLL built against an older one is refused at load.
-#define LAMBDA_GAME_API_VERSION "LambdaGame004"
+#define LAMBDA_GAME_API_VERSION "LambdaGame005"
 
 #if defined(_WIN32)
 	#define LAMBDA_GAME_EXPORT extern "C" __declspec(dllexport)
@@ -123,6 +123,34 @@ public:
 
 	/** Fires one of this entity's map outputs, e.g. "OnPressed". */
 	virtual void FireOutput(EntityId Entity, const char* OutputName, EntityId Activator) = 0;
+
+	/**
+	 * The longest delay any connection on this output was given, or -1 if nothing is connected to it.
+	 *
+	 * COutputEvent::GetMaxDelay. An entity that must not fire again until its last output has gone out has to
+	 * know how long that is, and the connections are the engine's - they were parsed out of the map.
+	 *
+	 * -1 rather than 0 for an unconnected output, because "nothing is listening" and "everything is listening
+	 * right now" are different questions and both get asked: a logic_relay only announces its own spawn when
+	 * a map actually wired something to it.
+	 */
+	virtual float GetOutputMaxDelay(EntityId Entity, const char* OutputName) const = 0;
+
+	/**
+	 * Drops every event this entity has fired that has not gone out yet (CEventQueue::CancelEvents).
+	 *
+	 * Only the ones it fired itself. Events on their way to it are somebody else's to cancel.
+	 */
+	virtual void CancelPendingOutputs(EntityId Entity) = 0;
+
+	/**
+	 * Takes the entity out of the map (UTIL_Remove).
+	 *
+	 * Deferred, not immediate: an entity usually asks for this from inside an input it is still handling, and
+	 * it has to survive returning from that. Outputs it has already fired still go out - the queue holds
+	 * them, not the entity that queued them.
+	 */
+	virtual void Remove(EntityId Entity) = 0;
 
 	// ---- what touched it ----
 	/**

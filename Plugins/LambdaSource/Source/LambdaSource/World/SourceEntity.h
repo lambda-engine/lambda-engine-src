@@ -33,6 +33,17 @@ public:
 	/** COutputEvent::FireOutput - queues every connection made from this named output. */
 	void FireOutput(const FString& OutputName, AActor* Activator, float ExtraDelay = 0.0f);
 
+	/**
+	 * COutputEvent::GetMaxDelay - the longest delay on this output, or -1 if the map connected nothing to it.
+	 *
+	 * Connections that have used up their fire count still count towards it, as they do in Source: the delay
+	 * is a property of the wiring, not of what is left to send down it.
+	 */
+	float GetOutputMaxDelay(const FString& OutputName) const;
+
+	/** CEventQueue::CancelEvents - drops the events this entity fired that have not gone out yet. */
+	void CancelPendingOutputs();
+
 	const FSourceEntity& GetEntity() const { return Entity; }
 	const FString& GetTargetName() const { return TargetName; }
 	int32 GetSpawnFlags() const { return SpawnFlags; }
