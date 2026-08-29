@@ -59,8 +59,8 @@ protected:
 	void ButtonReturn();
 	void ButtonBackHome();
 	bool OnUseLocked(AActor* Activator);
-	void Lock() { bLocked = true; }
-	void Unlock() { bLocked = false; }
+	void Lock();
+	void Unlock();
 
 	// ---- CBaseToggle::LinearMove ----
 	void LinearMove(const FVector3f& DestPosition, float InSpeed);
@@ -68,8 +68,15 @@ protected:
 	void MoveDone();
 	void SetMoveDoneTime(float Delay) { MoveDoneTime = Delay; }
 
-	void PlayButtonSound();
-	void PlayLockSounds(bool bLockedSound);
+	/**
+	 * Plays one of the button's sounds, whether it names a wav or a soundscript.
+	 *
+	 * bDebounce is for the sounds a player can retrigger as fast as they can press: leaning on a locked button
+	 * would otherwise stack one denial noise on top of the next. Source guards its lock sounds with
+	 * BUTTON_SOUNDWAIT for the same reason, and the movement sounds are not guarded because the button is
+	 * already busy moving and cannot be pressed again.
+	 */
+	void PlaySoundField(const FString& SoundName, bool bDebounce);
 
 	ESourceToggleState ToggleState = ESourceToggleState::AtBottom;
 	FVector3f MoveDir = FVector3f::ZeroVector;		// m_vecMoveDir (a direction, from the "movedir" angles)
@@ -82,12 +89,21 @@ protected:
 	float Lip = 4.0f;								// m_flLip
 	bool bStayPushed = false;						// m_fStayPushed
 	bool bLocked = false;							// m_bLocked
-	int32 Sounds = 0;								// m_sounds
 	float UseLockedTime = 0.0f;						// m_flUseLockedTime
 
-	FString NoiseButton;			// m_sNoise, resolved from "sounds"
-	FString LockedSound;			// locked_sound
-	FString UnlockedSound;			// unlocked_sound
+	/**
+	 * The button's five sounds, each either a wav path under sound/ or a soundscript name.
+	 *
+	 * Source has three, chosen from a numbered list compiled into the game - a mod could pick from Valve's set
+	 * and nothing else. These are free-form paths, and there are five because Source's three conflate things a
+	 * mapper reasonably wants apart: one sound served both directions of travel, and "unlocked" fired on a
+	 * successful press rather than on actually being unlocked.
+	 */
+	FString PressInSound;			// press_in_sound
+	FString PressOutSound;			// press_out_sound - falls back to PressInSound
+	FString LockSound;				// lock_sound, on the Lock input
+	FString UnlockSound;			// unlock_sound, on the Unlock input
+	FString UseLockedSound;			// use_locked_sound, when used while locked
 	float LockSoundWaitTime = 0.0f;	// locksound_t::flwaitSound
 
 	float MoveDoneTime = -1.0f;

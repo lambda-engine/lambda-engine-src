@@ -27,12 +27,39 @@ void ASourceFuncButton::InitializeFromEntity(const FSourceBSPFile& Map, int32 Mo
 {
 	Super::InitializeFromEntity(Map, ModelIndex, InEntity, MaterialLibrary, InWorldActor);
 
-	Sounds = Entity.GetInt(TEXT("sounds"), 0);
-	LockedSound = Entity.Get(TEXT("locked_sound"));
-	UnlockedSound = Entity.Get(TEXT("unlocked_sound"));
+	// Each sound is named outright - a wav under sound/, or a soundscript entry. The old numbered keyvalues are
+	// still read as a fallback, so a map built before this change keeps the sounds its author chose; Source's
+	// numbered set is reachable either way, since MakeButtonSound( n ) is only ever "Buttons.snd<n>".
+	auto NumberedSound = [this](const TCHAR* Key) -> FString
+	{
+		const int32 Number = Entity.GetInt(Key, 0);
+		return Number != 0 ? FString::Printf(TEXT("Buttons.snd%d"), Number) : FString();
+	};
 
-	// MakeButtonSound( int sound ) -> "Buttons.snd<N>"; a sound of 0 should not make a sound.
-	NoiseButton = (Sounds != 0) ? FString::Printf(TEXT("Buttons.snd%d"), Sounds) : FString();
+	PressInSound = Entity.Get(TEXT("press_in_sound"));
+	if (PressInSound.IsEmpty())
+	{
+		PressInSound = NumberedSound(TEXT("sounds"));
+	}
+	// Left blank means "the same going out as coming in", which is what Source did with its single sound and is
+	// what most buttons want. Resolved here rather than at each use, so the two directions cannot drift apart.
+	PressOutSound = Entity.Get(TEXT("press_out_sound"));
+	if (PressOutSound.IsEmpty())
+	{
+		PressOutSound = PressInSound;
+	}
+
+	UseLockedSound = Entity.Get(TEXT("use_locked_sound"));
+	if (UseLockedSound.IsEmpty())
+	{
+		UseLockedSound = NumberedSound(TEXT("locked_sound"));
+	}
+	LockSound = Entity.Get(TEXT("lock_sound"));
+	UnlockSound = Entity.Get(TEXT("unlock_sound"));
+	if (UnlockSound.IsEmpty())
+	{
+		UnlockSound = NumberedSound(TEXT("unlocked_sound"));
+	}
 
 	// Convert movedir from angles to a vector (CBaseButton::Spawn: AngleVectors( angMoveDir, &m_vecMoveDir )).
 	FVector3f MoveAngles = FVector3f::ZeroVector;
@@ -136,7 +163,7 @@ void ASourceFuncButton::ButtonUse(AActor* InActivator)
 		// If it's a toggle button it can return now. Otherwise it will either return on its own or stay pressed.
 		if (HasSpawnFlags(SF_BUTTON_TOGGLE))
 		{
-			PlayButtonSound();
+			PlaySoundField(PressOutSound, false);
 			FireOutput(TEXT("OnPressed"), Activator.Get());
 			ButtonReturn();
 		}
@@ -162,7 +189,7 @@ void ASourceFuncButton::ButtonTouch(AActor* Other)
 	}
 	if (bLocked)
 	{
-		PlayLockSounds(true);
+		PlaySoundField(UseLockedSound, true);
 		return;
 	}
 	Activator = Other;
@@ -211,7 +238,7 @@ void ASourceFuncButton::Press(AActor* InActivator, EButtonCode Code)
 
 	if (bLocked)
 	{
-		PlayLockSounds(true);
+		PlaySoundField(UseLockedSound, true);
 		return;
 	}
 
@@ -221,7 +248,7 @@ void ASourceFuncButton::Press(AActor* InActivator, EButtonCode Code)
 	if ((Code == EButtonCode::Press && ToggleState == ESourceToggleState::AtTop) ||
 		(Code == EButtonCode::Return && (ToggleState == ESourceToggleState::AtTop || ToggleState == ESourceToggleState::GoingUp)))
 	{
-		PlayButtonSound();
+		PlaySoundField(PressOutSound, false);
 		FireOutput(TEXT("OnPressed"), InActivator);
 		ButtonReturn();
 	}
@@ -236,7 +263,7 @@ void ASourceFuncButton::Press(AActor* InActivator, EButtonCode Code)
 bool ASourceFuncButton::OnUseLocked(AActor* InActivator)
 {
 	// CBaseButton::OnUseLocked
-	PlayLockSounds(true);
+	PlaySoundField(UseLockedSound, true);
 	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 	if (Now > UseLockedTime)
 	{
@@ -254,14 +281,13 @@ bool ASourceFuncButton::OnUseLocked(AActor* InActivator)
 void ASourceFuncButton::ButtonActivate()
 {
 	// CBaseButton::ButtonActivate
-	PlayButtonSound();
+	PlaySoundField(PressInSound, false);
 
 	if (bLocked)
 	{
-		PlayLockSounds(true);
+		PlaySoundField(UseLockedSound, true);
 		return;
 	}
-	PlayLockSounds(false);
 
 	ToggleState = ESourceToggleState::GoingUp;
 	PendingMove = EPendingMove::TriggerAndWait;
@@ -462,30 +488,42 @@ bool ASourceFuncButton::AcceptInput(const FString& InputName, AActor* InActivato
 	return Super::AcceptInput(InputName, InActivator, Caller, Parameter);
 }
 
-void ASourceFuncButton::PlayButtonSound()
+/** BUTTON_SOUNDWAIT: how long a retriggerable sound is held off before it may play again (buttons.cpp). */
+static constexpr float BUTTON_SOUNDWAIT = 0.5f;
+
+void ASourceFuncButton::Lock()
 {
-	float Volume = 1.0f, Pitch = 1.0f;
-	if (ULambdaSoundWave* Wave = FLambdaSoundCache::Get().CreateWaveResolved(this, NoiseButton, false, Volume, Pitch))
-	{
-		UGameplayStatics::SpawnSoundAtLocation(this, Wave, GetActorLocation(), FRotator::ZeroRotator, Volume, Pitch);
-	}
+	bLocked = true;
+	PlaySoundField(LockSound, false);
 }
 
-void ASourceFuncButton::PlayLockSounds(bool bLockedSound)
+void ASourceFuncButton::Unlock()
 {
-	// PlayLockSounds( this, &m_ls, flocked, fbutton=TRUE ) - debounced by BUTTON_SOUNDWAIT (0.5s) via flwaitSound.
-	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
-	if (Now <= LockSoundWaitTime)
-	{
-		return;
-	}
-	const FString& SoundName = bLockedSound ? LockedSound : UnlockedSound;
+	bLocked = false;
+	PlaySoundField(UnlockSound, false);
+}
+
+void ASourceFuncButton::PlaySoundField(const FString& SoundName, bool bDebounce)
+{
+	// CreateWaveResolved takes either spelling: anything ending in .wav is a file under sound/, anything else
+	// is a soundscript entry. That is what lets one keyvalue accept both a hand-picked wav and "Buttons.snd1".
 	if (SoundName.IsEmpty() || SoundName == TEXT("0"))
 	{
 		return;
 	}
-	constexpr float BUTTON_SOUNDWAIT = 0.5f;
-	LockSoundWaitTime = Now + BUTTON_SOUNDWAIT;
+
+	if (bDebounce)
+	{
+		// PlayLockSounds' BUTTON_SOUNDWAIT: a player holding use against a locked button would otherwise pile
+		// the denial sound on top of itself several times a second.
+		const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+		if (Now <= LockSoundWaitTime)
+		{
+			return;
+		}
+		LockSoundWaitTime = Now + BUTTON_SOUNDWAIT;
+	}
+
 	float Volume = 1.0f, Pitch = 1.0f;
 	if (ULambdaSoundWave* Wave = FLambdaSoundCache::Get().CreateWaveResolved(this, SoundName, false, Volume, Pitch))
 	{
