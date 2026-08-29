@@ -191,6 +191,23 @@ void ASourceGameEntity::SetSolidity(bool bSolid)
 	}
 }
 
+void ASourceGameEntity::SetSolidToPlayer(bool bSolid)
+{
+	if (BrushMesh)
+	{
+		// Only the pawn channel, so the brushes go on blocking NPCs, physics props and traces.
+		BrushMesh->SetCollisionResponseToChannel(ECC_Pawn, bSolid ? ECR_Block : ECR_Ignore);
+	}
+}
+
+void ASourceGameEntity::SetCastShadows(bool bCast)
+{
+	if (BrushMesh)
+	{
+		BrushMesh->SetCastShadow(bCast);
+	}
+}
+
 void ASourceGameEntity::SetTriggerVolume(bool bTrigger)
 {
 	if (!BrushMesh)

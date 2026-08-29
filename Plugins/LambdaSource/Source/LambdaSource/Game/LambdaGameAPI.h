@@ -123,6 +123,16 @@ public:
 	/** Whether the entity blocks anything. A door set passable stops shoving the player around. */
 	virtual void SetSolid(EntityId Entity, bool bSolid) = 0;
 	/**
+	 * Whether the entity blocks the player in particular, leaving it solid to everything else.
+	 *
+	 * The difference from SetSolid is who gets through: a passable door is scenery that nothing
+	 * collides with, while one that is only non-solid to the player still shuts NPCs out and still
+	 * stops the crates you throw at it.
+	 */
+	virtual void SetSolidToPlayer(EntityId Entity, bool bSolid) = 0;
+	/** Whether the entity casts a shadow. Turned off, light passes through it as though it were not there. */
+	virtual void SetCastShadows(EntityId Entity, bool bCast) = 0;
+	/**
 	 * Turns the entity into a volume that things pass through and that reports what is inside it.
 	 *
 	 * A trigger is not a thin door: it never blocks, and it wants to be told when something enters and leaves

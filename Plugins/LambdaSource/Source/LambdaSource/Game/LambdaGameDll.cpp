@@ -291,7 +291,10 @@ void FLambdaGameDll::RotateAboutAxis(const lambda::Vec3& Origin, const lambda::V
 		return;
 	}
 
-	const FQuat Turn(Unit, FMath::DegreesToRadians(Degrees));
+	// Negated: Source is right-handed and UE is left-handed, and the Y mirror between them turns a
+	// rotation of +D about an axis into one of -D about the mirrored axis. Without this a door told
+	// to swing clockwise swings the other way, which matters now that the map can say which.
+	const FQuat Turn(Unit, FMath::DegreesToRadians(-Degrees));
 
 	if (OutAngles)
 	{
@@ -318,6 +321,22 @@ void FLambdaGameDll::SetSolid(lambda::EntityId Entity, bool bSolid)
 	if (ASourceGameEntity* Actor = Cast<ASourceGameEntity>(ResolveEntity(Entity)))
 	{
 		Actor->SetSolidity(bSolid);
+	}
+}
+
+void FLambdaGameDll::SetSolidToPlayer(lambda::EntityId Entity, bool bSolid)
+{
+	if (ASourceGameEntity* Actor = Cast<ASourceGameEntity>(ResolveEntity(Entity)))
+	{
+		Actor->SetSolidToPlayer(bSolid);
+	}
+}
+
+void FLambdaGameDll::SetCastShadows(lambda::EntityId Entity, bool bCast)
+{
+	if (ASourceGameEntity* Actor = Cast<ASourceGameEntity>(ResolveEntity(Entity)))
+	{
+		Actor->SetCastShadows(bCast);
 	}
 }
 

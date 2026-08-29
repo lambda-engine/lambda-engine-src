@@ -55,6 +55,8 @@ public:
 		const lambda::Vec3& AxisDir, float Degrees, lambda::Vec3* OutOrigin, lambda::Vec3* OutAngles) const override;
 	virtual void StopMove(lambda::EntityId Entity) override;
 	virtual void SetSolid(lambda::EntityId Entity, bool bSolid) override;
+	virtual void SetSolidToPlayer(lambda::EntityId Entity, bool bSolid) override;
+	virtual void SetCastShadows(lambda::EntityId Entity, bool bCast) override;
 	virtual void SetTriggerVolume(lambda::EntityId Entity, bool bTrigger) override;
 	virtual void SetLightScale(lambda::EntityId Entity, float Scale) override;
 	virtual void EmitSound(lambda::EntityId Entity, const char* SoundNameOrPath) override;

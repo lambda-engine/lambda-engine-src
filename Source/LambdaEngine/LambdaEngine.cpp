@@ -483,6 +483,13 @@ namespace
 			{ TEXT("r.RayTracing.Enable"),               bOn ? TEXT("1") : TEXT("0") },
 			{ TEXT("r.DynamicGlobalIlluminationMethod"), bOn ? TEXT("1") : TEXT("0") },
 			{ TEXT("r.ReflectionMethod"),                bOn ? TEXT("1") : TEXT("2") },	// Lumen / SSR
+			// Where the bounce actually comes from. Lumen normally shades what a ray hits by reading its
+			// surface cache, and that cache is built from mesh cards - another thing only the editor can
+			// generate, which a world built at runtime therefore has none of. Rays would hit our walls and
+			// come back black: occlusion, but no light. Mode 1 evaluates the real material and lighting at
+			// the hit point instead, which needs no cards and is the only way this world can bounce light.
+			{ TEXT("r.Lumen.HardwareRayTracing.LightingMode"), bOn ? TEXT("1") : TEXT("0") },
+			{ TEXT("r.Lumen.HardwareRayTracing.HitLighting.Allowed"), TEXT("1") },
 		};
 		for (const auto& Pair : Values)
 		{

@@ -129,6 +129,16 @@ static FAutoConsoleVariableRef CVarUseAuto(
 	GUseAuto,
 	TEXT("\"<delay_s> [second_delay_s]\": press +USE that long after play begins"));
 
+// shot.auto "<delay_s> [name]" takes a screenshot that long into play. For comparing one lighting path
+// against another: the two runs are identical but for a cvar, so the pictures can be measured against each
+// other rather than looked at. A delay rather than immediately, because Lumen accumulates over frames and a
+// picture taken on the first one shows it still converging.
+static FString GShotAuto;
+static FAutoConsoleVariableRef CVarShotAuto(
+	TEXT("shot.auto"),
+	GShotAuto,
+	TEXT("\"<delay_s> [name]\": take a screenshot that long after play begins"));
+
 // entfire.auto "<target> <input> [parameter] [delay_s]" fires one entity input a set number of seconds into
 // play. ent_fire itself runs from -ExecCmds before the map's entities exist, so there is nothing to fire at.
 static FString GEntFireAuto;
@@ -1145,6 +1155,22 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 						FTimerDelegate::CreateUObject(this, &ALambdaCharacter::Input_Use),
 						FMath::Max(0.01f, FCString::Atof(*Parts[i])), false);
 				}
+			}
+			if (!GShotAuto.IsEmpty())
+			{
+				TArray<FString> Parts;
+				GShotAuto.ParseIntoArrayWS(Parts);
+				const FString ShotName = Parts.Num() > 1 ? Parts[1] : TEXT("shot");
+				FTimerHandle Handle;
+				GetWorldTimerManager().SetTimer(Handle, FTimerDelegate::CreateLambda([this, ShotName]()
+				{
+					// Through the console, so it is the same screenshot a player would take.
+					if (GEngine)
+					{
+						GEngine->Exec(GetWorld(), *FString::Printf(TEXT("HighResShot 640x480 filename=%s"), *ShotName));
+					}
+					UE_LOG(LogLambda, Display, TEXT("shot.auto: wrote %s"), *ShotName);
+				}), FMath::Max(0.01f, Parts.Num() > 0 ? FCString::Atof(*Parts[0]) : 5.0f), false);
 			}
 			if (!GEntFireAuto.IsEmpty())
 			{

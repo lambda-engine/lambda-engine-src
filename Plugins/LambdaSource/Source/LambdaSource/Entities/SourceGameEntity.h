@@ -67,6 +67,10 @@ private:
 public:
 
 	void SetSolidity(bool bSolid);
+	/** Solid to everything but the player - a door that shuts on you but not on an NPC. */
+	void SetSolidToPlayer(bool bSolid);
+	/** Whether the brushes cast a shadow. Off, light passes through them. */
+	void SetCastShadows(bool bCast);
 	/** Makes the brush a volume things pass through, reporting what enters and leaves. */
 	void SetTriggerVolume(bool bTrigger);
 	void StartLoopingSound(const FString& SoundName);
