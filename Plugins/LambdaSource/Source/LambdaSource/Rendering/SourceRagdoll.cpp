@@ -137,6 +137,17 @@ bool ASourceRagdoll::Build(USourceStudioModelComponent* ModelComponent, const FS
 		Body->SetLinearDamping(Solid.Damping);
 		Body->SetAngularDamping(Solid.RotDamping);
 
+		// The solid's inertia scale, which we were reading out of the .phy and then throwing away. Source
+		// gives combine_soldier every solid an "inertia" of 2, meaning twice the resistance to being spun
+		// that its shape alone implies; without it the limbs whip round on any impulse and a corpse reads as
+		// something inflatable rather than as a heavy piece of meat. Mass was never the problem - the .phy's
+		// own 11 to 22 kg a limb was already being honoured.
+		if (FBodyInstance* Instance = Body->GetBodyInstance())
+		{
+			Instance->InertiaTensorScale = FVector(FMath::Max(0.01f, Solid.Inertia));
+			Instance->UpdateMassProperties();
+		}
+
 		if (SurfaceProp.IsEmpty())
 		{
 			SurfaceProp = Solid.SurfaceProp;
