@@ -18,7 +18,7 @@
 #pragma once
 
 // Bumped whenever anything below changes shape. A DLL built against an older one is refused at load.
-#define LAMBDA_GAME_API_VERSION "LambdaGame007"
+#define LAMBDA_GAME_API_VERSION "LambdaGame008"
 
 #if defined(_WIN32)
 	#define LAMBDA_GAME_EXPORT extern "C" __declspec(dllexport)
@@ -251,6 +251,33 @@ public:
 	 * it and stay down, without needing to see them.
 	 */
 	virtual void NPCShootAtPos(EntityId Entity, const Vec3& PosUnits, const NPCShotParams& Params) = 0;
+
+	/**
+	 * Throws a grenade with the given velocity in Source units per second, arming it for FuseSeconds.
+	 *
+	 * The arc is the thrower's business: an NPC that wants one to land somewhere works out the velocity that
+	 * gets it there (SolveGrenadeArc) and hands it over. The engine flies it, bounces it off the world and
+	 * blows it up.
+	 */
+	virtual void NPCThrowGrenade(EntityId Entity, const Vec3& VelocityUnits, float FuseSeconds) = 0;
+
+	/**
+	 * The velocity that would lob a grenade from this NPC's hand onto a spot in FlightSeconds, or false if
+	 * no throw an arm could make gets there. Ballistics belong on this side of the boundary because the
+	 * engine owns gravity.
+	 *
+	 * Flight time is not the fuse: Source throws a grenade so it arrives quickly and lets it lie there
+	 * cooking. Solving for the whole fuse instead asks for a near-vertical lob nobody could throw.
+	 */
+	virtual bool SolveGrenadeArc(EntityId Entity, const Vec3& TargetUnits, float FlightSeconds, Vec3* OutVelocityUnits) const = 0;
+
+	/**
+	 * A live grenade somebody else threw, within the radius - and how long is left on it.
+	 *
+	 * This is a thing noticed in the world rather than a message sent to a victim, which is the difference
+	 * between an AI that dives because it saw a grenade and one that dives because it was told to.
+	 */
+	virtual bool NPCFindGrenadeThreat(EntityId Entity, float RadiusUnits, Vec3* OutPosUnits, float* OutSecondsLeft) const = 0;
 
 	/** Says a soundscript line, cutting whatever it was saying. False if the entity cannot speak. */
 	virtual bool NPCSpeak(EntityId Entity, const char* Soundscript) = 0;

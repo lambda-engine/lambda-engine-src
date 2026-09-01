@@ -365,9 +365,11 @@ void ALambdaCharacter::BeginPlay()
 	GiveWeapon(TEXT("weapon_pistol"));
 	GiveWeapon(TEXT("weapon_smg1"));
 	GiveWeapon(TEXT("weapon_shotgun"));
+	GiveWeapon(TEXT("weapon_frag"));
 	GiveAmmo(TEXT("Pistol"), 68);
 	GiveAmmo(TEXT("SMG1"), 135);
 	GiveAmmo(TEXT("Buckshot"), 30);
+	GiveAmmo(TEXT("grenade"), 5);
 
 	FirstPersonCamera->FirstPersonFieldOfView = Settings.ViewModelFOV;
 	FirstPersonCamera->FirstPersonScale = Settings.ViewModelFirstPersonScale;
@@ -1617,6 +1619,10 @@ ALambdaWeapon* ALambdaCharacter::GiveWeapon(const FString& WeaponClassName)
 	else if (WeaponClassName.Equals(TEXT("weapon_shotgun"), ESearchCase::IgnoreCase))
 	{
 		WeaponClass = ALambdaWeaponShotgun::StaticClass();
+	}
+	else if (WeaponClassName.Equals(TEXT("weapon_frag"), ESearchCase::IgnoreCase))
+	{
+		WeaponClass = ALambdaWeaponFrag::StaticClass();
 	}
 
 	FActorSpawnParameters Params;

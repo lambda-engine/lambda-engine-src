@@ -211,6 +211,27 @@ protected:
 };
 
 /**
+ * weapon_frag - the hand grenade (CWeaponFrag).
+ *
+ * The only weapon that leaves the player's hands: the attack is a throw, and what it throws is the same
+ * ASourceGrenade a Combine soldier lobs. Source pulls the pin on the press and releases on the let-go,
+ * so a held grenade cooks; ours throws on the press, which is the half of it that matters for now.
+ */
+UCLASS()
+class LAMBDAENGINE_API ALambdaWeaponFrag : public ALambdaWeapon
+{
+	GENERATED_BODY()
+
+public:
+	virtual void PrimaryAttack() override;
+	virtual void SecondaryAttack() override;
+
+protected:
+	/** CWeaponFrag::ThrowGrenade / LobGrenade - the same grenade, thrown hard or lobbed underarm. */
+	void ThrowGrenade(bool bLob);
+};
+
+/**
  * weapon_shotgun - CWeaponShotgun (game/server/hl2/weapon_shotgun.cpp).
  *
  * Two things make it what it is. It is pumped between shots rather than after them: firing sets a flag, and the

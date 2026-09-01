@@ -8,6 +8,7 @@
 #include "Entities/SourceGameEntity.h"
 #include "Entities/SourceGamePointEntity.h"
 #include "Creatures/SourceGameNPC.h"
+#include "Gameplay/SourceGrenade.h"
 #include "GameFramework/Character.h"
 #include "Components/CapsuleComponent.h"
 #include "Creatures/SourceNPCBase.h"
@@ -549,6 +550,60 @@ bool FLambdaGameDll::NPCHasClearShot(lambda::EntityId Entity, lambda::EntityId T
 		return false;
 	}
 	return NPC->HasClearShotAt(TargetActor);
+}
+
+void FLambdaGameDll::NPCThrowGrenade(lambda::EntityId Entity, const lambda::Vec3& VelocityUnits, float FuseSeconds)
+{
+	ASourceGameNPC* NPC = Cast<ASourceGameNPC>(ResolveEntity(Entity));
+	if (!NPC)
+	{
+		return;
+	}
+	// A velocity converts exactly as a position does - mirror the Y axis and scale - since both are lengths
+	// per unit of the same time.
+	NPC->ThrowGrenade(FSourceCoords::ToUE(FVector3f(VelocityUnits.x, VelocityUnits.y, VelocityUnits.z),
+		ULambdaSourceSettings::Get().UnitScale), FuseSeconds);
+}
+
+bool FLambdaGameDll::SolveGrenadeArc(lambda::EntityId Entity, const lambda::Vec3& TargetUnits, float FlightSeconds, lambda::Vec3* OutVelocityUnits) const
+{
+	FLambdaGameDll* Self = const_cast<FLambdaGameDll*>(this);
+	const ASourceGameNPC* NPC = Cast<ASourceGameNPC>(Self->ResolveEntity(Entity));
+	if (!NPC || !OutVelocityUnits)
+	{
+		return false;
+	}
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+	FVector Velocity;
+	if (!NPC->SolveThrowArc(FSourceCoords::ToUE(FVector3f(TargetUnits.x, TargetUnits.y, TargetUnits.z), Scale),
+		FlightSeconds, Velocity))
+	{
+		return false;
+	}
+	const FVector3f Units = FSourceCoords::ToSource(Velocity, Scale);
+	OutVelocityUnits->x = Units.X; OutVelocityUnits->y = Units.Y; OutVelocityUnits->z = Units.Z;
+	return true;
+}
+
+bool FLambdaGameDll::NPCFindGrenadeThreat(lambda::EntityId Entity, float RadiusUnits, lambda::Vec3* OutPosUnits, float* OutSecondsLeft) const
+{
+	FLambdaGameDll* Self = const_cast<FLambdaGameDll*>(this);
+	const ASourceGameNPC* NPC = Cast<ASourceGameNPC>(Self->ResolveEntity(Entity));
+	if (!NPC || !OutPosUnits || !OutSecondsLeft)
+	{
+		return false;
+	}
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+	const ASourceGrenade* Grenade = ASourceGrenade::FindLiveGrenadeNear(NPC->GetWorld(), NPC->GetActorLocation(),
+		RadiusUnits * Scale, NPC);
+	if (!Grenade)
+	{
+		return false;
+	}
+	const FVector3f Units = FSourceCoords::ToSource(Grenade->GetActorLocation(), Scale);
+	OutPosUnits->x = Units.X; OutPosUnits->y = Units.Y; OutPosUnits->z = Units.Z;
+	*OutSecondsLeft = Grenade->GetTimeToDetonation();
+	return true;
 }
 
 void FLambdaGameDll::NPCShootAt(lambda::EntityId Entity, lambda::EntityId Target, const lambda::NPCShotParams& Params)

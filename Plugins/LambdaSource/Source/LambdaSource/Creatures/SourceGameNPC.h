@@ -57,6 +57,14 @@ public:
 	 */
 	bool HasClearShotAt(const AActor* Target) const;
 
+	/** Throws a live grenade from the hand, with the given velocity in UE cm/s. */
+	void ThrowGrenade(const FVector& Velocity, float FuseSeconds);
+	/**
+	 * The velocity that lobs a grenade from the hand onto a spot in FuseSeconds under gravity, so it lands
+	 * as the fuse runs out. False if the throw would be absurd - straight up, or faster than an arm.
+	 */
+	bool SolveThrowArc(const FVector& Target, float FuseSeconds, FVector& OutVelocity) const;
+
 	/** The chest-height trace alone: is this point still cover from there? */
 	bool IsPointCoverFrom(const FVector& Pos, const FVector& ThreatPos) const;
 

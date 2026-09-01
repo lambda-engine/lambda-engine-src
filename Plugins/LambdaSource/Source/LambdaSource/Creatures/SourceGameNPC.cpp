@@ -9,6 +9,7 @@
 #include "Rendering/SourceImpactEffects.h"
 #include "Weapons/SourceAmmoDef.h"
 #include "Weapons/SourceWeaponScript.h"
+#include "Gameplay/SourceGrenade.h"
 #include "Rendering/SourceStudioModelComponent.h"
 #include "World/SourceBSPWorldActor.h"
 #include "Components/AudioComponent.h"
@@ -308,6 +309,43 @@ void ASourceGameNPC::MindStopMoving()
 {
 	bMoveActive = false;
 	StopMoving();
+}
+
+void ASourceGameNPC::ThrowGrenade(const FVector& Velocity, float FuseSeconds)
+{
+	// From the hand, so it clears the soldier's own body and looks thrown rather than dropped.
+	FVector From = EyePosition();
+	if (Model && WeaponHandBone != INDEX_NONE)
+	{
+		From = Model->GetBoneWorldTransform(WeaponHandBone).GetLocation();
+	}
+	const float Damage = FSourceAmmoDef::Get().GetSkillValue(TEXT("sk_npc_dmg_fraggrenade"), 75.0f);
+	const float RadiusUnits = FSourceAmmoDef::Get().GetSkillValue(TEXT("sk_fraggrenade_radius"), 250.0f);
+	ASourceGrenade::Throw(GetWorld(), this, From, Velocity, FuseSeconds, Damage, RadiusUnits, MaterialLibrary);
+}
+
+bool ASourceGameNPC::SolveThrowArc(const FVector& Target, float FuseSeconds, FVector& OutVelocity) const
+{
+	if (FuseSeconds <= 0.1f)
+	{
+		return false;
+	}
+	FVector From = EyePosition();
+	if (Model && WeaponHandBone != INDEX_NONE)
+	{
+		From = Model->GetBoneWorldTransform(WeaponHandBone).GetLocation();
+	}
+	// Ballistics, with the flight time given: the horizontal part is just distance over time, and the
+	// vertical part is whatever leaves it at the target height once gravity has had that long to pull.
+	// Source solves the same thing in CAI_BaseNPC::ThrowLimit / VecCheckToss.
+	const FVector Delta = Target - From;
+	const float Gravity = FMath::Abs(GetWorld() ? GetWorld()->GetGravityZ() : -1143.0f);
+	OutVelocity = FVector(Delta.X / FuseSeconds, Delta.Y / FuseSeconds,
+		Delta.Z / FuseSeconds + 0.5f * Gravity * FuseSeconds);
+
+	// An arm can only throw so hard; a solution needing more than this is one that does not exist.
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+	return OutVelocity.Size() <= 1200.0f * Scale;
 }
 
 bool ASourceGameNPC::HasClearShotAt(const AActor* Target) const

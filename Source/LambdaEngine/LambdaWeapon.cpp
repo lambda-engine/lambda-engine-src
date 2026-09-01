@@ -10,6 +10,7 @@
 #include "GameFramework/DamageType.h"
 #include "Core/SourceCoordinates.h"
 #include "Rendering/SourceImpactEffects.h"
+#include "Gameplay/SourceGrenade.h"
 #include "Camera/CameraComponent.h"
 #include "Engine/HitResult.h"
 #include "Engine/DamageEvents.h"
@@ -1014,4 +1015,61 @@ void ALambdaWeaponShotgun::ItemPostFrame()
 
 	bAttackPressedThisFrame = false;
 	bAttack2PressedThisFrame = false;
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// weapon_frag
+// ---------------------------------------------------------------------------------------------------------
+
+void ALambdaWeaponFrag::PrimaryAttack()
+{
+	ThrowGrenade(/*bLob*/ false);
+}
+
+void ALambdaWeaponFrag::SecondaryAttack()
+{
+	// CWeaponFrag's secondary is the underarm lob, for putting one over a railing or round a corner.
+	ThrowGrenade(/*bLob*/ true);
+}
+
+void ALambdaWeaponFrag::ThrowGrenade(bool bLob)
+{
+	ALambdaCharacter* WeaponOwner = OwningCharacter.Get();
+	UWorld* World = GetWorld();
+	if (!WeaponOwner || !World)
+	{
+		return;
+	}
+	// One grenade per press, and no press at all without one to throw.
+	if (WeaponOwner->GetAmmoCount(WeaponInfo.PrimaryAmmo) <= 0 || GetWorld()->GetTimeSeconds() < NextPrimaryAttack)
+	{
+		return;
+	}
+
+	FVector EyeLocation;
+	FRotator EyeRotation;
+	WeaponOwner->GetActorEyesViewPoint(EyeLocation, EyeRotation);
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+
+	// CWeaponFrag::ThrowGrenade: it leaves the hand a little forward and below the eye so it does not clip
+	// the player's own view, carrying his own velocity plus the throw.
+	const FVector Forward = EyeRotation.Vector();
+	const FVector Source = EyeLocation + Forward * (18.0f * Scale) - FVector(0, 0, 8.0f * Scale);
+	const float Speed = (bLob ? 350.0f : 1200.0f) * Scale;
+	FVector Velocity = WeaponOwner->GetVelocity() + Forward * Speed;
+	if (bLob)
+	{
+		Velocity += FVector(0, 0, 200.0f * Scale);	// the lob's arc
+	}
+
+	const float Damage = FSourceAmmoDef::Get().GetSkillValue(TEXT("sk_plr_dmg_fraggrenade"), 125.0f);
+	const float RadiusUnits = FSourceAmmoDef::Get().GetSkillValue(TEXT("sk_fraggrenade_radius"), 250.0f);
+	// GRENADE_TIMER is three seconds for the player's grenade.
+	ASourceGrenade::Throw(World, WeaponOwner, Source, Velocity, 3.0f, Damage, RadiusUnits,
+		WeaponOwner->GetWorldMaterialLibrary());
+
+	WeaponOwner->RemoveAmmo(WeaponInfo.PrimaryAmmo, 1);
+	NextPrimaryAttack = World->GetTimeSeconds() + 0.5f;
+	SendWeaponAnim(TEXT("ACT_VM_THROW"));
+	WeaponOwner->OnWeaponAttackAnim();
 }
