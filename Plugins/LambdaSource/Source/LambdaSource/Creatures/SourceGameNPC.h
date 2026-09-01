@@ -6,6 +6,7 @@
 #include "SourceGameNPC.generated.h"
 
 class UAudioComponent;
+class USourceStudioModelComponent;
 
 /**
  * An NPC whose mind lives in LambdaGame.dll - the counterpart to ASourceGameEntity for brush entities and
@@ -62,6 +63,7 @@ public:
 
 protected:
 	virtual void Spawn() override;
+	virtual void Tick(float DeltaSeconds) override;
 	virtual void NPCThink() override;
 	virtual void OnTakeDamage_Alive(float Damage, AActor* Attacker, const FSourceDamageEvent& Info) override;
 	virtual void Event_Killed(AActor* Attacker) override;
@@ -74,6 +76,19 @@ private:
 
 	lambda::IEntity* Behaviour = nullptr;
 	lambda::EntityId GameId = lambda::InvalidEntity;
+
+	/**
+	 * The weapon in its hands: the world model Source shows in everyone else's hands, riding the right hand
+	 * by bonemerge exactly as the player's third-person shadow carries its own (UpdateWeaponShadow). The
+	 * w_ model's hand bone is authored to land on ValveBiped.Bip01_R_Hand; placing the component so it does
+	 * needs no invented angles.
+	 */
+	UPROPERTY(Transient)
+	TObjectPtr<USourceStudioModelComponent> WeaponMesh;
+	int32 WeaponHandBone = INDEX_NONE;			// the soldier's right hand
+	FTransform WeaponRootBind = FTransform::Identity;	// the w_ model's hand, in its own model space
+	bool bWeaponBonemerged = false;
+	void PlaceHeldWeapon();
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAudioComponent> Voice;

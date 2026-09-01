@@ -8,6 +8,8 @@
 #include "Gameplay/SourceDamage.h"
 #include "Rendering/SourceImpactEffects.h"
 #include "Weapons/SourceAmmoDef.h"
+#include "Weapons/SourceWeaponScript.h"
+#include "Rendering/SourceStudioModelComponent.h"
 #include "World/SourceBSPWorldActor.h"
 #include "Components/AudioComponent.h"
 #include "Components/CapsuleComponent.h"
@@ -57,6 +59,10 @@ ASourceGameNPC::ASourceGameNPC(const FObjectInitializer& ObjectInitializer)
 	Voice = CreateDefaultSubobject<UAudioComponent>(TEXT("Voice"));
 	Voice->SetupAttachment(RootComponent);
 	Voice->bAutoActivate = false;
+
+	WeaponMesh = CreateDefaultSubobject<USourceStudioModelComponent>(TEXT("HeldWeapon"));
+	WeaponMesh->SetupAttachment(RootComponent);
+	WeaponMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 }
 
 bool ASourceGameNPC::KnowsAppearanceOf(const FString& ClassName)
@@ -96,6 +102,76 @@ void ASourceGameNPC::Spawn()
 	FieldOfView = 0.4f;			// CNPC_Combine: a soldier scans a little wider than the 0.5 default
 	RegisterAsNavInvoker();
 	SetActivity(TEXT("ACT_IDLE"));
+
+	// The weapon it was told to carry, from the same scripts the player's weapons are defined by. The mind
+	// reads the same keyvalue for rates and damage; the body only cares what the thing looks like.
+	FString WeaponClass = Entity.Get(TEXT("additionalequipment"));
+	if (WeaponClass.IsEmpty())
+	{
+		WeaponClass = TEXT("weapon_smg1");		// the mind's default, mirrored
+	}
+	const FSourceWeaponInfo* Info = FSourceWeaponScripts::Get().Find(WeaponClass);
+	if (WeaponMesh && Info && !Info->PlayerModel.IsEmpty()
+		&& WeaponMesh->SetModel(Info->PlayerModel, MaterialLibrary))
+	{
+		WeaponMesh->SetCastShadow(true);
+
+		// The soldier's right hand, and the w_ model's own hand bone walked to model space - some world
+		// models hang the hand off a root that carries a rotation of its own, and that is what the
+		// placement has to undo (see ALambdaCharacter::UpdateWeaponShadow, which this mirrors exactly).
+		if (Model && Model->HasModel())
+		{
+			const TArray<FSourceStudioBone>& Bones = Model->GetModel()->GetBones();
+			for (int32 b = 0; b < Bones.Num(); ++b)
+			{
+				if (Bones[b].Name.Equals(TEXT("ValveBiped.Bip01_R_Hand"), ESearchCase::IgnoreCase))
+				{
+					WeaponHandBone = b;
+					break;
+				}
+			}
+		}
+		const float UnitScale = ULambdaSourceSettings::Get().UnitScale;
+		const TArray<FSourceStudioBone>& WBones = WeaponMesh->GetModel()->GetBones();
+		for (int32 wb = 0; wb < WBones.Num(); ++wb)
+		{
+			if (!WBones[wb].Name.Equals(TEXT("ValveBiped.Bip01_R_Hand"), ESearchCase::IgnoreCase))
+			{
+				continue;
+			}
+			FTransform Bind = FSourceMatrix3x4::FromQuatPos(WBones[wb].Quat, WBones[wb].Pos).ToUETransform(UnitScale);
+			for (int32 P = WBones[wb].Parent; P != INDEX_NONE && WBones.IsValidIndex(P); P = WBones[P].Parent)
+			{
+				Bind = Bind * FSourceMatrix3x4::FromQuatPos(WBones[P].Quat, WBones[P].Pos).ToUETransform(UnitScale);
+			}
+			WeaponRootBind = Bind;
+			bWeaponBonemerged = true;
+			break;
+		}
+		PlaceHeldWeapon();
+	}
+	else if (WeaponMesh)
+	{
+		WeaponMesh->SetVisibility(false);
+	}
+}
+
+void ASourceGameNPC::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	// Every frame, not every think: the hand moves with the animation, and a gun trailing a tenth of a
+	// second behind it reads as glued-on.
+	PlaceHeldWeapon();
+}
+
+void ASourceGameNPC::PlaceHeldWeapon()
+{
+	if (!WeaponMesh || !WeaponMesh->HasModel() || WeaponHandBone == INDEX_NONE || !Model)
+	{
+		return;
+	}
+	const FTransform Hand = Model->GetBoneWorldTransform(WeaponHandBone);
+	WeaponMesh->SetWorldTransform(bWeaponBonemerged ? WeaponRootBind.Inverse() * Hand : Hand);
 }
 
 void ASourceGameNPC::EndPlay(const EEndPlayReason::Type Reason)
@@ -167,6 +243,12 @@ void ASourceGameNPC::Event_Killed(AActor* Attacker)
 	if (Voice)
 	{
 		Voice->Stop();
+	}
+	// The corpse is a separate ragdoll actor; the gun cannot follow a hand this component no longer drives.
+	// Source drops a pickup here; until we do, the weapon simply goes with its owner.
+	if (WeaponMesh)
+	{
+		WeaponMesh->SetVisibility(false);
 	}
 	Super::Event_Killed(Attacker);
 }
