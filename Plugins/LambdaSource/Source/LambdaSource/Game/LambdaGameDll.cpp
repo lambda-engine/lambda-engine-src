@@ -721,6 +721,40 @@ bool FLambdaGameDll::IsCoverFrom(const lambda::Vec3& PosUnits, const lambda::Vec
 	return false;
 }
 
+bool FLambdaGameDll::GetFloorZ(const lambda::Vec3& PosUnits, float MaxDropUnits, float* OutZUnits) const
+{
+	if (!OutZUnits)
+	{
+		return false;
+	}
+	// Any live entity can answer this; they all share one world.
+	for (const TPair<uint32, TWeakObjectPtr<AActor>>& Pair : EntitiesById)
+	{
+		const AActor* Actor = Pair.Value.Get();
+		UWorld* World = Actor ? Actor->GetWorld() : nullptr;
+		if (!World)
+		{
+			continue;
+		}
+		const float Scale = ULambdaSourceSettings::Get().UnitScale;
+		const FVector Start = FSourceCoords::ToUE(FVector3f(PosUnits.x, PosUnits.y, PosUnits.z), Scale);
+		const FVector End = Start - FVector(0.0f, 0.0f, FMath::Max(1.0f, MaxDropUnits) * Scale);
+
+		// Against the world only, as Source traces MASK_NPCSOLID_BRUSHONLY: a node's floor is the floor,
+		// not whatever crate happened to be standing there when the map loaded.
+		FHitResult Hit;
+		FCollisionQueryParams Params(SCENE_QUERY_STAT(LambdaFloorZ), /*bTraceComplex=*/ true);
+		Params.AddIgnoredActor(Actor);
+		if (!World->LineTraceSingleByChannel(Hit, Start, End, ECC_Visibility, Params))
+		{
+			return false;
+		}
+		*OutZUnits = FSourceCoords::ToSource(Hit.ImpactPoint, Scale).Z;
+		return true;
+	}
+	return false;
+}
+
 float FLambdaGameDll::GetHealth(lambda::EntityId Entity) const
 {
 	const AActor* Actor = const_cast<FLambdaGameDll*>(this)->ResolveEntity(Entity);

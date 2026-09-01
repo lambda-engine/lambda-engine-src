@@ -82,6 +82,7 @@ public:
 	virtual bool NPCFindCover(lambda::EntityId Entity, const lambda::Vec3& ThreatPosUnits, float MinDistUnits, float MaxDistUnits, lambda::Vec3* OutPosUnits) override;
 	virtual bool NPCFindFlank(lambda::EntityId Entity, lambda::EntityId Target, float MinDistUnits, float MaxDistUnits, lambda::Vec3* OutPosUnits) override;
 	virtual bool IsCoverFrom(const lambda::Vec3& PosUnits, const lambda::Vec3& ThreatPosUnits) const override;
+	virtual bool GetFloorZ(const lambda::Vec3& PosUnits, float MaxDropUnits, float* OutZUnits) const override;
 	virtual float GetHealth(lambda::EntityId Entity) const override;
 	virtual lambda::EntityId GetPlayer() const override;
 	virtual float GetOutputMaxDelay(lambda::EntityId Entity, const char* OutputName) const override;

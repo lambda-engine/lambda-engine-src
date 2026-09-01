@@ -18,7 +18,7 @@
 #pragma once
 
 // Bumped whenever anything below changes shape. A DLL built against an older one is refused at load.
-#define LAMBDA_GAME_API_VERSION "LambdaGame009"
+#define LAMBDA_GAME_API_VERSION "LambdaGame010"
 
 #if defined(_WIN32)
 	#define LAMBDA_GAME_EXPORT extern "C" __declspec(dllexport)
@@ -304,6 +304,16 @@ public:
 	virtual bool NPCFindCover(EntityId Entity, const Vec3& ThreatPosUnits, float MinDistUnits, float MaxDistUnits, Vec3* OutPosUnits) = 0;
 	virtual bool NPCFindFlank(EntityId Entity, EntityId Target, float MinDistUnits, float MaxDistUnits, Vec3* OutPosUnits) = 0;
 	virtual bool IsCoverFrom(const Vec3& PosUnits, const Vec3& ThreatPosUnits) const = 0;
+
+	/**
+	 * The Z of the floor under a point, Source's GetFloorZ (game/server/ai_node.cpp) - it traces down at most
+	 * MaxDropUnits against the world and reports where it landed. False when there is nothing under the point
+	 * within that distance, which is how an entity placed over a pit or outside the map finds out.
+	 *
+	 * Source's node graph builder drops every info_node this way, and it is why a mapper never has to place
+	 * one at exactly floor height.
+	 */
+	virtual bool GetFloorZ(const Vec3& PosUnits, float MaxDropUnits, float* OutZUnits) const = 0;
 
 	virtual float GetHealth(EntityId Entity) const = 0;
 	/** The player, or InvalidEntity before one exists. The only enemy an NPC has, for now. */
