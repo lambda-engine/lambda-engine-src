@@ -540,7 +540,12 @@ void FLambdaGameDll::NPCFaceToward(lambda::EntityId Entity, const lambda::Vec3& 
 	if (ASourceGameNPC* NPC = Cast<ASourceGameNPC>(ResolveEntity(Entity)))
 	{
 		const float Scale = ULambdaSourceSettings::Get().UnitScale;
-		NPC->SetIdealYawToTarget(FSourceCoords::ToUE(FVector3f(Pos.x, Pos.y, Pos.z), Scale));
+		const FVector Where = FSourceCoords::ToUE(FVector3f(Pos.x, Pos.y, Pos.z), Scale);
+		NPC->SetIdealYawToTarget(Where);
+		// Facing something is also aiming at it, so the weapon tracks what the soldier is engaging instead
+		// of drifting to wherever the last round happened to land. Raised to chest height because the
+		// positions the mind hands about are feet, and a rifle levelled at somebody's boots looks broken.
+		NPC->SetAimTarget(Where + FVector(0.0f, 0.0f, 40.0f * Scale));
 	}
 }
 

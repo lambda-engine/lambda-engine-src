@@ -13,6 +13,7 @@
 #include "Gameplay/SourceGrenade.h"
 #include "Rendering/SourceStudioModelComponent.h"
 #include "World/SourceBSPWorldActor.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "Components/AudioComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "NavigationSystem.h"
@@ -166,10 +167,61 @@ void ASourceGameNPC::Tick(float DeltaSeconds)
 	// trailing a tenth of a second behind the hand reads as glued-on.
 	UpdateAimPose();
 	PlaceHeldWeapon();
+	UpdateStepSound(DeltaSeconds);
+}
+
+void ASourceGameNPC::UpdateStepSound(float DeltaSeconds)
+{
+	if (NPCState == ESourceNPCState::Dead)
+	{
+		return;
+	}
+	// CBasePlayer::UpdateStepSound's clock, in milliseconds because Source's is.
+	if (StepSoundTime > 0.0f)
+	{
+		StepSoundTime = FMath::Max(0.0f, StepSoundTime - 1000.0f * DeltaSeconds);
+		return;
+	}
+
+	const UCharacterMovementComponent* Move = GetCharacterMovement();
+	if (!Move || !Move->IsMovingOnGround())
+	{
+		return;
+	}
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+	const float Speed = Move->Velocity.Size2D();
+	const float VelWalk = 60.0f * Scale;		// slower than this and he is shuffling, not walking
+	const float VelRun = 180.0f * Scale;
+	if (Speed < VelWalk)
+	{
+		return;
+	}
+
+	StepSoundTime = (Speed < VelRun) ? 400.0f : 300.0f;
+
+	// HL:A layers a foley rustle over the boot (use_foley_layer / volume_mult_foley_layer in
+	// soundevents_footsteps_npc_combine): the boot alone is a footstep, the pair is a soldier in armour.
+	EmitSound(StepSoundScript);
+	EmitSound(StepFoleyScript);
+}
+
+void ASourceGameNPC::SetAimTarget(const FVector& World)
+{
+	AimTarget = World;
+	bHasAimTarget = true;
+	AimTargetTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 }
 
 void ASourceGameNPC::UpdateAimPose()
 {
+	// An aim nobody has refreshed for a couple of seconds is not an aim any more. Source's NPCs level their
+	// weapons when they stop engaging; leaving the last shot's endpoint in place instead is what left a
+	// soldier posed at the sky long after the thing he shot at was gone.
+	if (bHasAimTarget && GetWorld() && GetWorld()->GetTimeSeconds() - AimTargetTime > 2.0f)
+	{
+		bHasAimTarget = false;
+	}
+
 	if (!Model || !Model->HasModel())
 	{
 		return;
@@ -377,8 +429,7 @@ void ASourceGameNPC::MindShootAt(const FVector& TargetPoint, AActor* TargetActor
 		return;
 	}
 
-	AimTarget = TargetPoint;
-	bHasAimTarget = true;
+	SetAimTarget(TargetPoint);
 
 	const FVector Muzzle = EyePosition();
 	if (Params.FireSound && Params.FireSound[0])

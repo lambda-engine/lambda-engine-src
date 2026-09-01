@@ -112,9 +112,43 @@ private:
 	 * drives the same two (ALambdaCharacter::UpdateBodyPose); this is the NPC's half.
 	 */
 	void UpdateAimPose();
+
+	/**
+	 * Footsteps for a model whose animations do not carry them.
+	 *
+	 * HL2's humanoids play steps from AE_NPC_LEFTFOOT / AE_NPC_RIGHTFOOT animation events, but
+	 * combine_soldier_anims.mdl has no such events - only AE_CL_PLAYSOUND, muzzleflash and weapon-drop - so
+	 * a walking soldier was silent. This paces them off the ground speed instead, the way
+	 * CBasePlayer::UpdateStepSound does for the player: a millisecond clock, a walk threshold and a run
+	 * threshold, and an interval that shortens when running.
+	 *
+	 * Deliberately does NOT insert an AI sound. The player's steps do (that is how a soldier hears you coming),
+	 * but our CSoundEnt has no notion of who is on whose side, so a soldier hearing his squadmate's boots would
+	 * go and investigate him.
+	 */
+	void UpdateStepSound(float DeltaSeconds);
+
+	/** Milliseconds until the next footstep is due (CBasePlayer::m_flStepSoundTime). */
+	float StepSoundTime = 0.0f;
+
+	/** The soundscripts a step plays: the boot, and the gear that rattles with it. */
+	FString StepSoundScript = TEXT("CombineSoldier.Step_Manual_Default");
+	FString StepFoleyScript = TEXT("CombineSoldier.Step_Foley");
 	/** Where the mind last told the body to shoot, in UE space - what the aim blend is pointed at. */
 	FVector AimTarget = FVector::ZeroVector;
 	bool bHasAimTarget = false;
+	/**
+	 * When the aim target was last refreshed. Without it the pose was set by the last bullet and never
+	 * cleared, so a soldier who fired once and then walked away kept aiming at a point he had left behind -
+	 * which, if that point was above him, is a man striding about with his rifle pointed at the ceiling.
+	 */
+	float AimTargetTime = -1000.0f;
+
+public:
+	/** Point the upper body at a world position; the aim blend follows it until it goes stale. */
+	void SetAimTarget(const FVector& World);
+
+private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAudioComponent> Voice;
