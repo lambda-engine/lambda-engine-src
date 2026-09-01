@@ -18,7 +18,7 @@
 #pragma once
 
 // Bumped whenever anything below changes shape. A DLL built against an older one is refused at load.
-#define LAMBDA_GAME_API_VERSION "LambdaGame006"
+#define LAMBDA_GAME_API_VERSION "LambdaGame007"
 
 #if defined(_WIN32)
 	#define LAMBDA_GAME_EXPORT extern "C" __declspec(dllexport)
@@ -233,6 +233,13 @@ public:
 
 	/** A clear line from this NPC's eyes to the other's, and (unless ignored) within its view cone. */
 	virtual bool NPCCanSee(EntityId Entity, EntityId Other, bool bIgnoreViewCone) const = 0;
+
+	/**
+	 * Whether a shot at the target would go past this NPC's own side (CAI_BaseNPC::PointInSpread, which
+	 * Source uses for exactly this). False means somebody friendly is in the line of fire and the trigger
+	 * should not be pulled - holding fire while a squadmate crosses is most of what a squad looks like.
+	 */
+	virtual bool NPCHasClearShot(EntityId Entity, EntityId Target) const = 0;
 
 	/**
 	 * One trigger pull. The engine traces the pellets from the eyes toward the target with the given spread,

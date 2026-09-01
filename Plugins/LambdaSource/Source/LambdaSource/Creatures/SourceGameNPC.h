@@ -51,6 +51,12 @@ public:
 	bool MindFindCover(const FVector& ThreatPos, float MinDistCm, float MaxDistCm, FVector& OutPos);
 	/** Finds a reachable point that can see the target from a different side than we are on now. */
 	bool MindFindFlank(const FVector& ThreatPos, float MinDistCm, float MaxDistCm, FVector& OutPos);
+	/**
+	 * CAI_BaseNPC::PointInSpread's job: would a shot at this target pass through one of our own first?
+	 * Traced rather than measured off the line, because the trace is what the bullet will actually do.
+	 */
+	bool HasClearShotAt(const AActor* Target) const;
+
 	/** The chest-height trace alone: is this point still cover from there? */
 	bool IsPointCoverFrom(const FVector& Pos, const FVector& ThreatPos) const;
 
@@ -89,6 +95,17 @@ private:
 	FTransform WeaponRootBind = FTransform::Identity;	// the w_ model's hand, in its own model space
 	bool bWeaponBonemerged = false;
 	void PlaceHeldWeapon();
+
+	/**
+	 * The aim blend. HL2's soldier does not have one "fire" animation: it has a nine-way grid, and where the
+	 * gun points inside it is chosen by the aim_pitch and aim_yaw pose parameters. Undriven, the blend sits
+	 * at whatever the grid defaults to - which had soldiers firing at the ceiling. The player's own body
+	 * drives the same two (ALambdaCharacter::UpdateBodyPose); this is the NPC's half.
+	 */
+	void UpdateAimPose();
+	/** Where the mind last told the body to shoot, in UE space - what the aim blend is pointed at. */
+	FVector AimTarget = FVector::ZeroVector;
+	bool bHasAimTarget = false;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAudioComponent> Voice;

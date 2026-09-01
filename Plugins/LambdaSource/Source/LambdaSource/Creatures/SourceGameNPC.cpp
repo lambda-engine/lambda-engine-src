@@ -160,9 +160,40 @@ void ASourceGameNPC::Spawn()
 void ASourceGameNPC::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
-	// Every frame, not every think: the hand moves with the animation, and a gun trailing a tenth of a
-	// second behind it reads as glued-on.
+	// Every frame, not every think: the aim blend and the hand both move with the animation, and a gun
+	// trailing a tenth of a second behind the hand reads as glued-on.
+	UpdateAimPose();
 	PlaceHeldWeapon();
+}
+
+void ASourceGameNPC::UpdateAimPose()
+{
+	if (!Model || !Model->HasModel())
+	{
+		return;
+	}
+	// Aiming is measured from the eyes, in the NPC's own frame: how far round and how far down the target is
+	// from where the body is already facing. Yaw stays small because the NPC turns to face what it shoots at
+	// (CAI_Motor does the coarse turn, the blend does what is left).
+	float AimPitch = 0.0f;
+	float AimYaw = 0.0f;
+	if (bHasAimTarget)
+	{
+		const FVector ToTarget = AimTarget - EyePosition();
+		if (!ToTarget.IsNearlyZero())
+		{
+			const FRotator Look = ToTarget.Rotation();
+			// UE pitch is up-positive and the rig's aim_pitch is down-positive, as the player's body has it.
+			AimPitch = -FRotator::NormalizeAxis(Look.Pitch);
+			AimYaw = FRotator::NormalizeAxis(Look.Yaw - GetActorRotation().Yaw);
+		}
+	}
+	Model->SetPoseParameter(TEXT("aim_pitch"), AimPitch);
+	Model->SetPoseParameter(TEXT("aim_yaw"), AimYaw);
+	// The soldier rig names its body blend this way round in some sequences; setting both costs nothing and
+	// a model without one simply has no such parameter.
+	Model->SetPoseParameter(TEXT("body_pitch"), AimPitch);
+	Model->SetPoseParameter(TEXT("body_yaw"), AimYaw);
 }
 
 void ASourceGameNPC::PlaceHeldWeapon()
@@ -279,6 +310,26 @@ void ASourceGameNPC::MindStopMoving()
 	StopMoving();
 }
 
+bool ASourceGameNPC::HasClearShotAt(const AActor* Target) const
+{
+	UWorld* World = GetWorld();
+	if (!World || !Target)
+	{
+		return false;
+	}
+	FHitResult Hit;
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(LambdaClearShot), /*bTraceComplex=*/ false, this);
+	Params.AddIgnoredActor(Target);
+	if (!World->LineTraceSingleByChannel(Hit, EyePosition(), Target->GetActorLocation(), ECC_Visibility, Params))
+	{
+		return true;		// nothing at all between us
+	}
+	// Only our own side stops the trigger. A wall in the way is the plan's problem, not the trigger's - the
+	// mind gave up its line of sight long before this, and a soldier that refuses to fire at cover it is
+	// suppressing would never suppress anything.
+	return !Hit.GetActor()->IsA<ASourceGameNPC>();
+}
+
 void ASourceGameNPC::MindShootAt(const FVector& TargetPoint, AActor* TargetActor, const lambda::NPCShotParams& Params)
 {
 	UWorld* World = GetWorld();
@@ -286,6 +337,9 @@ void ASourceGameNPC::MindShootAt(const FVector& TargetPoint, AActor* TargetActor
 	{
 		return;
 	}
+
+	AimTarget = TargetPoint;
+	bHasAimTarget = true;
 
 	const FVector Muzzle = EyePosition();
 	if (Params.FireSound && Params.FireSound[0])
@@ -321,6 +375,13 @@ void ASourceGameNPC::MindShootAt(const FVector& TargetPoint, AActor* TargetActor
 		SourceImpact::PlayImpact(Hit, MaterialLibrary, this, Dir, Params.DamagePerPellet);
 		if (AActor* HitActor = Hit.GetActor())
 		{
+			// The impact is shown wherever it landed, but our own side is never hurt by it: a burst begun
+			// with a clear line can still have a squadmate walk into it, and Source's soldiers do not kill
+			// each other by accident either.
+			if (HitActor->IsA<ASourceGameNPC>())
+			{
+				continue;
+			}
 			const FVector Force = Dir * SourceDamage::BulletImpulse(3.0f, 1200.0f) * 2.54f;
 			FSourceDamageEvent DamageEvent(Params.DamagePerPellet, Hit, Dir, UDamageType::StaticClass(), Force,
 				SourceDamageType::DMG_BULLET, HitGroup);

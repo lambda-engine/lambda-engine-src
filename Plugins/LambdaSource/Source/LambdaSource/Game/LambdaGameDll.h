@@ -70,6 +70,7 @@ public:
 	virtual void NPCStopMoving(lambda::EntityId Entity) override;
 	virtual void NPCFaceToward(lambda::EntityId Entity, const lambda::Vec3& Pos) override;
 	virtual bool NPCCanSee(lambda::EntityId Entity, lambda::EntityId Other, bool bIgnoreViewCone) const override;
+	virtual bool NPCHasClearShot(lambda::EntityId Entity, lambda::EntityId Target) const override;
 	virtual void NPCShootAt(lambda::EntityId Entity, lambda::EntityId Target, const lambda::NPCShotParams& Params) override;
 	virtual void NPCShootAtPos(lambda::EntityId Entity, const lambda::Vec3& PosUnits, const lambda::NPCShotParams& Params) override;
 	virtual bool NPCSpeak(lambda::EntityId Entity, const char* Soundscript) override;

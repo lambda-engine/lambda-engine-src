@@ -539,6 +539,18 @@ bool FLambdaGameDll::NPCCanSee(lambda::EntityId Entity, lambda::EntityId Other, 
 	return bIgnoreViewCone || NPC->FInViewCone(Target->GetActorLocation());
 }
 
+bool FLambdaGameDll::NPCHasClearShot(lambda::EntityId Entity, lambda::EntityId Target) const
+{
+	FLambdaGameDll* Self = const_cast<FLambdaGameDll*>(this);
+	const ASourceGameNPC* NPC = Cast<ASourceGameNPC>(Self->ResolveEntity(Entity));
+	AActor* TargetActor = Self->ResolveEntity(Target);
+	if (!NPC || !TargetActor)
+	{
+		return false;
+	}
+	return NPC->HasClearShotAt(TargetActor);
+}
+
 void FLambdaGameDll::NPCShootAt(lambda::EntityId Entity, lambda::EntityId Target, const lambda::NPCShotParams& Params)
 {
 	ASourceGameNPC* NPC = Cast<ASourceGameNPC>(ResolveEntity(Entity));
