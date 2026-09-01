@@ -4,6 +4,8 @@
 #include "Misc/CommandLine.h"
 #include "Engine/World.h"
 #include "GameMapsSettings.h"
+#include "Engine/GameViewportClient.h"
+#include "ShowFlags.h"
 #include "HAL/IConsoleManager.h"
 #include "Kismet/GameplayStatics.h"
 #include "Core/LambdaSourceSettings.h"
@@ -514,6 +516,49 @@ namespace
 		}
 		ApplyRtx(bAllowed && !bForcedOff, TEXT("startup"));
 	}
+
+	/**
+	 * wireframe 1|0 - draw the world as edges, so you can see what the AI is doing through walls.
+	 *
+	 * Source has this as "mat_wireframe"; Unreal has the same thing as a view mode rather than a material
+	 * flag, which is why this sets the viewport's mode instead of a cvar. Wireframe draws no lighting, so
+	 * anything unlit (sprites, the tracer strips) simply will not be there - the world, the props and the
+	 * NPC meshes, which is what you want to watch, all are.
+	 */
+	/**
+	 * Sets the engine's own ShowFlag override cvars rather than the viewport's flags.
+	 *
+	 * UGameViewportClient rebuilds its view family's show flags every frame and runs EngineShowFlagOverride
+	 * over them, so anything written straight onto EngineShowFlags is gone by the time the scene is drawn -
+	 * which is why setting the flag by hand looked like it had worked and changed nothing. The ShowFlag.*
+	 * cvars are the supported override and they apply per view, every frame.
+	 */
+	void ApplyWireframe(bool bOn)
+	{
+		static const TCHAR* const Flags[] = { TEXT("ShowFlag.Wireframe"), TEXT("ShowFlag.Lighting") };
+		if (IConsoleVariable* Wire = IConsoleManager::Get().FindConsoleVariable(Flags[0]))
+		{
+			Wire->Set(bOn ? 1 : 2, ECVF_SetByConsole);		// 2 is "leave it to the engine"
+		}
+		// Lighting is deliberately left alone. Turning it off alongside wireframe renders the world as solid
+		// black rather than as edges, which hides the very thing you turned wireframe on to see.
+		(void)Flags;
+		UE_LOG(LogLambda, Display, TEXT("wireframe %d"), bOn ? 1 : 0);
+	}
+
+	FAutoConsoleCommand GWireframeCommand(
+		TEXT("wireframe"),
+		TEXT("wireframe 1|0: draw the level as wireframe, so you can see through walls."),
+		FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
+		{
+			if (Args.Num() == 0)
+			{
+				const IConsoleVariable* Wire = IConsoleManager::Get().FindConsoleVariable(TEXT("ShowFlag.Wireframe"));
+				UE_LOG(LogLambda, Display, TEXT("wireframe is %d"), (Wire && Wire->GetInt() == 1) ? 1 : 0);
+				return;
+			}
+			ApplyWireframe(FCString::Atoi(*Args[0]) != 0);
+		}));
 
 	FAutoConsoleCommand GRtxCommand(
 		TEXT("rtx"),
