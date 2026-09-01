@@ -271,13 +271,32 @@ void FLambdaGameDll::GetAngles(lambda::EntityId Entity, lambda::Vec3* OutAngles)
 		return;
 	}
 	*OutAngles = lambda::Vec3();
-	if (const ASourceGameEntity* Actor = Cast<ASourceGameEntity>(ResolveEntity(Entity)))
+	const AActor* AnyActor = const_cast<FLambdaGameDll*>(this)->ResolveEntity(Entity);
+	if (!AnyActor)
+	{
+		return;
+	}
+	if (const ASourceGameEntity* Actor = Cast<ASourceGameEntity>(AnyActor))
 	{
 		const FVector3f Angles = Actor->GetSourceAngles();
 		OutAngles->x = Angles.X;
 		OutAngles->y = Angles.Y;
 		OutAngles->z = Angles.Z;
+		return;
 	}
+	// Anything else is asked which way it is looking, not which way its feet point - for a pawn those are
+	// different, and "which way is he looking" is the question the AI actually has (FEAR's
+	// AISensorTargetIsLookingAtMe). A hiding soldier waits for the player's back, and the player's back is
+	// a view rotation.
+	FRotator Look = AnyActor->GetActorRotation();
+	if (const APawn* AsPawn = Cast<APawn>(AnyActor))
+	{
+		Look = AsPawn->GetViewRotation();
+	}
+	const FVector3f Angles = FSourceCoords::AnglesFromUE(Look);
+	OutAngles->x = Angles.X;
+	OutAngles->y = Angles.Y;
+	OutAngles->z = Angles.Z;
 }
 
 void FLambdaGameDll::SetAngles(lambda::EntityId Entity, const lambda::Vec3& Angles)
