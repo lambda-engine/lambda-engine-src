@@ -42,7 +42,9 @@ namespace
 		OutMin = OutMax = FCString::Atof(*Text);
 	}
 
-	/** "SNDLVL_75dB" -> 75, "SNDLVL_NORM" -> 75. */
+	/** "SNDLVL_75dB" -> 75, plus soundflags.h's named levels - a name the parser does not know would fall
+	 * back to 75, which is how NPC gunfire (SNDLVL_GUNFIRE, 140) spent a while carrying no further than a
+	 * conversation while its bullet impacts arrived loud and clear. */
 	float ParseSoundLevel(const FString& Text)
 	{
 		if (Text.IsEmpty())
@@ -56,6 +58,22 @@ namespace
 		if (Text.Equals(TEXT("SNDLVL_NONE"), ESearchCase::IgnoreCase))
 		{
 			return 0.0f;
+		}
+		if (Text.Equals(TEXT("SNDLVL_GUNFIRE"), ESearchCase::IgnoreCase))
+		{
+			return 140.0f;	// soundflags.h: THRESHOLD OF PAIN, gunshot, jet engine
+		}
+		if (Text.Equals(TEXT("SNDLVL_TALKING"), ESearchCase::IgnoreCase))
+		{
+			return 80.0f;
+		}
+		if (Text.Equals(TEXT("SNDLVL_STATIC"), ESearchCase::IgnoreCase))
+		{
+			return 66.0f;
+		}
+		if (Text.Equals(TEXT("SNDLVL_IDLE"), ESearchCase::IgnoreCase))
+		{
+			return 60.0f;
 		}
 		// SNDLVL_<n>dB
 		FString Digits;

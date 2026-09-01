@@ -816,6 +816,11 @@ bool ASourceNPCBase::NavigateTo(const FVector& Goal)
 		if (Dir.Normalize())
 		{
 			SetMoveDirection(Dir);
+			// Face the way we are walking, as CAI_Motor's move execute sets ideal yaw from the motion. Without
+			// this the yaw stays wherever the last FaceToward left it - at the enemy - and a soldier running to
+			// a flank walks backwards the whole way. An action that wants eyes on something while standing
+			// still calls FaceToward after this, in the same think, and wins.
+			SetIdealYawToTarget(GetActorLocation() + Dir);
 			return true;
 		}
 	}
@@ -827,6 +832,7 @@ bool ASourceNPCBase::NavigateTo(const FVector& Goal)
 	if (Straight.Normalize())
 	{
 		SetMoveDirection(Straight);
+		SetIdealYawToTarget(GetActorLocation() + Straight);
 	}
 	return false;
 }
