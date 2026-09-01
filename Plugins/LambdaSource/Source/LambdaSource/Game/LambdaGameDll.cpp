@@ -7,6 +7,9 @@
 #include "FileSystem/LambdaFileSystem.h"
 #include "Entities/SourceGameEntity.h"
 #include "Entities/SourceGamePointEntity.h"
+#include "Creatures/SourceGameNPC.h"
+#include "GameFramework/Character.h"
+#include "Components/CapsuleComponent.h"
 #include "Creatures/SourceNPCBase.h"
 #include "GameFramework/Pawn.h"
 #include "World/SourceEntity.h"
@@ -147,7 +150,7 @@ ASourceEntity* FLambdaGameDll::ResolveSourceEntity(lambda::EntityId Id) const
 	return Cast<ASourceEntity>(ResolveEntity(Id));
 }
 
-lambda::IEntity* FLambdaGameDll::CreateEntity(const FString& ClassName, ASourceEntity* Owner, lambda::EntityId& OutId)
+lambda::IEntity* FLambdaGameDll::CreateEntity(const FString& ClassName, AActor* Owner, lambda::EntityId& OutId)
 {
 	OutId = lambda::InvalidEntity;
 	if (!Game || !Owner)
@@ -190,12 +193,20 @@ const char* FLambdaGameDll::StoreReturnString(const FString& Value) const
 
 const char* FLambdaGameDll::GetKeyValue(lambda::EntityId Entity, const char* Key) const
 {
-	const ASourceEntity* Actor = ResolveSourceEntity(Entity);
-	if (!Actor || !Key)
+	if (!Key)
 	{
 		return "";
 	}
-	return StoreReturnString(Actor->GetEntity().Get(ANSI_TO_TCHAR(Key)));
+	// Two kinds of body carry keyvalues: the ASourceEntity family, and NPCs, which are characters.
+	if (const ASourceEntity* Actor = ResolveSourceEntity(Entity))
+	{
+		return StoreReturnString(Actor->GetEntity().Get(ANSI_TO_TCHAR(Key)));
+	}
+	if (const ASourceNPCBase* NPC = Cast<ASourceNPCBase>(const_cast<FLambdaGameDll*>(this)->ResolveEntity(Entity)))
+	{
+		return StoreReturnString(NPC->GetSourceEntity().Get(ANSI_TO_TCHAR(Key)));
+	}
+	return "";
 }
 
 const char* FLambdaGameDll::GetClassName(lambda::EntityId Entity) const
@@ -217,13 +228,30 @@ void FLambdaGameDll::GetOrigin(lambda::EntityId Entity, lambda::Vec3* OutOrigin)
 		return;
 	}
 	*OutOrigin = lambda::Vec3();
-	if (const ASourceGameEntity* Actor = Cast<ASourceGameEntity>(ResolveEntity(Entity)))
+	const AActor* AnyActor = const_cast<FLambdaGameDll*>(this)->ResolveEntity(Entity);
+	if (!AnyActor)
 	{
-		const FVector3f Origin = Actor->GetSourceOrigin();
-		OutOrigin->x = Origin.X;
-		OutOrigin->y = Origin.Y;
-		OutOrigin->z = Origin.Z;
+		return;
 	}
+	FVector3f Origin;
+	if (const ASourceGameEntity* Actor = Cast<ASourceGameEntity>(AnyActor))
+	{
+		Origin = Actor->GetSourceOrigin();
+	}
+	else
+	{
+		// Anything else is asked where it stands. A character's origin is its feet, as Source has it - the
+		// mind reasons about floors and cover heights, and a capsule centre is nowhere in that reasoning.
+		FVector Feet = AnyActor->GetActorLocation();
+		if (const ACharacter* AsCharacter = Cast<ACharacter>(AnyActor))
+		{
+			Feet.Z -= AsCharacter->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+		}
+		Origin = FSourceCoords::ToSource(Feet, ULambdaSourceSettings::Get().UnitScale);
+	}
+	OutOrigin->x = Origin.X;
+	OutOrigin->y = Origin.Y;
+	OutOrigin->z = Origin.Z;
 }
 
 void FLambdaGameDll::SetOrigin(lambda::EntityId Entity, const lambda::Vec3& Origin)
@@ -442,6 +470,195 @@ void FLambdaGameDll::FireOutput(lambda::EntityId Entity, const char* OutputName,
 		return;
 	}
 	Actor->FireOutput(ANSI_TO_TCHAR(OutputName), ResolveEntity(Activator));
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// An NPC body's side of the vocabulary. Every call resolves to the ASourceGameNPC host and converts at the
+// boundary, as ever: Source units and axes on the game side, UE's on this one.
+// ---------------------------------------------------------------------------------------------------------
+
+bool FLambdaGameDll::NPCSetActivity(lambda::EntityId Entity, const char* Activity)
+{
+	ASourceGameNPC* NPC = Cast<ASourceGameNPC>(ResolveEntity(Entity));
+	return NPC && Activity ? NPC->SetActivity(ANSI_TO_TCHAR(Activity)) : false;
+}
+
+bool FLambdaGameDll::NPCActivityFinished(lambda::EntityId Entity) const
+{
+	const ASourceGameNPC* NPC = Cast<ASourceGameNPC>(const_cast<FLambdaGameDll*>(this)->ResolveEntity(Entity));
+	return NPC ? NPC->IsActivityFinished() : true;
+}
+
+bool FLambdaGameDll::NPCMoveTo(lambda::EntityId Entity, const lambda::Vec3& Pos)
+{
+	ASourceGameNPC* NPC = Cast<ASourceGameNPC>(ResolveEntity(Entity));
+	if (!NPC)
+	{
+		return false;
+	}
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+	return NPC->MindMoveTo(FSourceCoords::ToUE(FVector3f(Pos.x, Pos.y, Pos.z), Scale));
+}
+
+bool FLambdaGameDll::NPCMoveDone(lambda::EntityId Entity) const
+{
+	const ASourceGameNPC* NPC = Cast<ASourceGameNPC>(const_cast<FLambdaGameDll*>(this)->ResolveEntity(Entity));
+	return NPC ? NPC->MindMoveDone() : true;
+}
+
+void FLambdaGameDll::NPCStopMoving(lambda::EntityId Entity)
+{
+	if (ASourceGameNPC* NPC = Cast<ASourceGameNPC>(ResolveEntity(Entity)))
+	{
+		NPC->MindStopMoving();
+	}
+}
+
+void FLambdaGameDll::NPCFaceToward(lambda::EntityId Entity, const lambda::Vec3& Pos)
+{
+	if (ASourceGameNPC* NPC = Cast<ASourceGameNPC>(ResolveEntity(Entity)))
+	{
+		const float Scale = ULambdaSourceSettings::Get().UnitScale;
+		NPC->SetIdealYawToTarget(FSourceCoords::ToUE(FVector3f(Pos.x, Pos.y, Pos.z), Scale));
+	}
+}
+
+bool FLambdaGameDll::NPCCanSee(lambda::EntityId Entity, lambda::EntityId Other, bool bIgnoreViewCone) const
+{
+	FLambdaGameDll* Self = const_cast<FLambdaGameDll*>(this);
+	const ASourceGameNPC* NPC = Cast<ASourceGameNPC>(Self->ResolveEntity(Entity));
+	const AActor* Target = Self->ResolveEntity(Other);
+	if (!NPC || !Target)
+	{
+		return false;
+	}
+	if (!NPC->FVisible(Target))
+	{
+		return false;
+	}
+	return bIgnoreViewCone || NPC->FInViewCone(Target->GetActorLocation());
+}
+
+void FLambdaGameDll::NPCShootAt(lambda::EntityId Entity, lambda::EntityId Target, const lambda::NPCShotParams& Params)
+{
+	ASourceGameNPC* NPC = Cast<ASourceGameNPC>(ResolveEntity(Entity));
+	AActor* TargetActor = ResolveEntity(Target);
+	if (!NPC || !TargetActor)
+	{
+		return;
+	}
+	// Aimed at the chest, not the eyes: Source NPCs shoot at BodyTarget, and head-hunting AI is no fun at all.
+	NPC->MindShootAt(TargetActor->GetActorLocation(), TargetActor, Params);
+}
+
+void FLambdaGameDll::NPCShootAtPos(lambda::EntityId Entity, const lambda::Vec3& PosUnits, const lambda::NPCShotParams& Params)
+{
+	ASourceGameNPC* NPC = Cast<ASourceGameNPC>(ResolveEntity(Entity));
+	if (!NPC)
+	{
+		return;
+	}
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+	NPC->MindShootAt(FSourceCoords::ToUE(FVector3f(PosUnits.x, PosUnits.y, PosUnits.z), Scale), nullptr, Params);
+}
+
+bool FLambdaGameDll::NPCSpeak(lambda::EntityId Entity, const char* Soundscript)
+{
+	ASourceGameNPC* NPC = Cast<ASourceGameNPC>(ResolveEntity(Entity));
+	return NPC && Soundscript ? NPC->MindSpeak(ANSI_TO_TCHAR(Soundscript)) : false;
+}
+
+bool FLambdaGameDll::NPCIsSpeaking(lambda::EntityId Entity) const
+{
+	const ASourceGameNPC* NPC = Cast<ASourceGameNPC>(const_cast<FLambdaGameDll*>(this)->ResolveEntity(Entity));
+	return NPC && NPC->MindIsSpeaking();
+}
+
+bool FLambdaGameDll::NPCFindCover(lambda::EntityId Entity, const lambda::Vec3& ThreatPosUnits, float MinDistUnits, float MaxDistUnits, lambda::Vec3* OutPosUnits)
+{
+	ASourceGameNPC* NPC = Cast<ASourceGameNPC>(ResolveEntity(Entity));
+	if (!NPC || !OutPosUnits)
+	{
+		return false;
+	}
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+	FVector Found;
+	if (!NPC->MindFindCover(FSourceCoords::ToUE(FVector3f(ThreatPosUnits.x, ThreatPosUnits.y, ThreatPosUnits.z), Scale),
+		MinDistUnits * Scale, MaxDistUnits * Scale, Found))
+	{
+		return false;
+	}
+	const FVector3f Units = FSourceCoords::ToSource(Found, Scale);
+	OutPosUnits->x = Units.X; OutPosUnits->y = Units.Y; OutPosUnits->z = Units.Z;
+	return true;
+}
+
+bool FLambdaGameDll::NPCFindFlank(lambda::EntityId Entity, lambda::EntityId Target, float MinDistUnits, float MaxDistUnits, lambda::Vec3* OutPosUnits)
+{
+	ASourceGameNPC* NPC = Cast<ASourceGameNPC>(ResolveEntity(Entity));
+	AActor* TargetActor = ResolveEntity(Target);
+	if (!NPC || !TargetActor || !OutPosUnits)
+	{
+		return false;
+	}
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+	FVector ThreatFeet = TargetActor->GetActorLocation();
+	if (const ACharacter* AsCharacter = Cast<ACharacter>(TargetActor))
+	{
+		ThreatFeet.Z -= AsCharacter->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+	}
+	FVector Found;
+	if (!NPC->MindFindFlank(ThreatFeet, MinDistUnits * Scale, MaxDistUnits * Scale, Found))
+	{
+		return false;
+	}
+	const FVector3f Units = FSourceCoords::ToSource(Found, Scale);
+	OutPosUnits->x = Units.X; OutPosUnits->y = Units.Y; OutPosUnits->z = Units.Z;
+	return true;
+}
+
+bool FLambdaGameDll::IsCoverFrom(const lambda::Vec3& PosUnits, const lambda::Vec3& ThreatPosUnits) const
+{
+	// Any live NPC host can run the trace; they all share one world.
+	for (const TPair<uint32, TWeakObjectPtr<AActor>>& Pair : EntitiesById)
+	{
+		if (const ASourceGameNPC* NPC = Cast<ASourceGameNPC>(Pair.Value.Get()))
+		{
+			const float Scale = ULambdaSourceSettings::Get().UnitScale;
+			return NPC->IsPointCoverFrom(
+				FSourceCoords::ToUE(FVector3f(PosUnits.x, PosUnits.y, PosUnits.z), Scale),
+				FSourceCoords::ToUE(FVector3f(ThreatPosUnits.x, ThreatPosUnits.y, ThreatPosUnits.z), Scale));
+		}
+	}
+	return false;
+}
+
+float FLambdaGameDll::GetHealth(lambda::EntityId Entity) const
+{
+	const AActor* Actor = const_cast<FLambdaGameDll*>(this)->ResolveEntity(Entity);
+	if (const ASourceGameNPC* NPC = Cast<ASourceGameNPC>(Actor))
+	{
+		return NPC->GetHealthValue();
+	}
+	// The player: alive while the pawn resolves at all. The mind only ever asks "is my enemy dead yet", and
+	// a pawn that died is destroyed, which ResolveEntity already reports as gone.
+	return Actor ? 1.0f : 0.0f;
+}
+
+lambda::EntityId FLambdaGameDll::GetPlayer() const
+{
+	for (const TPair<uint32, TWeakObjectPtr<AActor>>& Pair : EntitiesById)
+	{
+		if (const AActor* Actor = Pair.Value.Get())
+		{
+			if (APawn* Pawn = UGameplayStatics::GetPlayerPawn(Actor->GetWorld(), 0))
+			{
+				return const_cast<FLambdaGameDll*>(this)->IdForEntity(Pawn);
+			}
+			break;
+		}
+	}
+	return lambda::InvalidEntity;
 }
 
 float FLambdaGameDll::GetOutputMaxDelay(lambda::EntityId Entity, const char* OutputName) const

@@ -110,6 +110,9 @@ public:
 	/** Our feet (Source origin), in UE space. */
 	FVector GetFeetLocation() const;
 
+	/** The keyvalues this NPC was spawned from. */
+	const FSourceEntity& GetSourceEntity() const { return Entity; }
+
 	/** CBaseEntity::EmitSound for a soundscript name, at our position. */
 	void EmitSound(const FString& SoundScript);
 

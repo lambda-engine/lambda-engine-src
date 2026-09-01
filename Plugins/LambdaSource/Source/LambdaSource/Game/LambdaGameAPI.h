@@ -18,7 +18,7 @@
 #pragma once
 
 // Bumped whenever anything below changes shape. A DLL built against an older one is refused at load.
-#define LAMBDA_GAME_API_VERSION "LambdaGame005"
+#define LAMBDA_GAME_API_VERSION "LambdaGame006"
 
 #if defined(_WIN32)
 	#define LAMBDA_GAME_EXPORT extern "C" __declspec(dllexport)
@@ -32,6 +32,15 @@ namespace lambda
 /** An entity, as far as the game is concerned. Zero is "none"; the engine owns what it refers to. */
 typedef unsigned int EntityId;
 static const EntityId InvalidEntity = 0;
+
+/** One trigger pull, as the engine needs to hear it. Plain data, like everything crossing this boundary. */
+struct NPCShotParams
+{
+	int Pellets;					// a shotgun is one pull, many pellets
+	float SpreadDegrees;			// full cone angle
+	float DamagePerPellet;			// skill.cfg's number, passed through
+	const char* FireSound;			// soundscript for the muzzle report
+};
 
 /** A position or direction in Source units, Source's axes. No conversion happens across this boundary. */
 struct Vec3
@@ -200,6 +209,60 @@ public:
 	virtual bool IsPlayer(EntityId Entity) const = 0;
 	virtual bool IsNPC(EntityId Entity) const = 0;
 
+	// ---- an NPC's body ----
+	//
+	// The mind lives in this DLL; the body - model, animation, navigation, traces - is the engine's. These
+	// are the orders a mind gives its body and the questions it asks of its senses, all in Source units.
+	// They mean nothing for entities that are not NPCs.
+
+	/** Plays the sequence the model has for an activity ("ACT_RUN"). False if the model has none for it. */
+	virtual bool NPCSetActivity(EntityId Entity, const char* Activity) = 0;
+	/** Whether a non-looping activity has finished playing. */
+	virtual bool NPCActivityFinished(EntityId Entity) const = 0;
+
+	/**
+	 * Heads for a place through the navmesh. The route is the engine's; deciding where to go is the mind's.
+	 * False when there is no route at all - the mind should pick somewhere else, not wait.
+	 */
+	virtual bool NPCMoveTo(EntityId Entity, const Vec3& Pos) = 0;
+	/** Arrived, failed, or got stuck - the move is over either way. Where it ended up says which. */
+	virtual bool NPCMoveDone(EntityId Entity) const = 0;
+	virtual void NPCStopMoving(EntityId Entity) = 0;
+	/** Turns toward a point at the body's own yaw speed. */
+	virtual void NPCFaceToward(EntityId Entity, const Vec3& Pos) = 0;
+
+	/** A clear line from this NPC's eyes to the other's, and (unless ignored) within its view cone. */
+	virtual bool NPCCanSee(EntityId Entity, EntityId Other, bool bIgnoreViewCone) const = 0;
+
+	/**
+	 * One trigger pull. The engine traces the pellets from the eyes toward the target with the given spread,
+	 * lands the damage and plays the fire sound; the mind owns the clip, the rate and the bursts.
+	 */
+	virtual void NPCShootAt(EntityId Entity, EntityId Target, const NPCShotParams& Params) = 0;
+	/**
+	 * The same trigger pull aimed at a position - suppression: shooting at where somebody was, so they hear
+	 * it and stay down, without needing to see them.
+	 */
+	virtual void NPCShootAtPos(EntityId Entity, const Vec3& PosUnits, const NPCShotParams& Params) = 0;
+
+	/** Says a soundscript line, cutting whatever it was saying. False if the entity cannot speak. */
+	virtual bool NPCSpeak(EntityId Entity, const char* Soundscript) = 0;
+	virtual bool NPCIsSpeaking(EntityId Entity) const = 0;
+
+	/**
+	 * Tactics read from the level itself, not placed by a mapper. A cover point is somewhere reachable whose
+	 * chest-height line to the threat is blocked by the world; a flank point is somewhere reachable that can
+	 * see the threat from a meaningfully different side than this NPC is on now. Both are computed live from
+	 * the geometry, so a threat that moves invalidates yesterday's answer - which is what IsCoverFrom is for.
+	 */
+	virtual bool NPCFindCover(EntityId Entity, const Vec3& ThreatPosUnits, float MinDistUnits, float MaxDistUnits, Vec3* OutPosUnits) = 0;
+	virtual bool NPCFindFlank(EntityId Entity, EntityId Target, float MinDistUnits, float MaxDistUnits, Vec3* OutPosUnits) = 0;
+	virtual bool IsCoverFrom(const Vec3& PosUnits, const Vec3& ThreatPosUnits) const = 0;
+
+	virtual float GetHealth(EntityId Entity) const = 0;
+	/** The player, or InvalidEntity before one exists. The only enemy an NPC has, for now. */
+	virtual EntityId GetPlayer() const = 0;
+
 	// ---- the world ----
 	/** Seconds since the map started. */
 	virtual float GetTime() const = 0;
@@ -243,6 +306,12 @@ public:
 	 * how often that happens is the game's business rather than the engine's.
 	 */
 	virtual void OnBlocked(EntityId Other) = 0;
+
+	/**
+	 * This entity was hurt. What a mind does with pain is its own affair: flinch, bark, abandon the plan
+	 * that led here. The body already took the damage - this is news, not a request.
+	 */
+	virtual void OnDamaged(EntityId Attacker, float Amount) = 0;
 
 	/** Called before the engine lets the entity go. */
 	virtual void Destroy() = 0;

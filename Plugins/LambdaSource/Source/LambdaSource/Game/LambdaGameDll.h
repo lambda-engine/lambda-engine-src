@@ -35,7 +35,7 @@ public:
 	 * Makes the behaviour for one entity and gives it an id.
 	 * The entity is registered so the DLL's calls can be resolved back to the actor.
 	 */
-	lambda::IEntity* CreateEntity(const FString& ClassName, ASourceEntity* Owner, lambda::EntityId& OutId);
+	lambda::IEntity* CreateEntity(const FString& ClassName, AActor* Owner, lambda::EntityId& OutId);
 	void DestroyEntity(lambda::IEntity* Behaviour, lambda::EntityId Id);
 
 	// ---- lambda::IEngine, called from the DLL ----
@@ -63,6 +63,22 @@ public:
 	virtual void EmitSoundLooping(lambda::EntityId Entity, const char* SoundNameOrPath) override;
 	virtual void StopLoopingSound(lambda::EntityId Entity) override;
 	virtual void FireOutput(lambda::EntityId Entity, const char* OutputName, lambda::EntityId Activator) override;
+	virtual bool NPCSetActivity(lambda::EntityId Entity, const char* Activity) override;
+	virtual bool NPCActivityFinished(lambda::EntityId Entity) const override;
+	virtual bool NPCMoveTo(lambda::EntityId Entity, const lambda::Vec3& Pos) override;
+	virtual bool NPCMoveDone(lambda::EntityId Entity) const override;
+	virtual void NPCStopMoving(lambda::EntityId Entity) override;
+	virtual void NPCFaceToward(lambda::EntityId Entity, const lambda::Vec3& Pos) override;
+	virtual bool NPCCanSee(lambda::EntityId Entity, lambda::EntityId Other, bool bIgnoreViewCone) const override;
+	virtual void NPCShootAt(lambda::EntityId Entity, lambda::EntityId Target, const lambda::NPCShotParams& Params) override;
+	virtual void NPCShootAtPos(lambda::EntityId Entity, const lambda::Vec3& PosUnits, const lambda::NPCShotParams& Params) override;
+	virtual bool NPCSpeak(lambda::EntityId Entity, const char* Soundscript) override;
+	virtual bool NPCIsSpeaking(lambda::EntityId Entity) const override;
+	virtual bool NPCFindCover(lambda::EntityId Entity, const lambda::Vec3& ThreatPosUnits, float MinDistUnits, float MaxDistUnits, lambda::Vec3* OutPosUnits) override;
+	virtual bool NPCFindFlank(lambda::EntityId Entity, lambda::EntityId Target, float MinDistUnits, float MaxDistUnits, lambda::Vec3* OutPosUnits) override;
+	virtual bool IsCoverFrom(const lambda::Vec3& PosUnits, const lambda::Vec3& ThreatPosUnits) const override;
+	virtual float GetHealth(lambda::EntityId Entity) const override;
+	virtual lambda::EntityId GetPlayer() const override;
 	virtual float GetOutputMaxDelay(lambda::EntityId Entity, const char* OutputName) const override;
 	virtual void CancelPendingOutputs(lambda::EntityId Entity) override;
 	virtual void Remove(lambda::EntityId Entity) override;

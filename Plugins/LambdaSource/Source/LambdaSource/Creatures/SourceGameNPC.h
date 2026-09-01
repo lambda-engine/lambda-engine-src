@@ -1,0 +1,80 @@
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Creatures/SourceNPCBase.h"
+#include "Game/LambdaGameAPI.h"
+#include "SourceGameNPC.generated.h"
+
+class UAudioComponent;
+
+/**
+ * An NPC whose mind lives in LambdaGame.dll - the counterpart to ASourceGameEntity for brush entities and
+ * ASourceGamePointEntity for point ones.
+ *
+ * The split is the project's usual one. Everything that is a body belongs here: the studio model and its
+ * activities, the capsule, navigation, line-of-sight traces, taking damage, dying into a ragdoll, and the
+ * voice. Everything that is a decision - goals, plans, targets, fear - lives across the boundary and speaks
+ * through the NPC vocabulary in the API. ASourceNPCBase already is the body for the native NPCs; this class
+ * only forwards its senses outward and its orders inward.
+ *
+ * The body knows what each npc classname looks like (model, hull, health) the same way the brush host knows
+ * its geometry: appearance is the engine's, behaviour is the game's.
+ */
+UCLASS()
+class LAMBDASOURCE_API ASourceGameNPC : public ASourceNPCBase
+{
+	GENERATED_BODY()
+
+public:
+	ASourceGameNPC(const FObjectInitializer& ObjectInitializer);
+
+	virtual void InitializeFromEntity(const FSourceEntity& InEntity, ASourceBSPWorldActor* InWorldActor,
+		ULambdaMaterialLibrary* Materials) override;
+	virtual void EndPlay(const EEndPlayReason::Type Reason) override;
+
+	/** Whether this class's look is known to the body. The spawn path asks before spawning a host. */
+	static bool KnowsAppearanceOf(const FString& ClassName);
+
+	// ---- the mind's orders, called from FLambdaGameDll ----
+
+	/** Starts a navmesh move toward a UE-space goal. False when there is no route. */
+	bool MindMoveTo(const FVector& Goal);
+	bool MindMoveDone() const { return !bMoveActive; }
+	void MindStopMoving();
+	/** One trigger pull at a world position: pellets, spread, damage, tracer-ish impact, muzzle sound. */
+	void MindShootAt(const FVector& TargetPoint, AActor* TargetActor, const lambda::NPCShotParams& Params);
+	/** Speaks a soundscript on the voice, cutting whatever was playing. */
+	bool MindSpeak(const FString& Soundscript);
+	bool MindIsSpeaking() const;
+	/** Finds a reachable point whose chest-height line to the threat the world blocks. Positions in UE space. */
+	bool MindFindCover(const FVector& ThreatPos, float MinDistCm, float MaxDistCm, FVector& OutPos);
+	/** Finds a reachable point that can see the target from a different side than we are on now. */
+	bool MindFindFlank(const FVector& ThreatPos, float MinDistCm, float MaxDistCm, FVector& OutPos);
+	/** The chest-height trace alone: is this point still cover from there? */
+	bool IsPointCoverFrom(const FVector& Pos, const FVector& ThreatPos) const;
+
+	using ASourceNPCBase::SetActivity;
+	using ASourceNPCBase::IsActivityFinished;
+	using ASourceNPCBase::FVisible;
+	using ASourceNPCBase::FInViewCone;
+	using ASourceNPCBase::SetIdealYawToTarget;
+	float GetHealthValue() const { return Health; }
+
+protected:
+	virtual void Spawn() override;
+	virtual void NPCThink() override;
+	virtual void OnTakeDamage_Alive(float Damage, AActor* Attacker, const FSourceDamageEvent& Info) override;
+	virtual void Event_Killed(AActor* Attacker) override;
+	virtual void OnMovementBlocked() override;
+
+private:
+	/** True while a MindMoveTo is being walked; NPCThink steers it and clears it on arrival or blockage. */
+	bool bMoveActive = false;
+	FVector MoveGoal = FVector::ZeroVector;
+
+	lambda::IEntity* Behaviour = nullptr;
+	lambda::EntityId GameId = lambda::InvalidEntity;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAudioComponent> Voice;
+};

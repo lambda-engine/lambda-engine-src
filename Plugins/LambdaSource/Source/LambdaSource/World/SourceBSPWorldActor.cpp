@@ -5,6 +5,7 @@
 #include "Entities/SourceGamePointEntity.h"
 #include "Game/LambdaGameDll.h"
 #include "Rendering/SourceImpactEffects.h"
+#include "Creatures/SourceGameNPC.h"
 #include "Creatures/SourceNPCHeadcrab.h"
 #include "Creatures/SourceNPCAntlion.h"
 #include "Creatures/SourceNPCBarnacle.h"
@@ -359,6 +360,12 @@ AActor* ASourceBSPWorldActor::SpawnEntityFromKeyValues(const FSourceEntity& Enti
 		{
 			// handled implicitly (model 0)
 		}
+		else if (FLambdaGameDll::Get().HandlesClass(Class) && ASourceGameNPC::KnowsAppearanceOf(Class))
+		{
+			// An NPC whose mind is the game module's. The body knows what the class looks like; everything
+			// it does comes across the boundary.
+			return SpawnNPC(Entity, ASourceGameNPC::StaticClass());
+		}
 		else if (TSubclassOf<ASourceNPCBase> NPCClass = NPCClassForName(Class))
 		{
 			return SpawnNPC(Entity, NPCClass);
@@ -424,6 +431,10 @@ TSubclassOf<ASourceNPCBase> ASourceBSPWorldActor::NPCClassForName(const FString&
 AActor* ASourceBSPWorldActor::CreateNPC(const FString& ClassName, const FVector& FeetLocation, float YawDegrees)
 {
 	TSubclassOf<ASourceNPCBase> NPCClass = NPCClassForName(ClassName);
+	if (!NPCClass && FLambdaGameDll::Get().HandlesClass(ClassName) && ASourceGameNPC::KnowsAppearanceOf(ClassName))
+	{
+		NPCClass = ASourceGameNPC::StaticClass();
+	}
 	if (!NPCClass)
 	{
 		UE_LOG(LogLambdaSource, Warning, TEXT("npc_create: no NPC named '%s'"), *ClassName);

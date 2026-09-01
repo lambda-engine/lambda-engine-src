@@ -191,6 +191,29 @@ bool ULambdaMaterialLibrary::LoadMaterialInfo(const FString& SourceMaterialName,
 		OutInfo.bIsPatch = true;
 	}
 
+	// DX-level conditional sub-blocks (">=dx90_20b" { $basetexture ... }): Source picks the block matching
+	// the running hardware level and folds its keys over the material's. We are always the top level, so
+	// every ">=dx" block applies - the Combine soldier keeps its whole $basetexture inside one, and without
+	// this fold the model renders grey.
+	for (const FSourceKeyValues& Child : Root.Children)
+	{
+		if (Child.Children.Num() == 0 || !Child.Key.StartsWith(TEXT(">=dx")))
+		{
+			continue;
+		}
+		for (const FSourceKeyValues& Folded : Child.Children)
+		{
+			if (FSourceKeyValues* Existing = Root.FindChild(Folded.Key))
+			{
+				*Existing = Folded;
+			}
+			else
+			{
+				Root.Children.Add(Folded);
+			}
+		}
+	}
+
 	OutInfo.Name = Name;
 	OutInfo.Shader = Root.Key;
 	OutInfo.BaseTexture = NormalizeTextureName(Root.GetString(TEXT("$basetexture")));
