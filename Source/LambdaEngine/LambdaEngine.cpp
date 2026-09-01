@@ -526,23 +526,50 @@ namespace
 	 * NPC meshes, which is what you want to watch, all are.
 	 */
 	/**
-	 * Sets the engine's own ShowFlag override cvars rather than the viewport's flags.
+	 * Wireframe, drawn bright regardless of how dark the room is.
 	 *
-	 * UGameViewportClient rebuilds its view family's show flags every frame and runs EngineShowFlagOverride
-	 * over them, so anything written straight onto EngineShowFlags is gone by the time the scene is drawn -
-	 * which is why setting the flag by hand looked like it had worked and changed nothing. The ShowFlag.*
-	 * cvars are the supported override and they apply per view, every frame.
+	 * Three things were tried before this and are worth recording so they are not repeated:
+	 *
+	 *   - Writing EngineShowFlags on the game viewport does nothing. UGameViewportClient rebuilds its view
+	 *     family's flags every frame and runs EngineShowFlagOverride across them, so the change is gone
+	 *     before the scene is drawn - it looks like it worked and changes nothing.
+	 *   - "viewmode wireframe" through GEngine->Exec does not reach the game viewport either.
+	 *   - ShowFlag.Lighting 0, which is what ApplyViewMode's VMI_Wireframe branch does, takes the world's
+	 *     wireframe with it: only the view model is left. The deferred renderer draws wireframe with each
+	 *     mesh's own material, and our world is procedural meshes whose materials have nothing to draw on
+	 *     the unlit path.
+	 *
+	 * Since the lines are drawn by the real material, they are lit - which is why they went dark in a dark
+	 * room. Rather than fight the renderer, the exposure is pinned bright while wireframe is on, which is
+	 * what "fullbright" means in practice here: the edges read the same wherever you are standing.
 	 */
 	void ApplyWireframe(bool bOn)
 	{
-		static const TCHAR* const Flags[] = { TEXT("ShowFlag.Wireframe"), TEXT("ShowFlag.Lighting") };
-		if (IConsoleVariable* Wire = IConsoleManager::Get().FindConsoleVariable(Flags[0]))
+		struct FSetting { const TCHAR* Name; float OnValue; float OffValue; };
+		static const FSetting Settings[] =
 		{
-			Wire->Set(bOn ? 1 : 2, ECVF_SetByConsole);		// 2 is "leave it to the engine"
+			{ TEXT("ShowFlag.Wireframe"),      1.0f, 2.0f },	// 2 is "no override"
+			// Pin the exposure: auto exposure in a wireframe view has almost nothing lit to meter off, so it
+			// settles somewhere arbitrary and the lines come out dim.
+			{ TEXT("r.EyeAdaptation.MethodOverride"), 2.0f, -1.0f },	// 2 = manual
+			{ TEXT("r.EyeAdaptation.ExponentialTransitionDistance"), 1.0f, -1.0f },
+			{ TEXT("r.AutoExposure.Bias"),     4.0f, -1.0f },
+		};
+		for (const FSetting& S : Settings)
+		{
+			if (IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(S.Name))
+			{
+				const float Value = bOn ? S.OnValue : S.OffValue;
+				if (Value < 0.0f)
+				{
+					Var->Unset(ECVF_SetByConsole);		// hand it back to whatever set it before
+				}
+				else
+				{
+					Var->Set(Value, ECVF_SetByConsole);
+				}
+			}
 		}
-		// Lighting is deliberately left alone. Turning it off alongside wireframe renders the world as solid
-		// black rather than as edges, which hides the very thing you turned wireframe on to see.
-		(void)Flags;
 		UE_LOG(LogLambda, Display, TEXT("wireframe %d"), bOn ? 1 : 0);
 	}
 
@@ -553,8 +580,9 @@ namespace
 		{
 			if (Args.Num() == 0)
 			{
-				const IConsoleVariable* Wire = IConsoleManager::Get().FindConsoleVariable(TEXT("ShowFlag.Wireframe"));
-				UE_LOG(LogLambda, Display, TEXT("wireframe is %d"), (Wire && Wire->GetInt() == 1) ? 1 : 0);
+				const bool bNow = GEngine && GEngine->GameViewport
+					&& GEngine->GameViewport->EngineShowFlags.Wireframe;
+				UE_LOG(LogLambda, Display, TEXT("wireframe is %d"), bNow ? 1 : 0);
 				return;
 			}
 			ApplyWireframe(FCString::Atoi(*Args[0]) != 0);
