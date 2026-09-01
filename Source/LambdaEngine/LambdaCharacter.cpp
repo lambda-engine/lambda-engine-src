@@ -38,6 +38,7 @@ void ALambdaCharacterAddPickupHistory(TArray<ALambdaCharacter::FPickupEvent>& Hi
 #include "Audio/LambdaSoundLibrary.h"
 #include "Audio/SourceSoundScript.h"
 #include "Gameplay/SourceDamage.h"
+#include "Gameplay/SourceAISounds.h"
 #include "Engine/Engine.h"
 #include "Rendering/SourceStudioModelComponent.h"
 #include "Rendering/SourceRagdoll.h"
@@ -2512,6 +2513,11 @@ void ALambdaCharacter::UpdateStepSound(float DeltaSeconds)
 
 void ALambdaCharacter::PlayStepSound(const FString& SurfaceProp, float Volume)
 {
+	// CBasePlayer::UpdateStepSound inserts SOUND_PLAYER as it goes: a soldier hears somebody moving about
+	// long before he sees them, which is most of what makes being stalked feel like being stalked. Louder
+	// steps carry further, so walking is quieter than running in the only sense the AI cares about.
+	FSourceAISounds::Get().Insert(ESourceAISoundType::Player, GetActorLocation(),
+		FMath::Lerp(200.0f, 600.0f, FMath::Clamp(Volume, 0.0f, 1.0f)), 0.3f, this, GetWorld());
 	// CBasePlayer::PlayStepSound: the surface says what each foot sounds like, and the feet alternate.
 	const FSourceSurfaceProp* Prop = FSourceSurfaceProps::Get().Find(SurfaceProp);
 	if (!Prop)

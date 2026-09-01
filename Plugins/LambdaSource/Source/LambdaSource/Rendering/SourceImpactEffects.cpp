@@ -6,6 +6,7 @@
 #include "Materials/SourceDecalScript.h"
 #include "World/SourceGeometryBuilder.h"
 #include "Materials/SourceSurfaceProps.h"
+#include "Gameplay/SourceAISounds.h"
 #include "Materials/MaterialInterface.h"
 #include "Rendering/SourceParticleEffect.h"
 #include "Creatures/SourceNPCBase.h"
@@ -403,6 +404,14 @@ bool ResolveSurface(const FHitResult& Hit, ULambdaMaterialLibrary* Materials, FS
 		OutInfo.SurfaceProp = NPC->GetSurfaceProp();
 		OutInfo.MaterialName = NPC->GetClassName();
 	}
+	else if (Cast<APawn>(Hit.GetActor()) != nullptr)
+	{
+		// Anything else wearing a pawn is a body, and the player is the one that matters: he has no Source
+		// material to look up, so a round striking him resolved to nothing at all - no thwack, no blood, no
+		// decal. Being shot sounded exactly like not being shot, which is a poor way to learn you are dying.
+		OutInfo.SurfaceProp = TEXT("flesh");
+		OutInfo.MaterialName = TEXT("player");
+	}
 	else if (const ASourcePropPhysics* Prop = Cast<ASourcePropPhysics>(Hit.GetActor()))
 	{
 		// A physics prop's material comes from its collision model, the way Source reads it off the vphysics
@@ -439,6 +448,9 @@ void PlayImpact(const FHitResult& Hit, ULambdaMaterialLibrary* Materials, UObjec
 	{
 		return;
 	}
+	// CSoundEnt: a round striking something is a noise at the point of impact, which is how an AI notices
+	// being shot at rather than only being shot. 512 units is Source's own reach for a bullet hit.
+	FSourceAISounds::Get().Insert(ESourceAISoundType::Combat, Hit.ImpactPoint, 512.0f, 0.5f, nullptr, World);
 
 	FSurfaceHitInfo Info;
 	ResolveSurface(Hit, Materials, Info);
@@ -448,9 +460,11 @@ void PlayImpact(const FHitResult& Hit, ULambdaMaterialLibrary* Materials, UObjec
 	// same (CRagdollProp::TraceAttack), so corpses keep bleeding when shot.
 	const ASourceNPCBase* NPC = Cast<ASourceNPCBase>(Hit.GetActor());
 	const ASourceRagdoll* Ragdoll = Cast<ASourceRagdoll>(Hit.GetActor());
-	if (NPC || Ragdoll)
+	const bool bIsBody = NPC || Ragdoll || Cast<APawn>(Hit.GetActor()) != nullptr;
+	if (bIsBody)
 	{
-		const ESourceBloodColor Color = NPC ? NPC->GetBloodColor() : Ragdoll->GetBloodColor();
+		const ESourceBloodColor Color = NPC ? NPC->GetBloodColor()
+			: Ragdoll ? Ragdoll->GetBloodColor() : ESourceBloodColor::Red;
 		SpawnBlood(World, Materials, Hit.ImpactPoint, -ShotDirection, Color);
 		TArray<const AActor*> Ignore;
 		Ignore.Add(Hit.GetActor());

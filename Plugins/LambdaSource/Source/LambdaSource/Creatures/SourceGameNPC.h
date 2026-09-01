@@ -70,6 +70,7 @@ public:
 
 	using ASourceNPCBase::SetActivity;
 	using ASourceNPCBase::IsActivityFinished;
+	using ASourceNPCBase::EyePosition;
 	using ASourceNPCBase::FVisible;
 	using ASourceNPCBase::FInViewCone;
 	using ASourceNPCBase::SetIdealYawToTarget;

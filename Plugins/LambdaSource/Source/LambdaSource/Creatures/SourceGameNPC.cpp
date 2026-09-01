@@ -7,6 +7,7 @@
 #include "Game/LambdaGameDll.h"
 #include "Gameplay/SourceDamage.h"
 #include "Rendering/SourceImpactEffects.h"
+#include "Rendering/SourceBulletFX.h"
 #include "Weapons/SourceAmmoDef.h"
 #include "Weapons/SourceWeaponScript.h"
 #include "Gameplay/SourceGrenade.h"
@@ -394,6 +395,18 @@ void ASourceGameNPC::MindShootAt(const FVector& TargetPoint, AActor* TargetActor
 	const FVector Up = FRotationMatrix(AimRot).GetUnitAxis(EAxis::Z);
 	const float Scale = ULambdaSourceSettings::Get().UnitScale;
 
+	// The flash everyone else sees, at the gun rather than the eyes so it reads as coming from the weapon.
+	FVector FlashAt = Muzzle;
+	if (WeaponMesh && WeaponMesh->HasModel())
+	{
+		FVector AttachPos, AttachFwd;
+		if (WeaponMesh->GetAttachmentWorld(TEXT("muzzle"), AttachPos, AttachFwd))
+		{
+			FlashAt = AttachPos;
+		}
+	}
+	ASourceBulletFX::MuzzleFlash(World, FlashAt, Aim, MaterialLibrary);
+
 	const int32 Pellets = FMath::Max(1, Params.Pellets);
 	for (int32 Pellet = 0; Pellet < Pellets; ++Pellet)
 	{
@@ -410,6 +423,7 @@ void ASourceGameNPC::MindShootAt(const FVector& TargetPoint, AActor* TargetActor
 		{
 			continue;
 		}
+		ASourceBulletFX::Tracer(World, FlashAt, Hit.ImpactPoint, MaterialLibrary);
 		SourceImpact::PlayImpact(Hit, MaterialLibrary, this, Dir, Params.DamagePerPellet);
 		if (AActor* HitActor = Hit.GetActor())
 		{

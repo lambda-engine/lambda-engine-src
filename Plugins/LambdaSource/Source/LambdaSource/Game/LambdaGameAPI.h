@@ -18,7 +18,7 @@
 #pragma once
 
 // Bumped whenever anything below changes shape. A DLL built against an older one is refused at load.
-#define LAMBDA_GAME_API_VERSION "LambdaGame008"
+#define LAMBDA_GAME_API_VERSION "LambdaGame009"
 
 #if defined(_WIN32)
 	#define LAMBDA_GAME_EXPORT extern "C" __declspec(dllexport)
@@ -230,6 +230,18 @@ public:
 	virtual void NPCStopMoving(EntityId Entity) = 0;
 	/** Turns toward a point at the body's own yaw speed. */
 	virtual void NPCFaceToward(EntityId Entity, const Vec3& Pos) = 0;
+
+	/**
+	 * The most interesting noise this NPC can currently hear (CSoundEnt), or false for silence.
+	 *
+	 * Sounds are things that happened at places, not messages sent to listeners: a shot, a round striking a
+	 * wall, somebody walking. Whether this NPC noticed depends on how far the noise carries and where it is
+	 * standing, which is what stops an AI reacting to a gunshot it could not possibly have heard.
+	 *
+	 * OutIsCombat separates violence from footsteps - both are worth turning round for, only one is worth
+	 * shouting about.
+	 */
+	virtual bool NPCHearSound(EntityId Entity, Vec3* OutPosUnits, bool* OutIsCombat) const = 0;
 
 	/** A clear line from this NPC's eyes to the other's, and (unless ignored) within its view cone. */
 	virtual bool NPCCanSee(EntityId Entity, EntityId Other, bool bIgnoreViewCone) const = 0;

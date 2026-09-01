@@ -11,6 +11,8 @@
 #include "Core/SourceCoordinates.h"
 #include "Rendering/SourceImpactEffects.h"
 #include "Gameplay/SourceGrenade.h"
+#include "Gameplay/SourceAISounds.h"
+#include "Rendering/SourceBulletFX.h"
 #include "Camera/CameraComponent.h"
 #include "Engine/HitResult.h"
 #include "Engine/DamageEvents.h"
@@ -465,6 +467,10 @@ void ALambdaWeapon::FireBullet(float Damage, const FVector& Spread)
 	FRotator EyeRotation;
 	WeaponOwner->GetActorEyesViewPoint(EyeLocation, EyeRotation);
 
+	// SOUNDENT_VOLUME_MACHINEGUN: the shot itself is heard a long way off, whatever it hits.
+	FSourceAISounds::Get().Insert(ESourceAISoundType::Combat, WeaponOwner->GetActorLocation(),
+		1500.0f, 0.2f, WeaponOwner, World);
+
 	// Source's spread is a cone expressed as the sine of the half-angle on each axis; it perturbs the shot in the
 	// shooter's right/up plane (CBaseEntity::FireBullets).
 	FVector Dir = EyeRotation.Vector();
@@ -491,6 +497,18 @@ void ALambdaWeapon::FireBullet(float Damage, const FVector& Spread)
 	{
 		UE_LOG(LogLambda, Verbose, TEXT("bullet hit %s at %s (damage %g)"),
 			*GetNameSafe(Hit.GetActor()), *Hit.ImpactPoint.ToString(), Damage);
+
+		// The tracer leaves the gun the player is holding, not his eye, or it appears to come out of his face.
+		FVector TracerFrom = EyeLocation;
+		if (USourceStudioModelComponent* ViewModel = WeaponOwner->GetViewModelMesh())
+		{
+			FVector AttachPos, AttachFwd;
+			if (ViewModel->GetAttachmentWorld(TEXT("muzzle"), AttachPos, AttachFwd))
+			{
+				TracerFrom = AttachPos;
+			}
+		}
+		ASourceBulletFX::Tracer(World, TracerFrom, Hit.ImpactPoint, WeaponOwner->GetWorldMaterialLibrary());
 
 		// UTIL_ImpactTrace: the decal and impact sound come from the surface that was struck.
 		SourceImpact::PlayImpact(Hit, WeaponOwner->GetWorldMaterialLibrary(), this, Dir, Damage);

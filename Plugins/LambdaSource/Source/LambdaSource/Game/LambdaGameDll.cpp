@@ -9,6 +9,7 @@
 #include "Entities/SourceGamePointEntity.h"
 #include "Creatures/SourceGameNPC.h"
 #include "Gameplay/SourceGrenade.h"
+#include "Gameplay/SourceAISounds.h"
 #include "GameFramework/Character.h"
 #include "Components/CapsuleComponent.h"
 #include "Creatures/SourceNPCBase.h"
@@ -522,6 +523,26 @@ void FLambdaGameDll::NPCFaceToward(lambda::EntityId Entity, const lambda::Vec3& 
 		const float Scale = ULambdaSourceSettings::Get().UnitScale;
 		NPC->SetIdealYawToTarget(FSourceCoords::ToUE(FVector3f(Pos.x, Pos.y, Pos.z), Scale));
 	}
+}
+
+bool FLambdaGameDll::NPCHearSound(lambda::EntityId Entity, lambda::Vec3* OutPosUnits, bool* OutIsCombat) const
+{
+	FLambdaGameDll* Self = const_cast<FLambdaGameDll*>(this);
+	const ASourceGameNPC* NPC = Cast<ASourceGameNPC>(Self->ResolveEntity(Entity));
+	if (!NPC || !OutPosUnits || !OutIsCombat)
+	{
+		return false;
+	}
+	FVector Position;
+	ESourceAISoundType Type;
+	if (!FSourceAISounds::Get().Loudest(NPC->EyePosition(), NPC, NPC->GetWorld(), Position, Type))
+	{
+		return false;
+	}
+	const FVector3f Units = FSourceCoords::ToSource(Position, ULambdaSourceSettings::Get().UnitScale);
+	OutPosUnits->x = Units.X; OutPosUnits->y = Units.Y; OutPosUnits->z = Units.Z;
+	*OutIsCombat = (Type == ESourceAISoundType::Combat);
+	return true;
 }
 
 bool FLambdaGameDll::NPCCanSee(lambda::EntityId Entity, lambda::EntityId Other, bool bIgnoreViewCone) const

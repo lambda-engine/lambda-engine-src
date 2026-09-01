@@ -69,6 +69,7 @@ public:
 	virtual bool NPCMoveDone(lambda::EntityId Entity) const override;
 	virtual void NPCStopMoving(lambda::EntityId Entity) override;
 	virtual void NPCFaceToward(lambda::EntityId Entity, const lambda::Vec3& Pos) override;
+	virtual bool NPCHearSound(lambda::EntityId Entity, lambda::Vec3* OutPosUnits, bool* OutIsCombat) const override;
 	virtual bool NPCCanSee(lambda::EntityId Entity, lambda::EntityId Other, bool bIgnoreViewCone) const override;
 	virtual bool NPCHasClearShot(lambda::EntityId Entity, lambda::EntityId Target) const override;
 	virtual void NPCThrowGrenade(lambda::EntityId Entity, const lambda::Vec3& VelocityUnits, float FuseSeconds) override;
