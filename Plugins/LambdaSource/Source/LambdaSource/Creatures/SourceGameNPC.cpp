@@ -348,6 +348,13 @@ bool ASourceGameNPC::MindMoveTo(const FVector& Goal)
 {
 	MoveGoal = Goal;
 	bMoveActive = true;
+	// A fresh order deserves a fresh attempt. bMovementBlocked latched: it is only ever cleared in the branch
+	// that runs while the NPC is being pushed, and being blocked zeroes the push - so once stuck, every
+	// later move was cancelled on the think it was issued, and the soldier stood playing his walk animation
+	// while the mind cycled through destinations it was never allowed to start for.
+	ClearMovementBlock();
+	// The old route was to somewhere else, and reusing it is how an NPC walks confidently at the wrong wall.
+	ClearPath();
 	if (!NavigateTo(Goal))
 	{
 		UE_LOG(LogLambdaSource, Log, TEXT("%s: no route to %s"), *Entity.ClassName, *Goal.ToCompactString());

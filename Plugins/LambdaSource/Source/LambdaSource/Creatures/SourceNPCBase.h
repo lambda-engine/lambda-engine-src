@@ -137,6 +137,8 @@ public:
 	 * hunched NPC lean through a thin door.
 	 */
 	bool IsMovementBlocked() const { return bMovementBlocked; }
+	/** Forget that we were stuck, so a newly ordered move gets to try. */
+	void ClearMovementBlock() { bMovementBlocked = false; BlockedTime = 0.0f; }
 
 	/**
 	 * CAI_Motor: the direction the NPC is moving in, held until changed. UE's movement component consumes input per

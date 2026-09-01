@@ -781,13 +781,26 @@ bool ASourceNPCBase::NavigateTo(const FVector& Goal)
 		PathPoints.Reset();
 		PathCorner = 0;
 		PathGoal = Goal;
+
+		// Put the destination on the navmesh before asking for a route to it. A designer-placed node sits
+		// where it looks right, not where the mesh happens to be, and a goal an inch off the mesh has no
+		// route to it at all - which is how a guard post nobody could reach silently became a soldier
+		// standing still. The extent is the one the cover search uses; taller and it finds the floor above.
+		if (UNavigationSystemV1* NavSys = FNavigationSystem::GetCurrent<UNavigationSystemV1>(World))
+		{
+			FNavLocation Projected;
+			if (NavSys->ProjectPointToNavigation(PathGoal, Projected, FVector(150.0f, 150.0f, 180.0f)))
+			{
+				PathGoal = Projected.Location;
+			}
+		}
 		// Half a second is enough that a walking enemy does not outrun the route, and rare enough that a room
 		// full of NPCs is not re-planning every frame.
 		NextRepathTime = Now + 0.5f;
 
 		if (UNavigationSystemV1* NavSys = World ? FNavigationSystem::GetCurrent<UNavigationSystemV1>(World) : nullptr)
 		{
-			if (UNavigationPath* Path = NavSys->FindPathToLocationSynchronously(World, GetActorLocation(), Goal, this))
+			if (UNavigationPath* Path = NavSys->FindPathToLocationSynchronously(World, GetActorLocation(), PathGoal, this))
 			{
 				if (Path->IsValid() && !Path->IsPartial() && Path->PathPoints.Num() > 1)
 				{
@@ -826,13 +839,17 @@ bool ASourceNPCBase::NavigateTo(const FVector& Goal)
 	}
 
 	// No navmesh, no route, or the route has run out: head straight at it, which is what this did before there
-	// was any navigation at all.
+	// was any navigation at all. That counts as a move - it used to return false, so MindMoveTo cancelled the
+	// very direction this had just set and the fallback could never once carry anybody. If the straight line
+	// runs into a wall the blocked detection ends it in a quarter of a second, which is the honest way for an
+	// unreachable destination to fail: visibly, and quickly.
 	FVector Straight = Goal - GetActorLocation();
 	Straight.Z = 0.0f;
 	if (Straight.Normalize())
 	{
 		SetMoveDirection(Straight);
 		SetIdealYawToTarget(GetActorLocation() + Straight);
+		return true;
 	}
 	return false;
 }
