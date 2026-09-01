@@ -2,6 +2,7 @@
 
 #include "Core/LambdaSourceModule.h"
 #include "Core/LambdaSourceSettings.h"
+#include "Creatures/SourceGameNPC.h"
 #include "Gameplay/SourceDamage.h"
 #include "Rendering/SourceStudioModelComponent.h"
 #include "Components/SphereComponent.h"
@@ -119,6 +120,12 @@ void ASourceGrenade::Detonate()
 	{
 		AActor* Victim = *It;
 		if (!Victim || Victim == this || !Victim->CanBeDamaged())
+		{
+			continue;
+		}
+		// An NPC's grenade does not hurt other NPCs, matching the no-friendly-fire rule its bullets already
+		// obey. They still dive from it - the blast being survivable is something they do not know.
+		if (Victim->IsA<ASourceGameNPC>() && Thrower.IsValid() && Thrower->IsA<ASourceGameNPC>())
 		{
 			continue;
 		}
