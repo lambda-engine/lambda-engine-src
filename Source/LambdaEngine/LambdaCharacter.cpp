@@ -223,6 +223,11 @@ ALambdaCharacter::ALambdaCharacter(const FObjectInitializer& ObjectInitializer)
 	const float EyeHeightCm = (Settings ? Settings->PlayerEyeHeightUnits : 64.0f) * Scale;
 
 	GetCapsuleComponent()->InitCapsuleSize(RadiusCm, HalfHeightCm);
+	// Bullets are traced on the visibility channel (SourceImpact::TraceBullet), and UE's pawn profile ignores
+	// it - so everything shot at the player went straight through him and hit the wall behind. ASourceNPCBase
+	// blocks it for exactly this reason, which is why the player's own shots land; this is the other half of
+	// that, and the traces the player makes himself all ignore him already.
+	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 
 	// Unreal's own physics interaction shoves objects with a force of its own choosing; Source's player is a
 	// physics shadow that pushes what it walks into at its own walking speed, and no harder (PushPhysicsObject).

@@ -956,7 +956,6 @@ bool FSourceMDLFile::LoadAnimationLibrary(const FString& RelativeModelPath, floa
 	ReadBones(Mdl);
 	ReadPoseParams(Mdl);
 	ReadSequences(Mdl);
-
 	// The libraries keep long animations in a .ani beside the .mdl, the same as any model.
 	const int32 NumAnimBlocks = ReadInt(Mdl, MDL::OFF_NUMANIMBLOCKS);
 	const int32 AnimBlockIndex = ReadInt(Mdl, MDL::OFF_ANIMBLOCKINDEX);

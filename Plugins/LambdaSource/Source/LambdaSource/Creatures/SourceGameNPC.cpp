@@ -103,6 +103,7 @@ void ASourceGameNPC::Spawn()
 	RegisterAsNavInvoker();
 	SetActivity(TEXT("ACT_IDLE"));
 
+
 	// The weapon it was told to carry, from the same scripts the player's weapons are defined by. The mind
 	// reads the same keyvalue for rates and damage; the body only cares what the thing looks like.
 	FString WeaponClass = Entity.Get(TEXT("additionalequipment"));
