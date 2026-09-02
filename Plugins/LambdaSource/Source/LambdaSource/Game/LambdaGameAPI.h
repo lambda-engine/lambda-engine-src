@@ -18,7 +18,7 @@
 #pragma once
 
 // Bumped whenever anything below changes shape. A DLL built against an older one is refused at load.
-#define LAMBDA_GAME_API_VERSION "LambdaGame010"
+#define LAMBDA_GAME_API_VERSION "LambdaGame011"
 
 #if defined(_WIN32)
 	#define LAMBDA_GAME_EXPORT extern "C" __declspec(dllexport)
@@ -371,6 +371,13 @@ public:
 
 	/** Called before the engine lets the entity go. */
 	virtual void Destroy() = 0;
+
+	/**
+	 * One short line saying what this entity is doing, for the lambda.showai overlay. Empty when it has
+	 * nothing worth saying. The pointer must stay valid until the next call on this entity - a member buffer
+	 * is the intended way, as with GetKeyValue's return.
+	 */
+	virtual const char* GetDebugText() const { return ""; }
 };
 
 /** The game module as a whole. */

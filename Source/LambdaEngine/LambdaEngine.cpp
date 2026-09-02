@@ -549,11 +549,9 @@ namespace
 		static const FSetting Settings[] =
 		{
 			{ TEXT("ShowFlag.Wireframe"),      1.0f, 2.0f },	// 2 is "no override"
-			// Pin the exposure: auto exposure in a wireframe view has almost nothing lit to meter off, so it
-			// settles somewhere arbitrary and the lines come out dim.
-			{ TEXT("r.EyeAdaptation.MethodOverride"), 2.0f, -1.0f },	// 2 = manual
-			{ TEXT("r.EyeAdaptation.ExponentialTransitionDistance"), 1.0f, -1.0f },
-			{ TEXT("r.AutoExposure.Bias"),     4.0f, -1.0f },
+			// Nothing else. The exposure is deliberately left alone: the player camera already runs on a
+			// fixed manual EV100, so forcing the eye-adaptation override on top of it fights a setting that
+			// was already made and can black the screen outright.
 		};
 		for (const FSetting& S : Settings)
 		{

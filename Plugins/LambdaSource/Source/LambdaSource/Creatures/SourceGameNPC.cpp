@@ -14,6 +14,17 @@
 #include "Rendering/SourceStudioModelComponent.h"
 #include "World/SourceBSPWorldActor.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "DrawDebugHelpers.h"
+
+/**
+ * lambda.showai 1|0 - draw every NPC through the walls: body, facing, where it is walking, what it is
+ * aiming at, and the goal and plan step it is running.
+ */
+static int32 GShowAI = 0;
+static FAutoConsoleVariableRef CVarShowAI(
+	TEXT("lambda.showai"),
+	GShowAI,
+	TEXT("1 draws the AI through walls: body, facing, destination, aim, and its current goal and step."));
 #include "Components/AudioComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "NavigationSystem.h"
@@ -168,6 +179,63 @@ void ASourceGameNPC::Tick(float DeltaSeconds)
 	UpdateAimPose();
 	PlaceHeldWeapon();
 	UpdateStepSound(DeltaSeconds);
+	DrawAIDebug();
+}
+
+/**
+ * lambda.showai: the AI drawn through walls.
+ *
+ * Debug lines rather than a wireframe view mode, because the view modes are compiled out of cooked builds -
+ * r.AllowDebugViewmodes is not even a real cvar there, so "wireframe" can never work in the shipped game.
+ * DrawDebug* survives cooking in a Development build, and SDPG_Foreground is what puts it in front of the
+ * world instead of behind it.
+ */
+void ASourceGameNPC::DrawAIDebug() const
+{
+#if ENABLE_DRAW_DEBUG
+	if (GShowAI == 0)
+	{
+		return;
+	}
+	UWorld* World = GetWorld();
+	if (!World || NPCState == ESourceNPCState::Dead)
+	{
+		return;
+	}
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+	const FVector Feet = GetActorLocation() - FVector(0, 0, 36.0f * Scale);
+	const FVector Head = Feet + FVector(0, 0, 72.0f * Scale);
+
+	// The body, so you can see where he is standing even through a wall.
+	DrawDebugCapsule(World, (Feet + Head) * 0.5f, 36.0f * Scale, 16.0f * Scale, FQuat::Identity,
+		FColor(80, 200, 255), false, -1.0f, SDPG_Foreground, 1.5f);
+	// Which way he is facing - the short spur is the difference between watching and wandering.
+	DrawDebugLine(World, Head, Head + GetActorForwardVector() * 48.0f * Scale,
+		FColor(80, 200, 255), false, -1.0f, SDPG_Foreground, 2.0f);
+
+	// Where he is walking, if anywhere.
+	if (bMoveActive)
+	{
+		DrawDebugLine(World, Feet, MoveGoal, FColor(120, 255, 120), false, -1.0f, SDPG_Foreground, 1.5f);
+		DrawDebugSphere(World, MoveGoal, 12.0f * Scale, 8, FColor(120, 255, 120), false, -1.0f,
+			SDPG_Foreground, 1.5f);
+	}
+	// What he is aiming at, which is the honest answer to "why is he shooting there".
+	if (bHasAimTarget)
+	{
+		DrawDebugLine(World, EyePosition(), AimTarget, FColor(255, 120, 80), false, -1.0f, SDPG_Foreground, 1.0f);
+	}
+
+	if (Behaviour)
+	{
+		const char* Text = Behaviour->GetDebugText();
+		if (Text && Text[0])
+		{
+			DrawDebugString(World, Head + FVector(0, 0, 16.0f * Scale), ANSI_TO_TCHAR(Text), nullptr,
+				FColor::White, 0.0f, true);
+		}
+	}
+#endif
 }
 
 void ASourceGameNPC::UpdateStepSound(float DeltaSeconds)

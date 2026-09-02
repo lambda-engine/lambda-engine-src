@@ -128,6 +128,9 @@ private:
 	 */
 	void UpdateStepSound(float DeltaSeconds);
 
+	/** lambda.showai's per-frame drawing. */
+	void DrawAIDebug() const;
+
 	/** Milliseconds until the next footstep is due (CBasePlayer::m_flStepSoundTime). */
 	float StepSoundTime = 0.0f;
 
