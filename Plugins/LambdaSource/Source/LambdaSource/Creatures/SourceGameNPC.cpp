@@ -223,7 +223,9 @@ void ASourceGameNPC::DrawAIDebug() const
 	// What he is aiming at, which is the honest answer to "why is he shooting there".
 	if (bHasAimTarget)
 	{
-		DrawDebugLine(World, EyePosition(), AimTarget, FColor(255, 120, 80), false, -1.0f, SDPG_Foreground, 1.0f);
+		DrawDebugLine(World, EyePosition(), AimTarget, FColor(255, 160, 60), false, -1.0f, SDPG_Foreground, 1.5f);
+		DrawDebugSphere(World, AimTarget, 8.0f * Scale, 8, FColor(255, 160, 60), false, -1.0f,
+			SDPG_Foreground, 1.5f);
 	}
 
 	if (Behaviour)
@@ -550,6 +552,15 @@ void ASourceGameNPC::MindShootAt(const FVector& TargetPoint, AActor* TargetActor
 			continue;
 		}
 		ASourceBulletFX::Tracer(World, FlashAt, Hit.ImpactPoint, MaterialLibrary);
+#if ENABLE_DRAW_DEBUG
+		// Every round, not the one-in-four the tracer draws, and it lingers a second: with lambda.showai on
+		// the question is "where did that shot actually go", which a tracer you may have missed cannot answer.
+		if (GShowAI != 0)
+		{
+			DrawDebugLine(World, FlashAt, Hit.ImpactPoint, FColor(255, 60, 60), false, 1.0f, SDPG_Foreground, 1.0f);
+			DrawDebugPoint(World, Hit.ImpactPoint, 8.0f, FColor(255, 60, 60), false, 1.0f, SDPG_Foreground);
+		}
+#endif
 		SourceImpact::PlayImpact(Hit, MaterialLibrary, this, Dir, Params.DamagePerPellet);
 		if (AActor* HitActor = Hit.GetActor())
 		{
