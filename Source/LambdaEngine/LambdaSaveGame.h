@@ -24,13 +24,19 @@ struct FLambdaSaveInfo
  * only means anything to a build with the same class layout; ours is Valve KeyValues text, like every other
  * file this engine reads. What is in it is the honest limit of the system today:
  *
- *   * the map, the player's position and angles, health, armour, suit, weapons, ammo and which weapon is out.
+ *   * the map, the player's position and angles, health, armour, suit, weapons, ammo and which weapon is out;
+ *   * every entity the map spawned, by its place in the spawn order: where it is, which way it faces, and
+ *     whatever its own behaviour chose to write down - a door open or locked, a button pressed, a relay
+ *     switched off, a trigger disabled, an NPC's health and whether it is still alive.
  *
- * What is NOT in it, and what a save therefore forgets: doors and buttons and their states, NPCs alive or
- * dead, physics props, and anything an entity was in the middle of doing. Loading restores you to a map at a
- * spot with your kit; it does not restore the world around you. That is a real limitation and the reason this
- * is a foundation rather than a finished feature - entity state needs each entity to describe its own fields,
- * which is what Source's datadesc is for and what would come next.
+ * That last part is Source's datadesc, turned round for a DLL boundary: rather than the engine walking a
+ * table of member offsets, each entity names its own saved fields through ISaveState. An entity that wants
+ * to survive a save says so; one that does not is rebuilt from its keyvalues, which is the right answer for
+ * anything the map fully describes.
+ *
+ * What is still NOT in it: anything spawned at runtime rather than by the map - ragdolls, grenades in
+ * flight, decals - and physics props' momentum. Those are restored as the map describes them, not as they
+ * were left.
  */
 class LAMBDAENGINE_API FLambdaSaveGame
 {
@@ -53,6 +59,14 @@ public:
 	static bool HasAnySave();
 	/** The newest save, or an empty name when there is none. */
 	static FString NewestSaveName();
+
+	/**
+	 * Applied once the map's entities exist: puts back what happened to the world.
+	 *
+	 * Called from the world actor at the end of LoadMap, when every entity has spawned and read its
+	 * keyvalues but before anything has had a chance to run.
+	 */
+	static void ApplyPendingWorldRestore(class ASourceBSPWorldActor* WorldActor);
 
 	/** Applied by the character when it spawns, if a Load armed one. Clears itself. */
 	static void ApplyPendingRestore(ALambdaCharacter* Player);

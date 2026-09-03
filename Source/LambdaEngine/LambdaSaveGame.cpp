@@ -9,6 +9,11 @@
 #include "Core/LambdaSourceSettings.h"
 #include "FileSystem/LambdaFileSystem.h"
 #include "World/SourceBSPWorldActor.h"
+#include "World/SourceEntity.h"
+#include "Creatures/SourceGameNPC.h"
+#include "Creatures/SourceNPCBase.h"
+#include "Entities/SourceGamePointEntity.h"
+#include "Entities/SourceGameEntity.h"
 #include "GameMapsSettings.h"
 #include "HAL/FileManager.h"
 #include "Kismet/GameplayStatics.h"
@@ -38,6 +43,99 @@ namespace
 	};
 
 	FPendingRestore GPending;
+
+	/**
+	 * ISaveState over a flat list of key/value pairs - the concrete thing an entity writes itself into.
+	 *
+	 * One of these per saved entity, so keys are entity-local and two doors may both write "open".
+	 */
+	class FSaveStateKV : public lambda::ISaveState
+	{
+	public:
+		TArray<TPair<FString, FString>> Pairs;
+
+		void WriteInt(const char* Key, int Value) override
+		{
+			Pairs.Emplace(ANSI_TO_TCHAR(Key), FString::FromInt(Value));
+		}
+		void WriteFloat(const char* Key, float Value) override
+		{
+			Pairs.Emplace(ANSI_TO_TCHAR(Key), FString::SanitizeFloat(Value));
+		}
+		void WriteString(const char* Key, const char* Value) override
+		{
+			Pairs.Emplace(ANSI_TO_TCHAR(Key), ANSI_TO_TCHAR(Value ? Value : ""));
+		}
+		void WriteVec3(const char* Key, const lambda::Vec3& Value) override
+		{
+			Pairs.Emplace(ANSI_TO_TCHAR(Key), FString::Printf(TEXT("%.2f %.2f %.2f"), Value.x, Value.y, Value.z));
+		}
+
+		const FString* Find(const char* Key) const
+		{
+			const FString Wanted(ANSI_TO_TCHAR(Key));
+			for (const TPair<FString, FString>& Pair : Pairs)
+			{
+				if (Pair.Key.Equals(Wanted, ESearchCase::IgnoreCase))
+				{
+					return &Pair.Value;
+				}
+			}
+			return nullptr;
+		}
+		bool Has(const char* Key) const override { return Find(Key) != nullptr; }
+		int ReadInt(const char* Key, int Default) const override
+		{
+			const FString* V = Find(Key);
+			return V ? FCString::Atoi(**V) : Default;
+		}
+		float ReadFloat(const char* Key, float Default) const override
+		{
+			const FString* V = Find(Key);
+			return V ? FCString::Atof(**V) : Default;
+		}
+		const char* ReadString(const char* Key, const char* Default) const override
+		{
+			const FString* V = Find(Key);
+			if (!V)
+			{
+				return Default;
+			}
+			const FTCHARToUTF8 Converted(**V);
+			Returned.SetNumUninitialized(Converted.Length() + 1);
+			FMemory::Memcpy(Returned.GetData(), Converted.Get(), Converted.Length());
+			Returned[Converted.Length()] = 0;
+			return Returned.GetData();
+		}
+		lambda::Vec3 ReadVec3(const char* Key, const lambda::Vec3& Default) const override
+		{
+			const FString* V = Find(Key);
+			if (!V)
+			{
+				return Default;
+			}
+			FVector3f Parsed = FVector3f::ZeroVector;
+			FSourceCoords::ParseVector(*V, Parsed);
+			return lambda::Vec3{ Parsed.X, Parsed.Y, Parsed.Z };
+		}
+
+	private:
+		mutable TArray<ANSICHAR> Returned;
+	};
+
+	/** Everything a saved entity carries, keyed by its place in the map's spawn order. */
+	struct FEntitySave
+	{
+		int32 Index = INDEX_NONE;
+		FString ClassName;
+		FVector3f Origin = FVector3f::ZeroVector;
+		FVector3f Angles = FVector3f::ZeroVector;
+		float Health = -1.0f;			// NPCs only; -1 means "not a thing with health"
+		bool bDead = false;
+		FSaveStateKV Fields;			// whatever the entity's own behaviour wrote
+	};
+
+	TArray<FEntitySave> GPendingEntities;
 
 	FString CurrentMapName(UWorld* World)
 	{
@@ -123,6 +221,73 @@ bool FLambdaSaveGame::Save(UWorld* World, const FString& Name)
 		Lines.Add(FString::Printf(TEXT("\t\t\"%s\"\t\"%d\""), *Pair.Key, Pair.Value));
 	}
 	Lines.Add(TEXT("\t}"));
+
+	// Every entity the map spawned, by its place in the spawn order. That order is a property of the BSP, so
+	// it is the same on the next load of the same map - which is what lets a restore find each one again
+	// without needing an id the map never promised to give us.
+	if (ASourceBSPWorldActor* BSP = Cast<ASourceBSPWorldActor>(
+		UGameplayStatics::GetActorOfClass(World, ASourceBSPWorldActor::StaticClass())))
+	{
+		Lines.Add(TEXT("\t\"entities\""));
+		Lines.Add(TEXT("\t{"));
+		for (int32 i = 0; i < BSP->SpawnedActors.Num(); ++i)
+		{
+			AActor* Actor = BSP->SpawnedActors[i].Get();
+			if (!IsValid(Actor))
+			{
+				continue;
+			}
+			FSaveStateKV Fields;
+			FString ClassName;
+			float EntHealth = -1.0f;
+
+			if (ASourceGameEntity* GameEnt = Cast<ASourceGameEntity>(Actor))
+			{
+				ClassName = GameEnt->GetEntity().ClassName;
+				if (GameEnt->GetBehaviour()) { GameEnt->GetBehaviour()->SaveState(Fields); }
+			}
+			else if (ASourceGamePointEntity* PointEnt = Cast<ASourceGamePointEntity>(Actor))
+			{
+				ClassName = PointEnt->GetEntity().ClassName;
+				if (PointEnt->GetBehaviour()) { PointEnt->GetBehaviour()->SaveState(Fields); }
+			}
+			else if (ASourceNPCBase* NPC = Cast<ASourceNPCBase>(Actor))
+			{
+				ClassName = NPC->GetSourceEntity().ClassName;
+				EntHealth = NPC->GetHealth();
+				if (ASourceGameNPC* GameNPC = Cast<ASourceGameNPC>(Actor))
+				{
+					if (GameNPC->GetBehaviour()) { GameNPC->GetBehaviour()->SaveState(Fields); }
+				}
+			}
+			else if (const ASourceEntity* Ent = Cast<ASourceEntity>(Actor))
+			{
+				ClassName = Ent->GetEntity().ClassName;
+			}
+			else
+			{
+				continue;	// not something the map named; nothing to put back
+			}
+
+			const FVector3f EntOrigin = FSourceCoords::ToSource(Actor->GetActorLocation(), Scale);
+			const FVector3f EntAngles = FSourceCoords::AnglesFromUE(Actor->GetActorRotation());
+			Lines.Add(FString::Printf(TEXT("\t\t\"%d\""), i));
+			Lines.Add(TEXT("\t\t{"));
+			Lines.Add(FString::Printf(TEXT("\t\t\t\"classname\"\t\"%s\""), *ClassName));
+			Lines.Add(FString::Printf(TEXT("\t\t\t\"origin\"\t\"%.2f %.2f %.2f\""), EntOrigin.X, EntOrigin.Y, EntOrigin.Z));
+			Lines.Add(FString::Printf(TEXT("\t\t\t\"angles\"\t\"%.2f %.2f %.2f\""), EntAngles.X, EntAngles.Y, EntAngles.Z));
+			if (EntHealth >= 0.0f)
+			{
+				Lines.Add(FString::Printf(TEXT("\t\t\t\"health\"\t\"%.1f\""), EntHealth));
+			}
+			for (const TPair<FString, FString>& Pair : Fields.Pairs)
+			{
+				Lines.Add(FString::Printf(TEXT("\t\t\t\"%s\"\t\"%s\""), *Pair.Key, *Pair.Value));
+			}
+			Lines.Add(TEXT("\t\t}"));
+		}
+		Lines.Add(TEXT("\t}"));
+	}
 	Lines.Add(TEXT("}"));
 
 	const FString Path = SavePath(Name);
@@ -191,6 +356,34 @@ bool FLambdaSaveGame::Load(UWorld* World, const FString& Name)
 		}
 	}
 
+	// The world half of the save. Parsed here and held until the map's entities exist.
+	GPendingEntities.Reset();
+	if (const FSourceKeyValues* EntBlock = Root.FindChild(TEXT("entities")))
+	{
+		for (const FSourceKeyValues& Child : EntBlock->Children)
+		{
+			if (!Child.IsSection())
+			{
+				continue;
+			}
+			FEntitySave Ent;
+			Ent.Index = FCString::Atoi(*Child.Key);
+			for (const FSourceKeyValues& Field : Child.Children)
+			{
+				if (Field.Key.Equals(TEXT("classname"), ESearchCase::IgnoreCase)) { Ent.ClassName = Field.Value; }
+				else if (Field.Key.Equals(TEXT("origin"), ESearchCase::IgnoreCase)) { FSourceCoords::ParseVector(Field.Value, Ent.Origin); }
+				else if (Field.Key.Equals(TEXT("angles"), ESearchCase::IgnoreCase)) { FSourceCoords::ParseVector(Field.Value, Ent.Angles); }
+				else if (Field.Key.Equals(TEXT("health"), ESearchCase::IgnoreCase)) { Ent.Health = FCString::Atof(*Field.Value); }
+				else
+				{
+					// Anything else belongs to the entity's own behaviour; it knows what its keys mean.
+					Ent.Fields.Pairs.Emplace(Field.Key, Field.Value);
+				}
+			}
+			GPendingEntities.Add(MoveTemp(Ent));
+		}
+	}
+
 	UE_LOG(LogLambda, Log, TEXT("loading '%s': map '%s'"), *Name, *Map);
 	if (World)
 	{
@@ -199,6 +392,76 @@ bool FLambdaSaveGame::Load(UWorld* World, const FString& Name)
 		UGameplayStatics::OpenLevel(World, FName(*EntryMap), true, FString::Printf(TEXT("map=%s"), *Map));
 	}
 	return true;
+}
+
+void FLambdaSaveGame::ApplyPendingWorldRestore(ASourceBSPWorldActor* WorldActor)
+{
+	if (GPendingEntities.Num() == 0 || !WorldActor)
+	{
+		return;
+	}
+	const TArray<FEntitySave> Entities = MoveTemp(GPendingEntities);
+	GPendingEntities.Reset();
+
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+	int32 Restored = 0;
+	int32 Removed = 0;
+	for (const FEntitySave& Ent : Entities)
+	{
+		if (!WorldActor->SpawnedActors.IsValidIndex(Ent.Index))
+		{
+			continue;	// the map has changed under the save; skip rather than put state on a stranger
+		}
+		AActor* Actor = WorldActor->SpawnedActors[Ent.Index].Get();
+		if (!IsValid(Actor))
+		{
+			continue;
+		}
+
+		// The spawn order is stable for a given BSP, but a recompiled map can reorder it. Checking the
+		// classname turns "the map changed" from a corrupted restore into a skipped entity.
+		FString ActualClass;
+		if (const ASourceEntity* AsEnt = Cast<ASourceEntity>(Actor)) { ActualClass = AsEnt->GetEntity().ClassName; }
+		else if (const ASourceNPCBase* AsNPC = Cast<ASourceNPCBase>(Actor)) { ActualClass = AsNPC->GetSourceEntity().ClassName; }
+		if (!ActualClass.Equals(Ent.ClassName, ESearchCase::IgnoreCase))
+		{
+			UE_LOG(LogLambda, Verbose, TEXT("restore: entity %d is '%s', save says '%s' - skipped"),
+				Ent.Index, *ActualClass, *Ent.ClassName);
+			continue;
+		}
+
+		// An NPC that was dead stays dead. Removing it is the honest version of restoring a corpse: the body
+		// itself was a runtime ragdoll and is not in the save, so bringing the soldier back alive would be
+		// worse than the room simply being empty where he fell.
+		if (ASourceNPCBase* NPC = Cast<ASourceNPCBase>(Actor))
+		{
+			if (Ent.Health >= 0.0f && Ent.Health <= 0.0f)
+			{
+				Actor->Destroy();
+				++Removed;
+				continue;
+			}
+			if (Ent.Health > 0.0f)
+			{
+				NPC->SetHealth(Ent.Health);
+			}
+		}
+
+		Actor->SetActorLocation(FSourceCoords::ToUE(Ent.Origin, Scale), false, nullptr, ETeleportType::TeleportPhysics);
+		Actor->SetActorRotation(FSourceCoords::AnglesToUE(Ent.Angles));
+
+		// And whatever the entity's own behaviour wrote down about itself.
+		lambda::IEntity* Behaviour = nullptr;
+		if (ASourceGameEntity* GameEnt = Cast<ASourceGameEntity>(Actor)) { Behaviour = GameEnt->GetBehaviour(); }
+		else if (ASourceGamePointEntity* PointEnt = Cast<ASourceGamePointEntity>(Actor)) { Behaviour = PointEnt->GetBehaviour(); }
+		else if (ASourceGameNPC* GameNPC = Cast<ASourceGameNPC>(Actor)) { Behaviour = GameNPC->GetBehaviour(); }
+		if (Behaviour)
+		{
+			Behaviour->RestoreState(Ent.Fields);
+		}
+		++Restored;
+	}
+	UE_LOG(LogLambda, Log, TEXT("restored %d entities, removed %d that were dead"), Restored, Removed);
 }
 
 void FLambdaSaveGame::ApplyPendingRestore(ALambdaCharacter* Player)

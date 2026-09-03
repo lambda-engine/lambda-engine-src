@@ -90,6 +90,10 @@ private:
 	FVector MoveGoal = FVector::ZeroVector;
 
 	lambda::IEntity* Behaviour = nullptr;
+public:
+	/** The game DLL's half of this entity, for the save system to ask it to describe itself. */
+	lambda::IEntity* GetBehaviour() const { return Behaviour; }
+private:
 	lambda::EntityId GameId = lambda::InvalidEntity;
 
 	/**

@@ -18,7 +18,7 @@
 #pragma once
 
 // Bumped whenever anything below changes shape. A DLL built against an older one is refused at load.
-#define LAMBDA_GAME_API_VERSION "LambdaGame011"
+#define LAMBDA_GAME_API_VERSION "LambdaGame012"
 
 #if defined(_WIN32)
 	#define LAMBDA_GAME_EXPORT extern "C" __declspec(dllexport)
@@ -53,6 +53,36 @@ enum class MoveResult : int
 {
 	Arrived = 0,
 	Interrupted = 1,
+};
+
+/**
+ * The bag a saved entity writes itself into, and reads itself back out of.
+ *
+ * This is Source's datadesc turned the right way round for a DLL boundary. Source declares its saved fields
+ * as a static table (DEFINE_FIELD) and the engine walks it; a table of member offsets cannot cross a DLL
+ * boundary safely, so here the entity does the walking and names its own fields. The effect is the same and
+ * the discipline is the same: an entity that wants to survive a save says which of its facts matter.
+ *
+ * Keys are per-entity, so two entities may both write "state" without colliding. Reads take a default, so a
+ * save written before a field existed still loads.
+ */
+class ISaveState
+{
+public:
+	virtual ~ISaveState() = default;
+
+	virtual void WriteInt(const char* Key, int Value) = 0;
+	virtual void WriteFloat(const char* Key, float Value) = 0;
+	virtual void WriteString(const char* Key, const char* Value) = 0;
+	virtual void WriteVec3(const char* Key, const Vec3& Value) = 0;
+
+	virtual int ReadInt(const char* Key, int Default) const = 0;
+	virtual float ReadFloat(const char* Key, float Default) const = 0;
+	/** Valid until the next call on this object. */
+	virtual const char* ReadString(const char* Key, const char* Default) const = 0;
+	virtual Vec3 ReadVec3(const char* Key, const Vec3& Default) const = 0;
+	/** Whether the save actually carried this field, for a "was it set at all" decision. */
+	virtual bool Has(const char* Key) const = 0;
 };
 
 // ---------------------------------------------------------------------------------------------------------
@@ -378,6 +408,17 @@ public:
 	 * is the intended way, as with GetKeyValue's return.
 	 */
 	virtual const char* GetDebugText() const { return ""; }
+
+	/**
+	 * Writes down what this entity would need to come back as it is (Source's datadesc, entity-driven).
+	 *
+	 * Only what a reload would not already give it: the map rebuilds every entity from the BSP, so its
+	 * keyvalues, wiring and starting pose come back on their own. What does not is whatever has HAPPENED to
+	 * it since - a door left open, a button already pressed, a relay switched off. Write that.
+	 */
+	virtual void SaveState(ISaveState& Out) const {}
+	/** Puts back what SaveState wrote. Called after the entity has spawned and read its keyvalues. */
+	virtual void RestoreState(const ISaveState& In) {}
 };
 
 /** The game module as a whole. */

@@ -1,4 +1,5 @@
 #include "LambdaGameMode.h"
+#include "LambdaSaveGame.h"
 #include "LambdaMainMenu.h"
 #include "Engine/GameInstance.h"
 #include "LambdaCharacter.h"
@@ -107,7 +108,14 @@ void ALambdaGameMode::EnsureMapLoaded()
 	if (!WorldActor->LoadMap(SourceMap))
 	{
 		UE_LOG(LogLambda, Error, TEXT("Failed to load Source map '%s' - see LogLambdaSource for details"), *SourceMap);
+		return;
 	}
+
+	// If a load armed one, this is the moment for it: every entity exists and has read its keyvalues, and
+	// nothing has had a chance to run yet, so a door put back open was never seen closed. It happens here
+	// rather than inside LoadMap because the save system belongs to the game module and the world actor to
+	// the plugin beneath it - the dependency only runs one way.
+	FLambdaSaveGame::ApplyPendingWorldRestore(WorldActor);
 }
 
 AActor* ALambdaGameMode::ChoosePlayerStart_Implementation(AController* Player)

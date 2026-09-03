@@ -70,6 +70,8 @@ public:
 	const FString& GetClassName() const { return Entity.ClassName; }
 	ESourceNPCState GetNPCState() const { return NPCState; }
 	float GetHealth() const { return Health; }
+	/** Put back by a save restore; nothing else should be setting health from outside. */
+	void SetHealth(float InHealth) { Health = InHealth; }
 	/** CBaseCombatCharacter::BloodColor. */
 	ESourceBloodColor GetBloodColor() const { return BloodColor; }
 	/** The ragdoll this NPC became on death, if any. */
