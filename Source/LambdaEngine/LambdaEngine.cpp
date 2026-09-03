@@ -1,4 +1,5 @@
 #include "LambdaEngine.h"
+#include "LambdaSaveGame.h"
 #include "RenderUtils.h"
 #include "FileSystem/LambdaFileSystem.h"
 #include "Misc/CommandLine.h"
@@ -651,6 +652,57 @@ static void LambdaMapCommand(const TArray<FString>& Args, UWorld* World)
 	FLambdaLoadingScreen::Arm();
 	UGameplayStatics::OpenLevel(World, FName(*EntryMap), true, FString::Printf(TEXT("map=%s"), *MapName));
 }
+
+/**
+ * save / load / autosave, named as Source names them (host_saverestore.cpp). "save" with no argument writes
+ * quick.sav, which is what a quicksave key would bind to.
+ */
+static FAutoConsoleCommandWithWorldAndArgs GLambdaSaveCommand(
+	TEXT("save"),
+	TEXT("save [name]: write a save (default 'quick')."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic([](const TArray<FString>& Args, UWorld* World)
+	{
+		FLambdaSaveGame::Save(World, Args.Num() > 0 ? Args[0] : TEXT("quick"));
+	}));
+
+static FAutoConsoleCommandWithWorldAndArgs GLambdaLoadCommand(
+	TEXT("load"),
+	TEXT("load [name]: restore a save (default the newest one)."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic([](const TArray<FString>& Args, UWorld* World)
+	{
+		const FString Name = Args.Num() > 0 ? Args[0] : FLambdaSaveGame::NewestSaveName();
+		if (Name.IsEmpty())
+		{
+			UE_LOG(LogLambda, Display, TEXT("load: there are no saves"));
+			return;
+		}
+		FLambdaSaveGame::Load(World, Name);
+	}));
+
+static FAutoConsoleCommandWithWorldAndArgs GLambdaAutosaveCommand(
+	TEXT("autosave"),
+	TEXT("autosave: write autosave.sav."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic([](const TArray<FString>&, UWorld* World)
+	{
+		FLambdaSaveGame::Save(World, TEXT("autosave"));
+	}));
+
+static FAutoConsoleCommandWithWorldAndArgs GLambdaSavesCommand(
+	TEXT("saves"),
+	TEXT("saves: list what there is to load."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic([](const TArray<FString>&, UWorld*)
+	{
+		const TArray<FLambdaSaveInfo> All = FLambdaSaveGame::List();
+		if (All.Num() == 0)
+		{
+			UE_LOG(LogLambda, Display, TEXT("no saves in %s"), *FLambdaSaveGame::SaveDirectory());
+			return;
+		}
+		for (const FLambdaSaveInfo& Info : All)
+		{
+			UE_LOG(LogLambda, Display, TEXT("  %-16s %s"), *Info.Name, *Info.Comment);
+		}
+	}));
 
 static FAutoConsoleCommandWithWorldAndArgs GLambdaMapCommand(
 	TEXT("map"),

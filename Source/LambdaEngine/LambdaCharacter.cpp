@@ -1,4 +1,8 @@
 #include "LambdaCharacter.h"
+#include "LambdaSaveGame.h"
+#include "Formats/SourcePHYFile.h"
+#include "GameMapsSettings.h"
+#include "LambdaLoadingScreen.h"
 #include "LambdaEngine.h"
 #include "Core/LambdaSourceSettings.h"
 #include "Camera/CameraComponent.h"
@@ -378,6 +382,18 @@ void ALambdaCharacter::BeginPlay()
 	FirstPersonCamera->PostProcessBlendWeight = 1.0f;
 	FirstPersonCamera->PostProcessSettings.bOverride_AutoExposureBias = true;
 	FirstPersonCamera->PostProcessSettings.AutoExposureBias = Settings.ExposureBias;
+
+	// A load armed a restore before the level changed; now there is a player to put it on. On a short timer
+	// rather than here, because the loadout above has only just been handed out and a restore is meant to
+	// replace it, not race it.
+	if (FLambdaSaveGame::HasPendingRestore())
+	{
+		FTimerHandle Handle;
+		GetWorldTimerManager().SetTimer(Handle, FTimerDelegate::CreateLambda([this]()
+		{
+			FLambdaSaveGame::ApplyPendingRestore(this);
+		}), 0.25f, false);
+	}
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -863,7 +879,12 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 
 	UpdateEyeHeight(DeltaSeconds);
 	UpdateStepSound(DeltaSeconds);
-	UpdatePlayerBody(DeltaSeconds);
+	// Once dead the ragdoll owns the body and the view model is gone; UpdatePlayerBody would put both back
+	// every frame, which is what left a floating grenade in front of a corpse.
+	if (!bDeathCamActive)
+	{
+		UpdatePlayerBody(DeltaSeconds);
+	}
 
 	// CheckSuitUpdate: the suit works through whatever it has been given to say.
 	SuitVoice.Tick(this, GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f);
@@ -1104,7 +1125,12 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 
 	// CalcPlayerView: the punch angle rides on top of the view angles and springs back (DecayPunchAngle).
 	DecayPunchAngle(DeltaSeconds);
-	if (FirstPersonCamera)
+	if (bDeathCamActive)
+	{
+		// Dead men do not aim: the death camera owns the view from here.
+		UpdateDeathCam(DeltaSeconds);
+	}
+	else if (FirstPersonCamera)
 	{
 		FirstPersonCamera->SetWorldRotation(GetControlRotation() + FRotator(PunchAngle.X, PunchAngle.Y, PunchAngle.Z));
 	}
@@ -1654,6 +1680,47 @@ ALambdaWeapon* ALambdaCharacter::GiveWeapon(const FString& WeaponClassName)
 }
 
 
+void ALambdaCharacter::RestoreSavedState(float InHealth, float InArmor, bool bInSuit,
+	const TArray<FString>& InWeapons, const FString& InActiveWeapon, const TMap<FString, int32>& InAmmo)
+{
+	Health = InHealth;
+	Armor = InArmor;
+	EquipSuit(bInSuit);
+
+	// The map already handed out a starting loadout by the time this runs, and a restore is the state the
+	// save had rather than that state on top of a fresh kit. Clear it out and give back exactly what was
+	// written down.
+	for (TObjectPtr<ALambdaWeapon>& Weapon : Weapons)
+	{
+		if (Weapon)
+		{
+			Weapon->Destroy();
+		}
+	}
+	Weapons.Reset();
+	ActiveWeapon = nullptr;
+	SelectionIndex = INDEX_NONE;
+	AmmoCounts.Reset();
+
+	for (const FString& ClassName : InWeapons)
+	{
+		GiveWeapon(ClassName);
+	}
+	// After the weapons, because GiveWeapon's own script may hand out a starting magazine.
+	AmmoCounts = InAmmo;
+
+	for (const TObjectPtr<ALambdaWeapon>& Weapon : Weapons)
+	{
+		if (Weapon && Weapon->GetWeaponClassName().Equals(InActiveWeapon, ESearchCase::IgnoreCase))
+		{
+			SwitchToWeapon(Weapon);
+			break;
+		}
+	}
+	UE_LOG(LogLambda, Log, TEXT("restore: %.0f health, %.0f armour, %d weapons, active '%s'"),
+		Health, Armor, Weapons.Num(), *InActiveWeapon);
+}
+
 bool ALambdaCharacter::SetViewModel(const FString& ModelPath)
 {
 	if (!ViewModelMesh)
@@ -1821,6 +1888,16 @@ void ALambdaCharacter::Input_Attack2Stop()
 
 void ALambdaCharacter::Input_AttackStart()
 {
+	// Dead: the click is the only thing left to do, and it starts the map or the last save again. A short
+	// grace first, so the shot that killed you does not also skip the death you came to watch.
+	if (bDeathCamActive)
+	{
+		if (DeathCamTime > 1.0f)
+		{
+			RestartFromDeath();
+		}
+		return;
+	}
 	// With the weapon menu open, the attack is the confirmation, not a shot (CBaseHudWeaponSelection).
 	if (bSelectionActive)
 	{
@@ -2321,12 +2398,173 @@ void ALambdaCharacter::Killed(AActor* Attacker)
 		SuitVoice.SetSuitUpdate(this, FMath::RandBool() ? TEXT("HEV_DEAD0") : TEXT("HEV_DEAD1"), FLambdaSuitVoice::RepeatOK);
 	}
 
-	// CBasePlayer::Event_Killed drops the weapon and hands control to the death camera. Neither exists yet, so
-	// the player is simply frozen where they fell - enough that death reads as death rather than as nothing.
-	if (APlayerController* PC = Cast<APlayerController>(GetController()))
+	// CBasePlayer::Event_Killed hands control to the death camera. Source's is third person; this one stays
+	// in the head of the body you just lost, which is the whole point of doing it with the shadow model.
+	StartDeathCam();
+}
+
+void ALambdaCharacter::StartDeathCam()
+{
+	if (bDeathCamActive)
 	{
-		DisableInput(PC);
+		return;
 	}
+	bDeathCamActive = true;
+	DeathCamTime = 0.0f;
+
+	// Everything first person goes. A floating pair of hands in front of a corpse is nobody's idea of death,
+	// and the legs are the worst of it: they are drawn from the camera down, so with the camera in a fallen
+	// head they would stick out of the corpse at whatever angle the living body was last standing at.
+	if (ViewModelMesh)
+	{
+		ViewModelMesh->SetVisibility(false, true);
+	}
+	if (WeaponShadowMesh)
+	{
+		WeaponShadowMesh->SetVisibility(false, true);
+	}
+	if (LegsMesh)
+	{
+		LegsMesh->SetVisibility(false, true);
+	}
+	if (MuzzleFlashMesh)
+	{
+		MuzzleFlashMesh->SetVisibility(false, true);
+	}
+
+	// Ragdoll the shadow model - the body the player already had, so the corpse is the one that was standing
+	// there a moment ago rather than a new actor dropped in its place.
+	UWorld* World = GetWorld();
+	if (World && BodyMesh && BodyMesh->HasModel())
+	{
+		// The shadow body is owner-no-see in first person - that is the whole trick that lets you cast a
+		// shadow with arms without seeing your own chest. Dead, it is the thing you are looking at, so the
+		// owner has to be allowed to see it.
+		BodyMesh->SetVisibility(true, true);
+		BodyMesh->SetOwnerNoSee(false);
+		BodyMesh->bCastHiddenShadow = false;
+		FSourcePHYFile Phy;
+		FString Error;
+		if (Phy.Load(BodyMesh->GetModelPath(), ULambdaSourceSettings::Get().UnitScale, &Error))
+		{
+			const FVector Velocity = GetVelocity();
+			DeathRagdoll = ASourceRagdoll::Create(World, BodyMesh, Phy, FVector::ZeroVector,
+				GetActorLocation(), Velocity, ESourceBloodColor::Red, /*Lifetime=*/ 0.0f);
+		}
+		else
+		{
+			UE_LOG(LogLambda, Log, TEXT("death cam: no ragdoll for the player model (%s)"), *Error);
+		}
+	}
+
+	// Find the head once, and remember where the camera was sitting relative to it. Keeping the offset in
+	// the head's own space is what makes the camera roll with the body instead of hanging beside it.
+	if (ASourceRagdoll* Corpse = DeathRagdoll.Get())
+	{
+		if (USourceStudioModelComponent* Model = BodyMesh)
+		{
+			if (const FSourceMDLFile* Mdl = Model->GetModel())
+			{
+				const TArray<FSourceStudioBone>& Bones = Mdl->GetBones();
+				for (int32 b = 0; b < Bones.Num(); ++b)
+				{
+					if (Bones[b].Name.Equals(TEXT("ValveBiped.Bip01_Head1"), ESearchCase::IgnoreCase))
+					{
+						DeathHeadBone = b;
+						break;
+					}
+				}
+			}
+			if (DeathHeadBone != INDEX_NONE && FirstPersonCamera)
+			{
+				// Parented to the head's own physics body, keeping the world transform it had. Driving the
+				// camera by hand each frame fought its attachment to the capsule - the capsule does not move
+				// any more, so the camera sat still while the corpse fell away from it. Attached, it rides
+				// the body for free and there is no second opinion about where it is.
+				if (UPrimitiveComponent* HeadBody = Corpse->GetBodyForBone(DeathHeadBone))
+				{
+					FirstPersonCamera->AttachToComponent(HeadBody,
+						FAttachmentTransformRules::KeepWorldTransform);
+				}
+			}
+		}
+	}
+
+	// The pawn stops being driven, but input still has to reach us for the click that restarts.
+	if (UCharacterMovementComponent* Move = GetCharacterMovement())
+	{
+		Move->DisableMovement();
+	}
+}
+
+void ALambdaCharacter::UpdateDeathCam(float DeltaSeconds)
+{
+	if (!bDeathCamActive || !FirstPersonCamera)
+	{
+		return;
+	}
+	DeathCamTime += DeltaSeconds;
+
+	// The camera is attached to the head's body, so it already goes where the corpse goes. All that is left
+	// is keeping the shot watchable: level the roll off, stop the pitch burying itself in the floor when the
+	// body lands face-down, and lift clear if the head comes to rest against the ground.
+	FRotator Look = FirstPersonCamera->GetComponentRotation();
+	Look.Roll = FMath::FInterpTo(Look.Roll, 0.0f, DeltaSeconds, 3.0f);
+	Look.Pitch = FMath::Clamp(Look.Pitch, -35.0f, 25.0f);
+	FirstPersonCamera->SetWorldRotation(Look);
+
+	if (UWorld* World = GetWorld())
+	{
+		const float Scale = ULambdaSourceSettings::Get().UnitScale;
+		const FVector Where = FirstPersonCamera->GetComponentLocation();
+		FCollisionQueryParams Params(SCENE_QUERY_STAT(DeathCamFloor), /*bTraceComplex=*/ false, this);
+		if (ASourceRagdoll* Corpse = DeathRagdoll.Get())
+		{
+			Params.AddIgnoredActor(Corpse);
+		}
+		FHitResult Floor;
+		if (World->LineTraceSingleByChannel(Floor, Where + FVector(0, 0, 24.0f * Scale),
+			Where - FVector(0, 0, 48.0f * Scale), ECC_Visibility, Params))
+		{
+			const float MinAbove = Floor.ImpactPoint.Z + 10.0f * Scale;
+			if (Where.Z < MinAbove)
+			{
+				// Nudged, not teleported: the head is still what it is following, this only keeps the lens
+				// out of the concrete.
+				FirstPersonCamera->SetWorldLocation(FVector(Where.X, Where.Y,
+					FMath::FInterpTo(Where.Z, MinAbove, DeltaSeconds, 8.0f)));
+			}
+		}
+	}
+}
+
+void ALambdaCharacter::RestartFromDeath()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+	// Back to the last save if there is one, and the map from the top if there is not - which is what a
+	// player expects of a death screen, and what Source's own load-last-save does.
+	const FString Newest = FLambdaSaveGame::NewestSaveName();
+	if (!Newest.IsEmpty())
+	{
+		UE_LOG(LogLambda, Log, TEXT("death: loading last save '%s'"), *Newest);
+		FLambdaSaveGame::Load(World, Newest);
+		return;
+	}
+	FString Map;
+	if (const ASourceBSPWorldActor* BSP =
+		Cast<ASourceBSPWorldActor>(UGameplayStatics::GetActorOfClass(World, ASourceBSPWorldActor::StaticClass())))
+	{
+		Map = BSP->GetLoadedMapName();
+	}
+	UE_LOG(LogLambda, Log, TEXT("death: no save; restarting '%s'"), *Map);
+	FLambdaLoadingScreen::Arm();
+	const FString EntryMap = UGameMapsSettings::GetGameDefaultMap();
+	UGameplayStatics::OpenLevel(World, FName(*EntryMap), true,
+		Map.IsEmpty() ? FString() : FString::Printf(TEXT("map=%s"), *Map));
 }
 
 ULambdaMaterialLibrary* ALambdaCharacter::GetWorldMaterialLibrary() const

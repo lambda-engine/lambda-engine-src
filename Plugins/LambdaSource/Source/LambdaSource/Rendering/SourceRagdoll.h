@@ -48,6 +48,13 @@ public:
 	/** The heaviest body's location - something a scripted shot can actually hit. */
 	FVector GetAimPoint() const;
 	/**
+	 * The physics body driving a bone, so something can be parented to it and ride the corpse.
+	 *
+	 * Bones without a solid of their own follow their nearest parent that has one, which is the same rule
+	 * UpdatePose uses to place them - a camera asking for the head gets the body the head actually moves with.
+	 */
+	UPrimitiveComponent* GetBodyForBone(int32 BoneIndex) const;
+	/**
 	 * A corpse on the barnacle's tongue: gravity comes off every piece and the whole thing is driven as one, the
 	 * way vphysics moves a ragdoll attached to the tongue tip.
 	 */

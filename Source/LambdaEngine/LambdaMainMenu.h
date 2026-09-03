@@ -63,6 +63,16 @@ public:
 	static FLinearColor SelectedColour();	// BrightControlText
 	static FLinearColor TitleColour();
 
+	/**
+	 * The save and load dialogs, built as menus rather than as a new kind of window.
+	 *
+	 * Everything a dialog needs - a list, a selection, keyboard movement, mouse hit-testing and drawing -
+	 * the menu already does. Replacing the item list with one entry per save gets all of it for nothing, and
+	 * the dialog behaves exactly like the menu around it because it is the menu.
+	 */
+	void ShowSaveDialog(bool bSaving);
+	bool IsInDialog() const { return bInDialog; }
+
 private:
 	void LoadItems(bool bInGame);
 	void SetPaused(bool bPaused);
@@ -73,6 +83,7 @@ private:
 	int32 Selected = 0;
 	bool bActive = false;
 	bool bPauseMenu = false;
+	bool bInDialog = false;	// a save or load list is up; BACK returns to the menu proper
 	/** What the controller has actually been told, so it is told only when it changes. */
 	bool bInputStateApplied = false;
 	TWeakObjectPtr<APlayerController> LastController;

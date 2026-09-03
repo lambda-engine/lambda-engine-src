@@ -270,6 +270,25 @@ void ASourceRagdoll::SetHangVelocity(const FVector& VelocityCm)
 	}
 }
 
+UPrimitiveComponent* ASourceRagdoll::GetBodyForBone(int32 BoneIndex) const
+{
+	const FSourceMDLFile* Mdl = Model.Get() ? Model->GetModel() : nullptr;
+	if (!Mdl)
+	{
+		return nullptr;
+	}
+	const TArray<FSourceStudioBone>& Bones = Mdl->GetBones();
+	// Walk up until a bone with a solid of its own turns up: most bones are carried by a parent's body.
+	for (int32 b = BoneIndex; b != INDEX_NONE && Bones.IsValidIndex(b); b = Bones[b].Parent)
+	{
+		if (BoneBody.IsValidIndex(b) && Bodies.IsValidIndex(BoneBody[b]))
+		{
+			return Bodies[BoneBody[b]];
+		}
+	}
+	return Bodies.Num() > 0 ? Bodies[0].Get() : nullptr;
+}
+
 FVector ASourceRagdoll::GetCentreOfMass() const
 {
 	FVector Sum = FVector::ZeroVector;

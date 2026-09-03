@@ -79,6 +79,15 @@ public:
 	/** CBasePlayer::GetAmmoCount / GiveAmmo / RemoveAmmo, keyed by the ammo type name from the weapon script. */
 	UFUNCTION(BlueprintPure, Category = "Lambda")
 	int32 GetAmmoCount(const FString& AmmoType) const;
+	/** Every ammo type the player carries, for a save to write down. */
+	const TMap<FString, int32>& GetAmmoCounts() const { return AmmoCounts; }
+	/**
+	 * Puts back what a save recorded: health, armour, suit, the weapons carried, which one was out, and the
+	 * ammo for each. Whatever the map gave the player on spawn is thrown away first - a restore is the state
+	 * the save had, not that plus a fresh loadout.
+	 */
+	void RestoreSavedState(float InHealth, float InArmor, bool bInSuit, const TArray<FString>& InWeapons,
+		const FString& InActiveWeapon, const TMap<FString, int32>& InAmmo);
 	virtual int32 GiveAmmo(const FString& AmmoType, int32 Count) override;
 	/** CBasePlayer::BumpWeapon: takes a weapon off the floor, or just its ammo when it is already carried. */
 	virtual bool BumpWeapon(const FString& WeaponClassName) override;
@@ -481,6 +490,30 @@ protected:
 	/** Drawn for everyone else, and casting even when hidden: the shadow the player throws. */
 	UPROPERTY(VisibleAnywhere, Category = "Lambda")
 	TObjectPtr<USourceStudioModelComponent> BodyMesh;
+
+	// ---- death camera ----
+	/**
+	 * The corpse the camera rides once the player is killed.
+	 *
+	 * Source's own death camera is third person - CBasePlayer::StartDeathCam pulls back to a spectator view.
+	 * This is deliberately not that: the shadow model the player already casts is turned into a ragdoll and
+	 * the camera stays where it was relative to that body's head, so you fall with your own body and keep
+	 * looking out of it. What Source does share is the shape of the thing - the pawn stops being driven, and
+	 * a button press moves on.
+	 */
+	TWeakObjectPtr<class ASourceRagdoll> DeathRagdoll;
+	int32 DeathHeadBone = INDEX_NONE;
+	/** Where the camera sat relative to the head at the moment of death, in the head's own space. */
+	FVector DeathCameraOffset = FVector::ZeroVector;
+	bool bDeathCamActive = false;
+	float DeathCamTime = 0.0f;
+
+	/** Ragdolls the shadow model and puts the camera in its head. */
+	void StartDeathCam();
+	/** Rides the camera on the corpse's head, and keeps it out of the floor. */
+	void UpdateDeathCam(float DeltaSeconds);
+	/** The click that follows death: back to the last save, or the map again if there is none. */
+	void RestartFromDeath();
 	/** The active weapon's world model, in the shadow body's hand, so the shadow is armed too. */
 	UPROPERTY(VisibleAnywhere, Category = "Lambda")
 	TObjectPtr<USourceStudioModelComponent> WeaponShadowMesh;

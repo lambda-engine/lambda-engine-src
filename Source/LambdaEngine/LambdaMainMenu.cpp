@@ -1,4 +1,5 @@
 #include "LambdaMainMenu.h"
+#include "LambdaSaveGame.h"
 
 #include "LambdaConsole.h"
 #include "LambdaEngine.h"
@@ -31,6 +32,7 @@ void ULambdaMainMenu::Deinitialize()
 void ULambdaMainMenu::Show()
 {
 	bPauseMenu = false;
+	bInDialog = false;		// a dialog left open last time is not where the menu should reopen
 	LoadItems(/*bInGame=*/ false);
 	Selected = 0;
 	bActive = true;
@@ -41,6 +43,7 @@ void ULambdaMainMenu::Show()
 void ULambdaMainMenu::ShowPauseMenu()
 {
 	bPauseMenu = true;
+	bInDialog = false;
 	LoadItems(/*bInGame=*/ true);
 	Selected = 0;
 	bActive = true;
@@ -179,6 +182,68 @@ void ULambdaMainMenu::RunCommand(const FString& Command)
 		return;
 	}
 
+	if (Command.Equals(TEXT("OpenLoadGameDialog"), ESearchCase::IgnoreCase))
+	{
+		ShowSaveDialog(/*bSaving=*/ false);
+		return;
+	}
+	if (Command.Equals(TEXT("OpenSaveGameDialog"), ESearchCase::IgnoreCase))
+	{
+		ShowSaveDialog(/*bSaving=*/ true);
+		return;
+	}
+	if (Command.Equals(TEXT("CloseDialog"), ESearchCase::IgnoreCase))
+	{
+		bInDialog = false;
+		LoadItems(bPauseMenu);
+		Selected = 0;
+		return;
+	}
+	// "LoadSave:quick" and the rest carry the slot in the command, which keeps the item list plain data.
+	if (Command.StartsWith(TEXT("LoadSave:"), ESearchCase::IgnoreCase))
+	{
+		const FString Name = Command.RightChop(9);
+		bInDialog = false;
+		Hide();
+		FLambdaSaveGame::Load(World, Name);
+		return;
+	}
+	if (Command.StartsWith(TEXT("SaveOver:"), ESearchCase::IgnoreCase))
+	{
+		const FString Name = Command.RightChop(9);
+		FLambdaSaveGame::Save(World, Name);
+		bInDialog = false;
+		Hide();
+		return;
+	}
+	if (Command.Equals(TEXT("SaveNew"), ESearchCase::IgnoreCase))
+	{
+		// No text entry to name it with, so the slot is numbered: save01, save02 and so on, the way Source
+		// numbers its own history files.
+		FString Name;
+		for (int32 i = 1; i < 100; ++i)
+		{
+			const FString Candidate = FString::Printf(TEXT("save%02d"), i);
+			bool bTaken = false;
+			for (const FLambdaSaveInfo& Info : FLambdaSaveGame::List())
+			{
+				bTaken = bTaken || Info.Name.Equals(Candidate, ESearchCase::IgnoreCase);
+			}
+			if (!bTaken)
+			{
+				Name = Candidate;
+				break;
+			}
+		}
+		if (!Name.IsEmpty())
+		{
+			FLambdaSaveGame::Save(World, Name);
+		}
+		bInDialog = false;
+		Hide();
+		return;
+	}
+
 	// Everything else is a dialog that does not exist yet. Say so rather than doing nothing.
 	UE_LOG(LogLambda, Log, TEXT("Main menu: '%s' is not implemented yet"), *Command);
 	if (Console)
@@ -186,6 +251,40 @@ void ULambdaMainMenu::RunCommand(const FString& Command)
 		Console->ColorPrint(ULambdaConsole::WarningColour(),
 			FString::Printf(TEXT("Main menu: '%s' is not implemented yet"), *Command));
 	}
+}
+
+void ULambdaMainMenu::ShowSaveDialog(bool bSaving)
+{
+	bInDialog = true;
+	Items.Reset();
+	Selected = 0;
+
+	const TArray<FLambdaSaveInfo> Saves = FLambdaSaveGame::List();
+	if (bSaving)
+	{
+		// Saving needs a game to save. Out of one the entry is there but says so rather than misbehaving.
+		if (bPauseMenu)
+		{
+			Items.Add({ TEXT("NEW SAVE"), TEXT("SaveNew") });
+		}
+		else
+		{
+			Items.Add({ TEXT("(START A GAME FIRST)"), TEXT("CloseDialog") });
+		}
+	}
+	for (const FLambdaSaveInfo& Info : Saves)
+	{
+		FLambdaMenuItem Item;
+		// The slot's own name first, then what it is: "QUICK   arena  02/09/2026 21:30".
+		Item.Label = FString::Printf(TEXT("%s   %s"), *Info.Name.ToUpper(), *Info.Comment);
+		Item.Command = bSaving ? (TEXT("SaveOver:") + Info.Name) : (TEXT("LoadSave:") + Info.Name);
+		Items.Add(Item);
+	}
+	if (!bSaving && Saves.Num() == 0)
+	{
+		Items.Add({ TEXT("(NO SAVED GAMES)"), TEXT("CloseDialog") });
+	}
+	Items.Add({ TEXT("BACK"), TEXT("CloseDialog") });
 }
 
 void ULambdaMainMenu::LoadItems(bool bInGame)
@@ -240,6 +339,7 @@ void ULambdaMainMenu::LoadItems(bool bInGame)
 		}
 		Items.Add({ TEXT("NEW GAME"), TEXT("OpenNewGameDialog") });
 		Items.Add({ TEXT("LOAD GAME"), TEXT("OpenLoadGameDialog") });
+		Items.Add({ TEXT("SAVE GAME"), TEXT("OpenSaveGameDialog"), /*bOnlyInGame=*/ true });
 		Items.Add({ TEXT("OPTIONS"), TEXT("OpenOptionsDialog") });
 		Items.Add({ TEXT("QUIT"), TEXT("Quit") });
 	}
