@@ -21,6 +21,8 @@
 #include "Engine/HitResult.h"
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Rendering/SourceImpactEffects.h"
+#include "Materials/SourceDecalScript.h"
 #include "GameFramework/Controller.h"
 #include "Kismet/GameplayStatics.h"
 
@@ -296,6 +298,59 @@ void ASourceNPCBase::UpdateYaw(float DeltaSeconds)
 	}
 }
 
+void ASourceNPCBase::UpdateBleedTrail()
+{
+	// Only once he is properly hurt: a graze does not leave a trail, and a healthy soldier walking about
+	// dripping blood is worse than no trail at all.
+	if (MaxHealth <= 0.0f || Health <= 0.0f || Health > MaxHealth * 0.5f)
+	{
+		BleedTrailLastPos = GetActorLocation();
+		return;
+	}
+	const FVector Now = GetActorLocation();
+	if (BleedTrailLastPos.IsZero())
+	{
+		BleedTrailLastPos = Now;
+		return;
+	}
+	BleedTrailDistance += FVector::Dist2D(Now, BleedTrailLastPos);
+	BleedTrailLastPos = Now;
+
+	// The worse the wound the closer together the drops: full health leaves nothing, near death leaves a
+	// drip every couple of paces.
+	const float Scale = ULambdaSourceSettings::Get().UnitScale;
+	const float Hurt = 1.0f - FMath::Clamp(Health / MaxHealth, 0.0f, 1.0f);	// 0.5 to 1 in practice
+	const float Every = FMath::Lerp(120.0f, 40.0f, FMath::Clamp((Hurt - 0.5f) * 2.0f, 0.0f, 1.0f)) * Scale;
+	if (BleedTrailDistance < Every)
+	{
+		return;
+	}
+	BleedTrailDistance = 0.0f;
+
+	UWorld* World = GetWorld();
+	ULambdaMaterialLibrary* Materials = MaterialLibrary.Get();
+	if (!World || !Materials)
+	{
+		return;
+	}
+	// Straight down to whatever he is walking on, so the drop lands on the floor and not in mid air.
+	const FVector Feet = Now - FVector(0.0f, 0.0f, GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(BleedTrail), /*bTraceComplex=*/ true, this);
+	Params.bReturnFaceIndex = true;
+	FHitResult Hit;
+	if (!World->LineTraceSingleByChannel(Hit, Feet + FVector(0, 0, 8.0f * Scale),
+		Feet - FVector(0, 0, 24.0f * Scale), ECC_Visibility, Params))
+	{
+		return;
+	}
+	FSourceDecalScript& Decals = FSourceDecalScript::Get();
+	Decals.Initialize();
+	const TCHAR* Group = BloodColor == ESourceBloodColor::Red ? TEXT("Blood") : TEXT("YellowBlood");
+	// A quarter size, give or take: the same spray art, small enough to read as a drop rather than a splash.
+	SourceImpact::SpawnDecal(Hit, Materials, Decals.PickDecalMaterial(Group),
+		FMath::FRandRange(0.15f, 0.3f));
+}
+
 void ASourceNPCBase::StopMoving()
 {
 	MoveDirection = FVector::ZeroVector;
@@ -363,6 +418,7 @@ void ASourceNPCBase::Tick(float DeltaSeconds)
 	}
 
 	UpdateYaw(DeltaSeconds);
+	UpdateBleedTrail();
 	if (!MoveDirection.IsNearlyZero())
 	{
 		AddMovementInput(MoveDirection, 1.0f);

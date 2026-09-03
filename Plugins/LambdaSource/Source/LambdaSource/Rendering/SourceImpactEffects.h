@@ -42,7 +42,15 @@ namespace SourceImpact
 		FHitResult& OutHit, int32& OutHitGroup);
 
 	/** Stamps one decal material at a hit (random roll, DecalSizeVariance), attached to what was hit. */
-	LAMBDASOURCE_API void SpawnDecal(const FHitResult& Hit, ULambdaMaterialLibrary* Materials, const FString& DecalName);
+	/**
+	 * Puts a decal where the trace landed. SizeScale shrinks or grows it against the material's own
+	 * $decalscale - a blood drip is the spray decal at a fraction of its size.
+	 *
+	 * Refuses to decal a character or a ragdoll: Unreal's decals are box projections rather than the studio
+	 * decals Source bakes into a model's vertices, so one attached to a limb smears over everything near it.
+	 */
+	LAMBDASOURCE_API void SpawnDecal(const FHitResult& Hit, ULambdaMaterialLibrary* Materials,
+		const FString& DecalName, float SizeScale = 1.0f);
 
 	/** UTIL_BloodImpact -> FX_BloodBulletImpact: the blood spray at a wound. */
 	LAMBDASOURCE_API void SpawnBlood(UWorld* World, ULambdaMaterialLibrary* Materials, const FVector& Origin,

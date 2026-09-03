@@ -44,7 +44,8 @@ namespace
 
 namespace SourceImpact
 {
-	void SpawnDecal(const FHitResult& Hit, ULambdaMaterialLibrary* Materials, const FString& DecalName)
+	void SpawnDecal(const FHitResult& Hit, ULambdaMaterialLibrary* Materials, const FString& DecalName,
+		float SizeScale)
 	{
 		if (DecalName.IsEmpty() || !Materials || !Hit.GetComponent())
 		{
@@ -58,13 +59,21 @@ namespace SourceImpact
 			return;
 		}
 		const float Variance = Materials->GetDecalSizeVariance(DecalName);
-		const float SizeCm = FMath::Max(0.5f, SizeUnits + FMath::FRandRange(-Variance, Variance)) * Settings.UnitScale;
+		const float SizeCm = FMath::Max(0.5f, SizeUnits + FMath::FRandRange(-Variance, Variance))
+			* Settings.UnitScale * FMath::Max(0.05f, SizeScale);
 		FRotator Rotation = (-Hit.ImpactNormal).Rotation();
 		Rotation.Roll = FMath::FRandRange(0.0f, 360.0f);
 		// Attached to whatever was hit, and to the bone if it was a model: a decal on a creature has to travel
 		// with the part of it that was shot.
+		// DecalSize.X is how far the decal projects, not how big it looks, and it was being handed the
+		// decal's own width - so a 91cm blood splash projected the better part of two metres through the
+		// world. That is why a corpse lying in a pool of blood came up drenched in it: the floor decals
+		// underneath were reaching up through the body. Kept shallow, a decal covers the surface it landed
+		// on and a hand's breadth around it, which is enough to wrap a limb and not enough to paint whatever
+		// happens to be standing over it.
+		const float DepthCm = FMath::Clamp(SizeCm * 0.2f, 3.0f * Settings.UnitScale, 8.0f * Settings.UnitScale);
 		UDecalComponent* Decal = UGameplayStatics::SpawnDecalAttached(DecalMaterial,
-			FVector(SizeCm, SizeCm * 0.5f, SizeCm * 0.5f), Hit.GetComponent(), Hit.BoneName,
+			FVector(DepthCm, SizeCm * 0.5f, SizeCm * 0.5f), Hit.GetComponent(), Hit.BoneName,
 			Hit.ImpactPoint, Rotation, EAttachLocation::KeepWorldPosition, Settings.DecalLifetime);
 		if (!Decal)
 		{
@@ -354,6 +363,8 @@ void TraceBleed(UWorld* World, ULambdaMaterialLibrary* Materials, const FHitResu
 	{
 		if (A) { Params.AddIgnoredActor(A); }
 	}
+	// The victim and the shooter are ignored, so the spray carries past the wound to whatever is behind it -
+	// usually the room, sometimes whoever is standing behind him, which is fair enough.
 
 	for (int32 i = 0; i < CCount; ++i)
 	{

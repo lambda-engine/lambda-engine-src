@@ -111,6 +111,13 @@ void ASourceGameNPC::Spawn()
 	SetModel(Look->Model);
 	SetHull(Look->HullHalfWidthUnits, Look->HullHeightUnits);
 	MaxHealth = Health = FSourceAmmoDef::Get().GetSkillValue(Look->HealthSkillKey, Look->DefaultHealth);
+	// Source lets a mapper start an NPC on less than full health; ours reads the same keyvalue, which is
+	// also the only sane way to test what a wounded one does without shooting it first.
+	const FString HealthKey = Entity.Get(TEXT("health"));
+	if (!HealthKey.IsEmpty())
+	{
+		Health = FMath::Clamp(FCString::Atof(*HealthKey), 1.0f, MaxHealth);
+	}
 	ViewOffsetUnits = FVector3f(0, 0, Look->EyeHeightUnits);
 	BloodColor = ESourceBloodColor::Red;
 	FieldOfView = 0.4f;			// CNPC_Combine: a soldier scans a little wider than the 0.5 default

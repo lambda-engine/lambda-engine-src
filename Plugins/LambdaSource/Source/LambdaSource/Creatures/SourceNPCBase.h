@@ -137,6 +137,15 @@ public:
 	 * hunched NPC lean through a thin door.
 	 */
 	bool IsMovementBlocked() const { return bMovementBlocked; }
+
+	/**
+	 * A wounded NPC leaves a trail: small blood decals on the floor every so many units walked.
+	 *
+	 * Not a Source behaviour - HL2's NPCs bleed where they are hit and nowhere else - but it is the one place
+	 * a decal genuinely belongs on the world rather than on a body, and it reads the way a wounded man should.
+	 * The drips are the same HL:A blood spray art at a fraction of its size.
+	 */
+	void UpdateBleedTrail();
 	/** Forget that we were stuck, so a newly ordered move gets to try. */
 	void ClearMovementBlock() { bMovementBlocked = false; BlockedTime = 0.0f; }
 
@@ -222,6 +231,10 @@ protected:
 	ESourceNPCState NPCState = ESourceNPCState::None;
 	float Health = 0.0f;
 	float MaxHealth = 0.0f;
+
+	/** How far this one has walked since it last dripped, and where it was when it last did. */
+	float BleedTrailDistance = 0.0f;
+	FVector BleedTrailLastPos = FVector::ZeroVector;
 	/** SetBloodColor in Spawn. */
 	ESourceBloodColor BloodColor = ESourceBloodColor::Red;
 
