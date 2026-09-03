@@ -240,39 +240,80 @@ void ASourceGameNPC::DrawAIDebug() const
 #endif
 }
 
-void ASourceGameNPC::UpdateStepSound(float DeltaSeconds)
+void ASourceGameNPC::UpdateStepSound(float /*DeltaSeconds*/)
 {
-	if (NPCState == ESourceNPCState::Dead)
+	if (NPCState == ESourceNPCState::Dead || !Model || !Model->HasModel())
 	{
 		return;
 	}
-	// CBasePlayer::UpdateStepSound's clock, in milliseconds because Source's is.
-	if (StepSoundTime > 0.0f)
-	{
-		StepSoundTime = FMath::Max(0.0f, StepSoundTime - 1000.0f * DeltaSeconds);
-		return;
-	}
-
 	const UCharacterMovementComponent* Move = GetCharacterMovement();
 	if (!Move || !Move->IsMovingOnGround())
 	{
+		bFootDescending[0] = bFootDescending[1] = false;
 		return;
 	}
 	const float Scale = ULambdaSourceSettings::Get().UnitScale;
-	const float Speed = Move->Velocity.Size2D();
-	const float VelWalk = 60.0f * Scale;		// slower than this and he is shuffling, not walking
-	const float VelRun = 180.0f * Scale;
-	if (Speed < VelWalk)
+	if (Move->Velocity.Size2D() < 40.0f * Scale)
 	{
+		// Standing about. Feet shift a little in an idle and none of that is a step.
+		bFootDescending[0] = bFootDescending[1] = false;
 		return;
 	}
 
-	StepSoundTime = (Speed < VelRun) ? 400.0f : 300.0f;
+	if (FootBone[0] == INDEX_NONE && FootBone[1] == INDEX_NONE)
+	{
+		const TArray<FSourceStudioBone>& Bones = Model->GetModel()->GetBones();
+		for (int32 b = 0; b < Bones.Num(); ++b)
+		{
+			if (Bones[b].Name.Equals(TEXT("ValveBiped.Bip01_L_Foot"), ESearchCase::IgnoreCase))
+			{
+				FootBone[0] = b;
+			}
+			else if (Bones[b].Name.Equals(TEXT("ValveBiped.Bip01_R_Foot"), ESearchCase::IgnoreCase))
+			{
+				FootBone[1] = b;
+			}
+		}
+		if (FootBone[0] == INDEX_NONE && FootBone[1] == INDEX_NONE)
+		{
+			return;		// not a biped we know the names of; better silent than wrong
+		}
+	}
 
-	// HL:A layers a foley rustle over the boot (use_foley_layer / volume_mult_foley_layer in
-	// soundevents_footsteps_npc_combine): the boot alone is a footstep, the pair is a soldier in armour.
-	EmitSound(StepSoundScript);
-	EmitSound(StepFoleyScript);
+	// The step is the bottom of the foot's arc: while it is falling, then not falling any more.
+	//
+	// Deliberately relative rather than "below some height above the floor". The bone is the ankle, not the
+	// sole, and it bottoms out around nine centimetres up - a guessed absolute threshold sat right on that
+	// value and chattered, firing the same foot over and over while the other never registered at all.
+	// Watching for the turn needs no numbers off the rig and works whatever the animation or the model.
+	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	const float GroundZ = GetActorLocation().Z - GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+	const float Epsilon = 0.1f * Scale;			// below this the foot is level, not moving
+	const float MinStepInterval = 0.2f;			// no foot takes two steps in a fifth of a second
+	for (int32 i = 0; i < 2; ++i)
+	{
+		if (FootBone[i] == INDEX_NONE)
+		{
+			continue;
+		}
+		const float Height = Model->GetBoneWorldTransform(FootBone[i]).GetLocation().Z - GroundZ;
+		const float Delta = Height - FootPrevHeight[i];
+		if (Delta < -Epsilon)
+		{
+			bFootDescending[i] = true;
+		}
+		else if (bFootDescending[i] && Delta > Epsilon && Now - FootLastStepTime[i] > MinStepInterval)
+		{
+			// It was coming down and is now going up: it is on the floor, and this instant is the footfall.
+			bFootDescending[i] = false;
+			FootLastStepTime[i] = Now;
+			// HL:A layers a foley rustle over the boot (use_foley_layer in
+			// soundevents_footsteps_npc_combine): the boot alone is a footstep, the pair is a man in armour.
+			EmitSound(StepSoundScript);
+			EmitSound(StepFoleyScript);
+		}
+		FootPrevHeight[i] = Height;
+	}
 }
 
 void ASourceGameNPC::SetAimTarget(const FVector& World)

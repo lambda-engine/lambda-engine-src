@@ -118,9 +118,8 @@ private:
 	 *
 	 * HL2's humanoids play steps from AE_NPC_LEFTFOOT / AE_NPC_RIGHTFOOT animation events, but
 	 * combine_soldier_anims.mdl has no such events - only AE_CL_PLAYSOUND, muzzleflash and weapon-drop - so
-	 * a walking soldier was silent. This paces them off the ground speed instead, the way
-	 * CBasePlayer::UpdateStepSound does for the player: a millisecond clock, a walk threshold and a run
-	 * threshold, and an interval that shortens when running.
+	 * a walking soldier was silent. This watches the foot bones instead and plays a step when one is planted,
+	 * which is what those animation events would have told us had they been there.
 	 *
 	 * Deliberately does NOT insert an AI sound. The player's steps do (that is how a soldier hears you coming),
 	 * but our CSoundEnt has no notion of who is on whose side, so a soldier hearing his squadmate's boots would
@@ -131,8 +130,19 @@ private:
 	/** lambda.showai's per-frame drawing. */
 	void DrawAIDebug() const;
 
-	/** Milliseconds until the next footstep is due (CBasePlayer::m_flStepSoundTime). */
-	float StepSoundTime = 0.0f;
+	/**
+	 * The foot bones, found once, and whether each is currently planted.
+	 *
+	 * The step used to be paced by a timer - 400ms walking, 300ms running - which is how CBasePlayer does it
+	 * for the player, who has no visible legs to disagree with. A soldier does: the timer and the animation
+	 * are two clocks, so the sound wandered in and out of step with the feet. Watching the feet themselves
+	 * removes the second clock, and it needs no per-animation phase constants: whatever he plays, walk, run
+	 * or something added later, the sound lands when the foot lands.
+	 */
+	int32 FootBone[2] = { INDEX_NONE, INDEX_NONE };
+	float FootPrevHeight[2] = { 0.0f, 0.0f };
+	bool bFootDescending[2] = { false, false };
+	float FootLastStepTime[2] = { -1000.0f, -1000.0f };
 
 	/** The soundscripts a step plays: the boot, and the gear that rattles with it. */
 	FString StepSoundScript = TEXT("CombineSoldier.Step_Manual_Default");
