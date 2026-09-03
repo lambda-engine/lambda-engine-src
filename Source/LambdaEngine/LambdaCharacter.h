@@ -87,7 +87,7 @@ public:
 	 * the save had, not that plus a fresh loadout.
 	 */
 	void RestoreSavedState(float InHealth, float InArmor, bool bInSuit, const TArray<FString>& InWeapons,
-		const FString& InActiveWeapon, const TMap<FString, int32>& InAmmo);
+		const TArray<int32>& InClips, const FString& InActiveWeapon, const TMap<FString, int32>& InAmmo);
 	virtual int32 GiveAmmo(const FString& AmmoType, int32 Count) override;
 	/** CBasePlayer::BumpWeapon: takes a weapon off the floor, or just its ammo when it is already carried. */
 	virtual bool BumpWeapon(const FString& WeaponClassName) override;

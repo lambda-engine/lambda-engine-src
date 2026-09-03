@@ -41,6 +41,28 @@ namespace SourceImpact
 	LAMBDASOURCE_API bool TraceBullet(UWorld* World, const FVector& Start, const FVector& End, FCollisionQueryParams Params,
 		FHitResult& OutHit, int32& OutHitGroup);
 
+	/**
+	 * One decal that is currently on the world, as a save needs to describe it.
+	 *
+	 * Decals are spawned and forgotten by the renderer, so they have to be remembered here to be saved at
+	 * all. Only the ones stuck to the world are worth keeping: a decal that was on a body went with the body.
+	 */
+	struct FDecalRecord
+	{
+		FString Material;			// the Source material name, so the restore can look it up again
+		FVector Location = FVector::ZeroVector;
+		FRotator Rotation = FRotator::ZeroRotator;
+		FVector Size = FVector::ZeroVector;
+		float SecondsLeft = 0.0f;
+	};
+
+	/** Every world decal still on screen, with the life it has left. Expired ones are dropped as it goes. */
+	LAMBDASOURCE_API TArray<FDecalRecord> CollectWorldDecals(const UWorld* World);
+	/** Puts one back, standing on its own rather than attached: whatever it was stuck to is static anyway. */
+	LAMBDASOURCE_API void RestoreWorldDecal(UWorld* World, ULambdaMaterialLibrary* Materials, const FDecalRecord& Record);
+	/** Dropped when a map is unloaded, so decals do not leak from one map into the next. */
+	LAMBDASOURCE_API void ForgetWorldDecals();
+
 	/** Stamps one decal material at a hit (random roll, DecalSizeVariance), attached to what was hit. */
 	/**
 	 * Puts a decal where the trace landed. SizeScale shrinks or grows it against the material's own

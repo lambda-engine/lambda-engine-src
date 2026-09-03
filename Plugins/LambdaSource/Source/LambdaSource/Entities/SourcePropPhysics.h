@@ -81,6 +81,12 @@ public:
 	/** The prop's collision box in its own space, in cm. */
 	const FVector& GetHullExtent() const { return HullExtentLocal; }
 	UPrimitiveComponent* GetPhysicsBody() const;
+	/** The keyvalues this prop was built from, for a save to name it by. */
+	const FSourceEntity& GetSourceEntity() const { return Entity; }
+	/** m_iHealth: what the prop has left before it comes apart. A save carries it, so a crate the
+	 *  player already shot at does not go back to being whole. */
+	float GetPropHealth() const { return Health; }
+	void SetPropHealth(float NewHealth) { Health = NewHealth; }
 
 private:
 	/** CreatePhysicsProp: sets the prop down clear of whatever it is starting inside of, before physics runs. */

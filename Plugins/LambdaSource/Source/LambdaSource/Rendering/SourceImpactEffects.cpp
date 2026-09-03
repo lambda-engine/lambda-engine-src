@@ -44,6 +44,65 @@ namespace
 
 namespace SourceImpact
 {
+	namespace
+	{
+		/**
+		 * The decals stuck to the world, kept so a save can write them down.
+		 *
+		 * The renderer does not keep a list - SpawnDecalAttached hands back a component and forgets it - so
+		 * without this a save has no way to know a wall was ever marked. Only world decals go in: one on a
+		 * body left with the body, and a corpse is not in the save either.
+		 */
+		TArray<FDecalRecord> GWorldDecals;
+	}
+
+	TArray<FDecalRecord> CollectWorldDecals(const UWorld* World)
+	{
+		const float Now = World ? World->GetTimeSeconds() : 0.0f;
+		TArray<FDecalRecord> Out;
+		for (const FDecalRecord& Record : GWorldDecals)
+		{
+			// SecondsLeft was stored as the absolute expiry; a save wants what is left of it.
+			const float Left = Record.SecondsLeft - Now;
+			if (Left > 0.1f)
+			{
+				FDecalRecord Copy = Record;
+				Copy.SecondsLeft = Left;
+				Out.Add(MoveTemp(Copy));
+			}
+		}
+		return Out;
+	}
+
+	void RestoreWorldDecal(UWorld* World, ULambdaMaterialLibrary* Materials, const FDecalRecord& Record)
+	{
+		if (!World || !Materials)
+		{
+			return;
+		}
+		float SizeUnits = 0.0f;
+		UMaterialInterface* Material = Materials->GetDecalMaterial(Record.Material, SizeUnits);
+		if (!Material)
+		{
+			return;
+		}
+		// Standing on its own rather than attached to anything: what it was stuck to is world geometry, which
+		// the map rebuilds in the same place, and anything that moved is not in the save to attach to.
+		if (UDecalComponent* Decal = UGameplayStatics::SpawnDecalAtLocation(World, Material, Record.Size,
+			Record.Location, Record.Rotation, Record.SecondsLeft))
+		{
+			Decal->SetFadeScreenSize(0.0f);
+			FDecalRecord Kept = Record;
+			Kept.SecondsLeft = World->GetTimeSeconds() + Record.SecondsLeft;
+			GWorldDecals.Add(MoveTemp(Kept));
+		}
+	}
+
+	void ForgetWorldDecals()
+	{
+		GWorldDecals.Reset();
+	}
+
 	void SpawnDecal(const FHitResult& Hit, ULambdaMaterialLibrary* Materials, const FString& DecalName,
 		float SizeScale)
 	{
@@ -87,6 +146,27 @@ namespace SourceImpact
 		if (Decal)
 		{
 			Decal->SetFadeScreenSize(0.0f);
+
+			// Remembered only if it landed on the world. A decal attached to anything that can move went
+			// with that thing, and a save has nothing to re-attach it to.
+			const AActor* HitActor = Hit.GetActor();
+			const bool bOnWorld = HitActor && !HitActor->IsA<APawn>() && !HitActor->IsA<ASourceRagdoll>()
+				&& !HitActor->IsA<ASourceNPCBase>() && !HitActor->IsA<ASourcePropPhysics>();
+			if (bOnWorld)
+			{
+				// Pruned here rather than on a timer: the list only matters when a save reads it, and this
+				// is the one place that touches it often enough to keep it honest.
+				const float Now = Decal->GetWorld() ? Decal->GetWorld()->GetTimeSeconds() : 0.0f;
+				GWorldDecals.RemoveAll([Now](const FDecalRecord& R) { return R.SecondsLeft <= Now; });
+
+				FDecalRecord Record;
+				Record.Material = DecalName;
+				Record.Location = Decal->GetComponentLocation();
+				Record.Rotation = Decal->GetComponentRotation();
+				Record.Size = Decal->DecalSize;
+				Record.SecondsLeft = Now + Settings.DecalLifetime;
+				GWorldDecals.Add(MoveTemp(Record));
+			}
 		}
 		UE_LOG(LogLambdaSource, Verbose, TEXT("SpawnDecal '%s' size %.1f cm at %s -> %s"), *DecalName, SizeCm,
 			*Hit.ImpactPoint.ToString(), Decal ? TEXT("ok") : TEXT("FAILED"));

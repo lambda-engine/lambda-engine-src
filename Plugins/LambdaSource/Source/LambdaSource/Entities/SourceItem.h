@@ -42,6 +42,9 @@ public:
 	/** True for classnames this actor can represent (an ammo box or a weapon_ lying in the map). */
 	static bool IsItemClass(const FString& ClassName);
 
+	/** The keyvalues this item was built from, for a save to name it by. */
+	const FSourceEntity& GetSourceEntity() const { return Entity; }
+
 protected:
 	virtual void BeginPlay() override;
 

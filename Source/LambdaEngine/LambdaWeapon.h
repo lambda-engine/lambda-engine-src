@@ -77,6 +77,13 @@ public:
 	void SetWeaponIdleTime(float Time) { TimeWeaponIdle = Time; }
 
 	UFUNCTION(BlueprintPure, Category = "Lambda") int32 GetClip1() const { return Clip1; }
+	/**
+	 * Put back by a save restore, and by nothing else.
+	 *
+	 * A weapon handed out by GiveWeapon arrives with whatever magazine its script says it starts with, which
+	 * is right for picking one up and wrong for loading a game - the player had fired some of it.
+	 */
+	void SetClip1(int32 InClip) { Clip1 = FMath::Clamp(InClip, 0, FMath::Max(1, WeaponInfo.ClipSize)); }
 	UFUNCTION(BlueprintPure, Category = "Lambda") int32 GetClipSize() const { return WeaponInfo.ClipSize; }
 	UFUNCTION(BlueprintPure, Category = "Lambda") FString GetWeaponClassName() const { return WeaponInfo.ClassName; }
 	FString GetPrimaryAmmoType() const { return WeaponInfo.PrimaryAmmo; }

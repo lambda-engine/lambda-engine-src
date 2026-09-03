@@ -62,6 +62,10 @@ ASourceBSPWorldActor::ASourceBSPWorldActor()
 
 bool ASourceBSPWorldActor::LoadMap(const FString& MapName)
 {
+	// Whatever was stamped on the last map goes with it, so a save of this one cannot inherit a
+	// wall mark from somewhere else.
+	SourceImpact::ForgetWorldDecals();
+
 	FString Name = FLambdaFileSystem::NormalizeRelativePath(MapName);
 	if (Name.EndsWith(TEXT(".bsp"), ESearchCase::IgnoreCase))
 	{
@@ -385,11 +389,21 @@ AActor* ASourceBSPWorldActor::SpawnEntityFromKeyValues(const FSourceEntity& Enti
 		}
 		else if (ASourceItem::IsItemClass(Class))
 		{
-			SpawnItem(Entity);
+			// Kept in the spawn order so a save has somewhere to record it. An item the player picked up
+			// destroyed itself, and the empty slot is what tells the restore not to put it back.
+			if (ASourceItem* Item = SpawnItem(Entity); IsValid(Item))
+			{
+				SpawnedActors.Add(Item);
+			}
 		}
 		else if (ASourcePropPhysics::IsPropClass(Class))
 		{
-			SpawnPropPhysics(Entity);
+			// Only the map's own props. One spawned at runtime - a gib, or a prop something else made -
+			// has no place in the order, which has to mean the same thing on the next load of the map.
+			if (ASourcePropPhysics* Prop = SpawnPropPhysics(Entity); IsValid(Prop))
+			{
+				SpawnedActors.Add(Prop);
+			}
 		}
 		else if (FLambdaGameDll::Get().HandlesClass(Class))
 		{

@@ -9,11 +9,16 @@
 #include "Core/LambdaSourceSettings.h"
 #include "FileSystem/LambdaFileSystem.h"
 #include "World/SourceBSPWorldActor.h"
+#include "Materials/LambdaMaterialLibrary.h"
+#include "Rendering/SourceImpactEffects.h"
 #include "World/SourceEntity.h"
+#include "Entities/SourceItem.h"
+#include "Entities/SourcePropPhysics.h"
 #include "Creatures/SourceGameNPC.h"
 #include "Creatures/SourceNPCBase.h"
 #include "Entities/SourceGamePointEntity.h"
 #include "Entities/SourceGameEntity.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "GameMapsSettings.h"
 #include "HAL/FileManager.h"
 #include "Kismet/GameplayStatics.h"
@@ -38,6 +43,9 @@ namespace
 		float Armor = 0.0f;
 		bool bSuit = true;
 		TArray<FString> Weapons;
+		TArray<int32> Clips;		// parallel to Weapons; -1 where the save recorded none
+		bool bCrouched = false;
+		FVector Velocity = FVector::ZeroVector;
 		FString ActiveWeapon;
 		TMap<FString, int32> Ammo;
 	};
@@ -49,6 +57,12 @@ namespace
 	 *
 	 * One of these per saved entity, so keys are entity-local and two doors may both write "open".
 	 */
+	/** UE centimetres straight into a lambda::Vec3, for the velocities a prop is saved with. */
+	lambda::Vec3 ToLambda(const FVector& V)
+	{
+		return lambda::Vec3{ (float)V.X, (float)V.Y, (float)V.Z };
+	}
+
 	class FSaveStateKV : public lambda::ISaveState
 	{
 	public:
@@ -131,11 +145,13 @@ namespace
 		FVector3f Origin = FVector3f::ZeroVector;
 		FVector3f Angles = FVector3f::ZeroVector;
 		float Health = -1.0f;			// NPCs only; -1 means "not a thing with health"
+		bool bRemoved = false;			// the entity was gone when the save was taken
 		bool bDead = false;
 		FSaveStateKV Fields;			// whatever the entity's own behaviour wrote
 	};
 
 	TArray<FEntitySave> GPendingEntities;
+	TArray<SourceImpact::FDecalRecord> GPendingDecals;
 
 	FString CurrentMapName(UWorld* World)
 	{
@@ -187,7 +203,7 @@ bool FLambdaSaveGame::Save(UWorld* World, const FString& Name)
 	TArray<FString> Lines;
 	Lines.Add(TEXT("\"lambdasave\""));
 	Lines.Add(TEXT("{"));
-	Lines.Add(FString::Printf(TEXT("\t\"version\"\t\"1\"")));
+	Lines.Add(FString::Printf(TEXT("\t\"version\"\t\"2\"")));	// 2 records each weapon's magazine
 	Lines.Add(FString::Printf(TEXT("\t\"map\"\t\"%s\""), *Map));
 	Lines.Add(FString::Printf(TEXT("\t\"time\"\t\"%s\""), *FDateTime::Now().ToString()));
 	Lines.Add(FString::Printf(TEXT("\t\"origin\"\t\"%.2f %.2f %.2f\""), Pos.X, Pos.Y, Pos.Z));
@@ -195,7 +211,15 @@ bool FLambdaSaveGame::Save(UWorld* World, const FString& Name)
 	Lines.Add(FString::Printf(TEXT("\t\"health\"\t\"%.1f\""), Player->GetHealth()));
 	Lines.Add(FString::Printf(TEXT("\t\"armor\"\t\"%.1f\""), Player->GetArmor()));
 	Lines.Add(FString::Printf(TEXT("\t\"suit\"\t\"%d\""), Player->IsSuitEquipped() ? 1 : 0));
+	// Crouched, and how he was moving. A player saved ducked under something has to come back ducked,
+	// or he stands up inside it; one saved mid-fall who lands from a standstill lands somewhere else.
+	Lines.Add(FString::Printf(TEXT("\t\"crouched\"\t\"%d\""), Player->bIsCrouched ? 1 : 0));
+	const FVector PlayerVel = Player->GetVelocity();
+	Lines.Add(FString::Printf(TEXT("\t\"velocity\"\t\"%.2f %.2f %.2f\""), PlayerVel.X, PlayerVel.Y, PlayerVel.Z));
 
+	// A block per weapon, not just its name: the magazine is part of what the player had. Reserve ammo
+	// lives in its own pool and comes back from the ammo block, but rounds already in the gun belong
+	// to the gun - restoring only the pool gave every weapon whatever clip its script starts with.
 	Lines.Add(TEXT("\t\"weapons\""));
 	Lines.Add(TEXT("\t{"));
 	int32 Index = 0;
@@ -203,7 +227,11 @@ bool FLambdaSaveGame::Save(UWorld* World, const FString& Name)
 	{
 		if (Weapon)
 		{
-			Lines.Add(FString::Printf(TEXT("\t\t\"%d\"\t\"%s\""), Index++, *Weapon->GetWeaponClassName()));
+			Lines.Add(FString::Printf(TEXT("\t\t\"%d\""), Index++));
+			Lines.Add(TEXT("\t\t{"));
+			Lines.Add(FString::Printf(TEXT("\t\t\t\"class\"\t\"%s\""), *Weapon->GetWeaponClassName()));
+			Lines.Add(FString::Printf(TEXT("\t\t\t\"clip\"\t\"%d\""), Weapon->GetClip1()));
+			Lines.Add(TEXT("\t\t}"));
 		}
 	}
 	Lines.Add(TEXT("\t}"));
@@ -235,11 +263,20 @@ bool FLambdaSaveGame::Save(UWorld* World, const FString& Name)
 			AActor* Actor = BSP->SpawnedActors[i].Get();
 			if (!IsValid(Actor))
 			{
+				// Gone, and that is the fact worth saving. Skipping it was why dead enemies came back to
+				// life: a killed NPC is destroyed once its ragdoll takes over, so by save time its slot in
+				// the spawn order is empty - and an empty slot said nothing, so the reload rebuilt him from
+				// the BSP alive and well. An absence has to be written down as an absence.
+				Lines.Add(FString::Printf(TEXT("\t\t\"%d\""), i));
+				Lines.Add(TEXT("\t\t{"));
+				Lines.Add(TEXT("\t\t\t\"removed\"\t\"1\""));
+				Lines.Add(TEXT("\t\t}"));
 				continue;
 			}
 			FSaveStateKV Fields;
 			FString ClassName;
 			float EntHealth = -1.0f;
+			bool bEntDead = false;
 
 			if (ASourceGameEntity* GameEnt = Cast<ASourceGameEntity>(Actor))
 			{
@@ -255,10 +292,33 @@ bool FLambdaSaveGame::Save(UWorld* World, const FString& Name)
 			{
 				ClassName = NPC->GetSourceEntity().ClassName;
 				EntHealth = NPC->GetHealth();
+				// Asked outright rather than inferred from the health number: overkill leaves health
+				// negative, and a "write it only if >= 0" guard then wrote nothing at all - so a soldier
+				// shot to pieces looked like an entity with no health field, and came back alive.
+				bEntDead = !NPC->IsAlive();
 				if (ASourceGameNPC* GameNPC = Cast<ASourceGameNPC>(Actor))
 				{
 					if (GameNPC->GetBehaviour()) { GameNPC->GetBehaviour()->SaveState(Fields); }
 				}
+			}
+			else if (ASourcePropPhysics* Prop = Cast<ASourcePropPhysics>(Actor))
+			{
+				ClassName = Prop->GetSourceEntity().ClassName;
+				EntHealth = Prop->GetPropHealth();
+				// Where a prop has come to rest is only half of it. A crate still sliding when the save was
+				// taken has to go back sliding: put down motionless it would settle somewhere else than
+				// where the player last saw it heading.
+				if (const UPrimitiveComponent* Body = Prop->GetPhysicsBody())
+				{
+					Fields.WriteVec3("lambda_velocity", ToLambda(Body->GetPhysicsLinearVelocity()));
+					Fields.WriteVec3("lambda_angular", ToLambda(Body->GetPhysicsAngularVelocityInDegrees()));
+				}
+			}
+			else if (const ASourceItem* Item = Cast<ASourceItem>(Actor))
+			{
+				// Nothing about an item changes while it sits there - it is either still in the map or it
+				// was picked up, and being picked up destroys it, which the empty-slot case above records.
+				ClassName = Item->GetSourceEntity().ClassName;
 			}
 			else if (const ASourceEntity* Ent = Cast<ASourceEntity>(Actor))
 			{
@@ -276,7 +336,13 @@ bool FLambdaSaveGame::Save(UWorld* World, const FString& Name)
 			Lines.Add(FString::Printf(TEXT("\t\t\t\"classname\"\t\"%s\""), *ClassName));
 			Lines.Add(FString::Printf(TEXT("\t\t\t\"origin\"\t\"%.2f %.2f %.2f\""), EntOrigin.X, EntOrigin.Y, EntOrigin.Z));
 			Lines.Add(FString::Printf(TEXT("\t\t\t\"angles\"\t\"%.2f %.2f %.2f\""), EntAngles.X, EntAngles.Y, EntAngles.Z));
-			if (EntHealth >= 0.0f)
+			if (bEntDead)
+			{
+				// A corpse still in the spawn list is as good as gone: the body itself was a runtime
+				// ragdoll and is not in the save, so an empty spot is the honest restore.
+				Lines.Add(TEXT("\t\t\t\"removed\"\t\"1\""));
+			}
+			else if (EntHealth > 0.0f)
 			{
 				Lines.Add(FString::Printf(TEXT("\t\t\t\"health\"\t\"%.1f\""), EntHealth));
 			}
@@ -284,6 +350,26 @@ bool FLambdaSaveGame::Save(UWorld* World, const FString& Name)
 			{
 				Lines.Add(FString::Printf(TEXT("\t\t\t\"%s\"\t\"%s\""), *Pair.Key, *Pair.Value));
 			}
+			Lines.Add(TEXT("\t\t}"));
+		}
+		Lines.Add(TEXT("\t}"));
+
+		// Decals. Written in Unreal's own centimetres and rotation rather than Source units: a decal is not a
+		// Source entity, it is a thing the renderer was handed, and converting it twice would only lose
+		// precision on a value nothing else ever reads.
+		const TArray<SourceImpact::FDecalRecord> Decals = SourceImpact::CollectWorldDecals(World);
+		Lines.Add(TEXT("\t\"decals\""));
+		Lines.Add(TEXT("\t{"));
+		for (int32 d = 0; d < Decals.Num(); ++d)
+		{
+			const SourceImpact::FDecalRecord& R = Decals[d];
+			Lines.Add(FString::Printf(TEXT("\t\t\"%d\""), d));
+			Lines.Add(TEXT("\t\t{"));
+			Lines.Add(FString::Printf(TEXT("\t\t\t\"material\"\t\"%s\""), *R.Material));
+			Lines.Add(FString::Printf(TEXT("\t\t\t\"pos\"\t\"%.2f %.2f %.2f\""), R.Location.X, R.Location.Y, R.Location.Z));
+			Lines.Add(FString::Printf(TEXT("\t\t\t\"rot\"\t\"%.2f %.2f %.2f\""), R.Rotation.Pitch, R.Rotation.Yaw, R.Rotation.Roll));
+			Lines.Add(FString::Printf(TEXT("\t\t\t\"size\"\t\"%.2f %.2f %.2f\""), R.Size.X, R.Size.Y, R.Size.Z));
+			Lines.Add(FString::Printf(TEXT("\t\t\t\"life\"\t\"%.2f\""), R.SecondsLeft));
 			Lines.Add(TEXT("\t\t}"));
 		}
 		Lines.Add(TEXT("\t}"));
@@ -337,14 +423,33 @@ bool FLambdaSaveGame::Load(UWorld* World, const FString& Name)
 	GPending.Health = Root.GetFloat(TEXT("health"), 100.0f);
 	GPending.Armor = Root.GetFloat(TEXT("armor"), 0.0f);
 	GPending.bSuit = Root.GetInt(TEXT("suit"), 1) != 0;
+	GPending.bCrouched = Root.GetInt(TEXT("crouched"), 0) != 0;
+	FVector3f LoadedVel = FVector3f::ZeroVector;
+	if (FSourceCoords::ParseVector(Root.GetString(TEXT("velocity")), LoadedVel))
+	{
+		GPending.Velocity = FVector(LoadedVel.X, LoadedVel.Y, LoadedVel.Z);
+	}
 	GPending.ActiveWeapon = Root.GetString(TEXT("activeweapon"));
 	if (const FSourceKeyValues* WeaponBlock = Root.FindChild(TEXT("weapons")))
 	{
 		for (const FSourceKeyValues& Child : WeaponBlock->Children)
 		{
-			if (!Child.Value.IsEmpty())
+			if (Child.IsSection())
 			{
+				const FString Class = Child.GetString(TEXT("class"));
+				if (!Class.IsEmpty())
+				{
+					GPending.Weapons.Add(Class);
+					// -1 means the save did not say, which is how a version 1 save reads: leave whatever the
+					// weapon script hands out rather than emptying the gun.
+					GPending.Clips.Add(Child.GetInt(TEXT("clip"), -1));
+				}
+			}
+			else if (!Child.Value.IsEmpty())
+			{
+				// Version 1: a bare class name per line, with no magazine recorded.
 				GPending.Weapons.Add(Child.Value);
+				GPending.Clips.Add(-1);
 			}
 		}
 	}
@@ -374,6 +479,7 @@ bool FLambdaSaveGame::Load(UWorld* World, const FString& Name)
 				else if (Field.Key.Equals(TEXT("origin"), ESearchCase::IgnoreCase)) { FSourceCoords::ParseVector(Field.Value, Ent.Origin); }
 				else if (Field.Key.Equals(TEXT("angles"), ESearchCase::IgnoreCase)) { FSourceCoords::ParseVector(Field.Value, Ent.Angles); }
 				else if (Field.Key.Equals(TEXT("health"), ESearchCase::IgnoreCase)) { Ent.Health = FCString::Atof(*Field.Value); }
+				else if (Field.Key.Equals(TEXT("removed"), ESearchCase::IgnoreCase)) { Ent.bRemoved = FCString::Atoi(*Field.Value) != 0; }
 				else
 				{
 					// Anything else belongs to the entity's own behaviour; it knows what its keys mean.
@@ -381,6 +487,29 @@ bool FLambdaSaveGame::Load(UWorld* World, const FString& Name)
 				}
 			}
 			GPendingEntities.Add(MoveTemp(Ent));
+		}
+	}
+
+	GPendingDecals.Reset();
+	if (const FSourceKeyValues* DecalBlock = Root.FindChild(TEXT("decals")))
+	{
+		for (const FSourceKeyValues& Child : DecalBlock->Children)
+		{
+			if (!Child.IsSection())
+			{
+				continue;
+			}
+			SourceImpact::FDecalRecord R;
+			R.Material = Child.GetString(TEXT("material"));
+			FVector3f Parsed = FVector3f::ZeroVector;
+			if (FSourceCoords::ParseVector(Child.GetString(TEXT("pos")), Parsed)) { R.Location = FVector(Parsed.X, Parsed.Y, Parsed.Z); }
+			if (FSourceCoords::ParseVector(Child.GetString(TEXT("rot")), Parsed)) { R.Rotation = FRotator(Parsed.X, Parsed.Y, Parsed.Z); }
+			if (FSourceCoords::ParseVector(Child.GetString(TEXT("size")), Parsed)) { R.Size = FVector(Parsed.X, Parsed.Y, Parsed.Z); }
+			R.SecondsLeft = Child.GetFloat(TEXT("life"), 10.0f);
+			if (!R.Material.IsEmpty())
+			{
+				GPendingDecals.Add(MoveTemp(R));
+			}
 		}
 	}
 
@@ -396,7 +525,7 @@ bool FLambdaSaveGame::Load(UWorld* World, const FString& Name)
 
 void FLambdaSaveGame::ApplyPendingWorldRestore(ASourceBSPWorldActor* WorldActor)
 {
-	if (GPendingEntities.Num() == 0 || !WorldActor)
+	if ((GPendingEntities.Num() == 0 && GPendingDecals.Num() == 0) || !WorldActor)
 	{
 		return;
 	}
@@ -418,11 +547,22 @@ void FLambdaSaveGame::ApplyPendingWorldRestore(ASourceBSPWorldActor* WorldActor)
 			continue;
 		}
 
+		// Recorded as gone: take it out again. Done before the classname check, because a removed slot
+		// carries no classname to compare - only the fact that whatever was there is no longer.
+		if (Ent.bRemoved)
+		{
+			Actor->Destroy();
+			++Removed;
+			continue;
+		}
+
 		// The spawn order is stable for a given BSP, but a recompiled map can reorder it. Checking the
 		// classname turns "the map changed" from a corrupted restore into a skipped entity.
 		FString ActualClass;
 		if (const ASourceEntity* AsEnt = Cast<ASourceEntity>(Actor)) { ActualClass = AsEnt->GetEntity().ClassName; }
 		else if (const ASourceNPCBase* AsNPC = Cast<ASourceNPCBase>(Actor)) { ActualClass = AsNPC->GetSourceEntity().ClassName; }
+		else if (const ASourcePropPhysics* AsProp = Cast<ASourcePropPhysics>(Actor)) { ActualClass = AsProp->GetSourceEntity().ClassName; }
+		else if (const ASourceItem* AsItem = Cast<ASourceItem>(Actor)) { ActualClass = AsItem->GetSourceEntity().ClassName; }
 		if (!ActualClass.Equals(Ent.ClassName, ESearchCase::IgnoreCase))
 		{
 			UE_LOG(LogLambda, Verbose, TEXT("restore: entity %d is '%s', save says '%s' - skipped"),
@@ -435,12 +575,6 @@ void FLambdaSaveGame::ApplyPendingWorldRestore(ASourceBSPWorldActor* WorldActor)
 		// worse than the room simply being empty where he fell.
 		if (ASourceNPCBase* NPC = Cast<ASourceNPCBase>(Actor))
 		{
-			if (Ent.Health >= 0.0f && Ent.Health <= 0.0f)
-			{
-				Actor->Destroy();
-				++Removed;
-				continue;
-			}
 			if (Ent.Health > 0.0f)
 			{
 				NPC->SetHealth(Ent.Health);
@@ -449,6 +583,23 @@ void FLambdaSaveGame::ApplyPendingWorldRestore(ASourceBSPWorldActor* WorldActor)
 
 		Actor->SetActorLocation(FSourceCoords::ToUE(Ent.Origin, Scale), false, nullptr, ETeleportType::TeleportPhysics);
 		Actor->SetActorRotation(FSourceCoords::AnglesToUE(Ent.Angles));
+
+		if (ASourcePropPhysics* Prop = Cast<ASourcePropPhysics>(Actor))
+		{
+			if (Ent.Health > 0.0f)
+			{
+				Prop->SetPropHealth(Ent.Health);
+			}
+			// After the transform, or the body would be moved with the old velocity still on it.
+			if (UPrimitiveComponent* Body = Prop->GetPhysicsBody())
+			{
+				const lambda::Vec3 Zero{ 0.0f, 0.0f, 0.0f };
+				const lambda::Vec3 V = Ent.Fields.ReadVec3("lambda_velocity", Zero);
+				const lambda::Vec3 W = Ent.Fields.ReadVec3("lambda_angular", Zero);
+				Body->SetPhysicsLinearVelocity(FVector(V.x, V.y, V.z));
+				Body->SetPhysicsAngularVelocityInDegrees(FVector(W.x, W.y, W.z));
+			}
+		}
 
 		// And whatever the entity's own behaviour wrote down about itself.
 		lambda::IEntity* Behaviour = nullptr;
@@ -461,7 +612,20 @@ void FLambdaSaveGame::ApplyPendingWorldRestore(ASourceBSPWorldActor* WorldActor)
 		}
 		++Restored;
 	}
-	UE_LOG(LogLambda, Log, TEXT("restored %d entities, removed %d that were dead"), Restored, Removed);
+	// Decals go back last, once the world they are stuck to exists.
+	int32 DecalsBack = 0;
+	if (GPendingDecals.Num() > 0)
+	{
+		SourceImpact::ForgetWorldDecals();
+		for (const SourceImpact::FDecalRecord& R : GPendingDecals)
+		{
+			SourceImpact::RestoreWorldDecal(WorldActor->GetWorld(), WorldActor->MaterialLibrary, R);
+			++DecalsBack;
+		}
+		GPendingDecals.Reset();
+	}
+	UE_LOG(LogLambda, Log, TEXT("restored %d entities, removed %d that were dead, %d decals"),
+		Restored, Removed, DecalsBack);
 }
 
 void FLambdaSaveGame::ApplyPendingRestore(ALambdaCharacter* Player)
@@ -479,7 +643,15 @@ void FLambdaSaveGame::ApplyPendingRestore(ALambdaCharacter* Player)
 		PC->SetControlRotation(Restore.Angles);
 	}
 	Player->RestoreSavedState(Restore.Health, Restore.Armor, Restore.bSuit,
-		Restore.Weapons, Restore.ActiveWeapon, Restore.Ammo);
+		Restore.Weapons, Restore.Clips, Restore.ActiveWeapon, Restore.Ammo);
+	if (Restore.bCrouched)
+	{
+		Player->Crouch();
+	}
+	if (UCharacterMovementComponent* Movement = Player->GetCharacterMovement())
+	{
+		Movement->Velocity = Restore.Velocity;
+	}
 	UE_LOG(LogLambda, Log, TEXT("restored player: %.0f health, %.0f armour, %d weapons"),
 		Restore.Health, Restore.Armor, Restore.Weapons.Num());
 }

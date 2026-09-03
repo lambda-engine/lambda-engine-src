@@ -112,6 +112,14 @@ static FAutoConsoleVariableRef CVarWalkAuto(
 
 // hurt.auto "<amount> [type] [delay_s]" hurts the player on a timer, so the suit's reaction and the HUD's
 // damage icons can be seen without anything pressing a key.
+// save.auto "<name> [delay_s]" writes a save a set number of seconds in, so a scripted run can save a state
+// it had to play its way into - a partial magazine, a dead enemy - which +save at map load cannot.
+static FString GSaveAuto;
+static FAutoConsoleVariableRef CVarSaveAuto(
+	TEXT("save.auto"),
+	GSaveAuto,
+	TEXT("\"<name> [delay_s]\": write a save that many seconds after spawn"));
+
 static FString GHurtAuto;
 static FAutoConsoleVariableRef CVarHurtAuto(
 	TEXT("hurt.auto"),
@@ -1270,6 +1278,18 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 				AutoThirdPersonDelay = FMath::Max(0.01f, Parts.Num() > 0 ? FCString::Atof(*Parts[0]) : 4.0f);
 				AutoFirstPersonDelay = Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : 0.0f;
 			}
+			if (!GSaveAuto.IsEmpty())
+			{
+				TArray<FString> Parts;
+				GSaveAuto.ParseIntoArrayWS(Parts);
+				const FString SaveName = Parts.Num() > 0 ? Parts[0] : TEXT("quick");
+				const float Delay = Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : 5.0f;
+				FTimerHandle Handle;
+				GetWorldTimerManager().SetTimer(Handle, FTimerDelegate::CreateLambda([this, SaveName]()
+				{
+					FLambdaSaveGame::Save(GetWorld(), SaveName);
+				}), FMath::Max(0.01f, Delay), false);
+			}
 			if (!GHurtAuto.IsEmpty())
 			{
 				TArray<FString> Parts;
@@ -1681,7 +1701,8 @@ ALambdaWeapon* ALambdaCharacter::GiveWeapon(const FString& WeaponClassName)
 
 
 void ALambdaCharacter::RestoreSavedState(float InHealth, float InArmor, bool bInSuit,
-	const TArray<FString>& InWeapons, const FString& InActiveWeapon, const TMap<FString, int32>& InAmmo)
+	const TArray<FString>& InWeapons, const TArray<int32>& InClips, const FString& InActiveWeapon,
+	const TMap<FString, int32>& InAmmo)
 {
 	Health = InHealth;
 	Armor = InArmor;
@@ -1702,9 +1723,15 @@ void ALambdaCharacter::RestoreSavedState(float InHealth, float InArmor, bool bIn
 	SelectionIndex = INDEX_NONE;
 	AmmoCounts.Reset();
 
-	for (const FString& ClassName : InWeapons)
+	for (int32 i = 0; i < InWeapons.Num(); ++i)
 	{
-		GiveWeapon(ClassName);
+		ALambdaWeapon* Given = GiveWeapon(InWeapons[i]);
+		// The magazine the player actually had. GiveWeapon fills it to whatever the weapon script starts
+		// with, which is right for a pickup and wrong for a load - he had fired some of it.
+		if (Given && InClips.IsValidIndex(i) && InClips[i] >= 0)
+		{
+			Given->SetClip1(InClips[i]);
+		}
 	}
 	// After the weapons, because GiveWeapon's own script may hand out a starting magazine.
 	AmmoCounts = InAmmo;
