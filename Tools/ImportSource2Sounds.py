@@ -18,6 +18,10 @@ The converted waves land in <moddir>/sound/<prefix>/<original path>.wav; put the
 one in scripts/game_sounds_manifest.txt - the first definition of a name wins, as in CSoundEmitterSystemBase.
 Only events with vsnd files are written; "hlvr_start_multi" events (several events played at once) are flattened to
 their first child unless mapped to a specific one.
+
+HL:A's explosions are layered: an "hlvr_explosions" event carries vsnd_files_mid, _mech, _lfe and _distant lists
+(the body, the transient, the bass, and what plays far away) that the game mixes by distance. Source 1 plays one
+wave, so --mix-layers mid,mech,lfe sums the named layers, take for take, into one wave per take.
 """
 import argparse
 import os
@@ -48,32 +52,43 @@ def parse_kv3_events(text):
     for m in block.finditer(text):
         name, body = m.group(1), m.group(2)
         ev = {}
-        files = re.search(r'vsnd_files\s*=\s*\[(.*?)\]', body, re.S)
-        ev['vsnd_files'] = re.findall(r'"([^"]+)"', files.group(1)) if files else []
+        ev['vsnd_files'] = []
+        for list_name, items in re.findall(r'(vsnd_files(?:_[a-z]+)?)\s*=\s*\[(.*?)\]', body, re.S):
+            ev[list_name] = re.findall(r'"([^"]+)"', items)
         for k, v in re.findall(r'^\t\t([A-Za-z0-9_]+)\s*=\s*([^\n\[]+?)\s*$', body, re.M):
-            if k == 'vsnd_files':
+            if k.startswith('vsnd_files'):
                 continue
             ev[k] = v.strip().strip('"')
         events[name] = ev
     return events
 
 
-def resolve_files(events, name, depth=0):
-    """The vsnd list of an event, following hlvr_start_multi / soundevent_01 chains to the first child with files."""
+def resolve_files(events, name, layers=None, depth=0):
+    """
+    The vsnd list of an event, following hlvr_start_multi / soundevent_01 chains to the first child with files.
+    With layers (e.g. ['mid', 'mech', 'lfe']) a layered event yields one tuple per take, a file from each layer
+    that has one (shorter layers repeat), for the caller to mix.
+    """
     ev = events.get(name)
     if not ev or depth > 4:
         return None, []
     if ev['vsnd_files']:
         return ev, ev['vsnd_files']
+    if layers:
+        lists = [ev.get('vsnd_files_' + layer, []) for layer in layers]
+        lists = [l for l in lists if l]
+        if lists:
+            takes = max(len(l) for l in lists)
+            return ev, [tuple(l[i % len(l)] for l in lists) for i in range(takes)]
     for key in sorted(k for k in ev if re.match(r'soundevent(_\d+)?$', k)):
-        child, files = resolve_files(events, ev[key], depth + 1)
+        child, files = resolve_files(events, ev[key], layers, depth + 1)
         if files:
             return child, files
     return ev, []
 
 
-def to_mono16(src, dst):
-    """Rewrites a PCM wav as 16-bit mono at its own sample rate (Source 1 spatialises mono only)."""
+def read_mono16(src):
+    """A PCM wav as (rate, 16-bit mono samples) - Source 1 spatialises mono only."""
     with wave.open(src, 'rb') as w:
         ch, sw, rate, n = w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes()
         raw = w.readframes(n)
@@ -90,13 +105,48 @@ def to_mono16(src, dst):
         raise RuntimeError(f'{src}: unsupported sample width {sw}')
     if ch > 1:
         samples = [max(-32768, min(32767, sum(samples[i:i + ch]) // ch)) for i in range(0, len(samples), ch)]
+    return rate, samples
+
+
+def write_mono16(dst, rate, samples):
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     with wave.open(dst, 'wb') as w:
         w.setnchannels(1)
         w.setsampwidth(2)
         w.setframerate(rate)
         w.writeframes(struct.pack('<%dh' % len(samples), *samples))
-    return rate, n / float(rate)
+    return rate, len(samples) / float(rate)
+
+
+def to_mono16(src, dst):
+    """Rewrites a PCM wav as 16-bit mono at its own sample rate."""
+    rate, samples = read_mono16(src)
+    return write_mono16(dst, rate, samples)
+
+
+def mix_mono16(srcs, dst):
+    """
+    Sums several wavs into one mono 16-bit wav. The layers of an HL:A explosion are mixed at unity, the way the
+    game plays them up close; the sum is only scaled down when it would clip.
+    """
+    rate = None
+    mixed = []
+    for src in srcs:
+        r, samples = read_mono16(src)
+        if rate is None:
+            rate = r
+        elif r != rate:
+            # A rare mismatch: resample by nearest neighbour rather than fail the whole sound.
+            samples = [samples[min(len(samples) - 1, int(i * r / rate))] for i in range(int(len(samples) * rate / r))]
+        if len(samples) > len(mixed):
+            mixed.extend([0] * (len(samples) - len(mixed)))
+        for i, s in enumerate(samples):
+            mixed[i] += s
+    peak = max(1, max(abs(s) for s in mixed))
+    if peak > 32767:
+        scale = 32767.0 / peak
+        mixed = [int(s * scale) for s in mixed]
+    return write_mono16(dst, rate, mixed)
 
 
 def pitch_range(ev):
@@ -129,6 +179,7 @@ def main():
     ap.add_argument('--channel', default='CHAN_VOICE', help='channel for every entry (NPC vocals are CHAN_VOICE)')
     ap.add_argument('--soundlevel', default='SNDLVL_IDLE', help='soundlevel for every entry (HL:A falloffs do not map 1:1)')
     ap.add_argument('--only-mapped', action='store_true', help='write only the --map entries, not every event in the file')
+    ap.add_argument('--mix-layers', default='', help='"mid,mech,lfe": mix these layers of a layered (hlvr_explosions) event into one wave per take')
     args = ap.parse_args()
 
     text = run_vrf(args.vrf, ['-i', args.pak, '--vpk_filepath', args.events, '-b', 'DATA'])
@@ -156,25 +207,54 @@ def main():
              '// Listed before the stock script in game_sounds_manifest.txt these names win (first definition wins).',
              '']
     written = 0
+    layers = [l.strip() for l in args.mix_layers.split(',') if l.strip()]
+
+    def decode(vsnd):
+        """The decoded .wav of a .vsnd in the temp dir, decoding it on first use; None when VRF has nothing."""
+        src_wav = os.path.join(tmp, vsnd.replace('.vsnd', '.wav'))
+        if not os.path.exists(src_wav):
+            run_vrf(args.vrf, ['-i', args.pak, '-f', vsnd + '_c', '-d', '-o', tmp])
+        if not os.path.exists(src_wav):
+            print(f'  missing {vsnd}')
+            return None
+        return src_wav
+
+    def relative_name(vsnd):
+        rel = vsnd[:-len('.vsnd')] if vsnd.endswith('.vsnd') else vsnd
+        return rel[len('sounds/'):] if rel.startswith('sounds/') else rel
+
     for script_name, event_name in wanted:
-        ev, files = resolve_files(events, event_name)
+        ev, files = resolve_files(events, event_name, layers)
         if not files:
             print(f'  skip {script_name}: {event_name} has no wave files')
             continue
         waves = []
-        for vsnd in files:
-            rel = vsnd[:-len('.vsnd')] if vsnd.endswith('.vsnd') else vsnd
-            rel = rel[len('sounds/'):] if rel.startswith('sounds/') else rel
-            out_wav = os.path.join(args.out, 'sound', args.prefix, rel + '.wav')
-            if vsnd not in decoded:
-                decoded.add(vsnd)
-                src_wav = os.path.join(tmp, vsnd.replace('.vsnd', '.wav'))
-                if not os.path.exists(src_wav):
-                    run_vrf(args.vrf, ['-i', args.pak, '-f', vsnd + '_c', '-d', '-o', tmp])
-                if not os.path.exists(src_wav):
-                    print(f'  missing {vsnd}')
-                    continue
-                rate, secs = to_mono16(src_wav, out_wav)
+        for take in files:
+            if isinstance(take, tuple):
+                # A layered take is named for what its layers' names share, plus the take number:
+                # wpn_grenade_explo_digital_01 + _head_01 + _boom_01 -> wpn_grenade_explo_01.
+                names = [relative_name(v) for v in take]
+                number = re.search(r'_\d+$', names[0])
+                prefix = os.path.commonprefix(names).rstrip('_')
+                rel = prefix + number.group(0) if prefix and number else names[0]
+                out_wav = os.path.join(args.out, 'sound', args.prefix, rel + '.wav')
+                key = '+'.join(take)
+                if key not in decoded:
+                    decoded.add(key)
+                    srcs = [decode(v) for v in take]
+                    if any(s is None for s in srcs):
+                        continue
+                    mix_mono16(srcs, out_wav)
+            else:
+                vsnd = take
+                rel = relative_name(vsnd)
+                out_wav = os.path.join(args.out, 'sound', args.prefix, rel + '.wav')
+                if vsnd not in decoded:
+                    decoded.add(vsnd)
+                    src_wav = decode(vsnd)
+                    if src_wav is None:
+                        continue
+                    to_mono16(src_wav, out_wav)
             waves.append(f'{args.prefix}/{rel}.wav')
         if not waves:
             continue

@@ -135,6 +135,8 @@ public:
 	AActor* NPCCreate(const FString& ClassName, float MaxDistanceCm = 5000.0f);
 	/** prop_physics_create: drops a physics prop of that model where the player is looking. */
 	AActor* PropCreate(const FString& ModelPath, float MaxDistanceCm = 5000.0f);
+	/** DispatchParticleEffect from the console: starts a particle system where the player is looking. */
+	AActor* ParticleCreate(const FString& EffectName, float MaxDistanceCm = 5000.0f);
 
 	/** The material library the loaded map built, used to resolve $surfaceprop at a bullet impact. */
 	ULambdaMaterialLibrary* GetWorldMaterialLibrary() const;
@@ -370,6 +372,7 @@ protected:
 	float AutoSpawnDelay = 0.0f;
 	FString PendingNPCCreate;
 	FString PendingPropCreate;
+	FString PendingParticleCreate;
 	/** slot.auto state. */
 	int32 AutoSlotBucket = 0;
 	float AutoSlotDelay = 0.0f;

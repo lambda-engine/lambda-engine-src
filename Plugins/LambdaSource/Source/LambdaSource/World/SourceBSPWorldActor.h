@@ -144,6 +144,8 @@ private:
 	void SpawnPointLight(const FSourceEntity& Entity);
 	/** A point entity the game module implements that needs nothing built for it - logic_relay and its kind. */
 	AActor* SpawnGamePointEntity(const FSourceEntity& Entity);
+	/** env_particles / info_particle_system: a particle system placed in the map. */
+	AActor* SpawnEnvParticles(const FSourceEntity& Entity);
 	void SpawnSpotLight(const FSourceEntity& Entity);
 	void SpawnEnvironmentLight(const FSourceEntity& Entity);
 	void SpawnAmbientFill(const FLinearColor& Color, float Intensity);

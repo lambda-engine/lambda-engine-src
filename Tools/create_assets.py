@@ -5,6 +5,9 @@ Creates the editor-side assets the Lambda Engine runtime expects:
   * /LambdaSource/Materials/M_LambdaDecalPBR - deferred decal master for decals with authored normal/height/AO
   * /LambdaSource/Materials/M_LambdaSprite - unlit additive master for effect sprites
   * /LambdaSource/Materials/M_LambdaSpriteNoZ - the same, depth test off, for Source's "$ignorez" sprites
+  * /LambdaSource/Materials/M_LambdaSpriteTranslucent - alpha-blended, vertex-coloured, for "$translucent" sprites
+  * /LambdaSource/Materials/M_LambdaSpriteAdditiveMasked - additive through the texture's alpha (SpriteCard "$additive")
+  * /LambdaSource/Materials/M_LambdaSpriteDual / M_LambdaSpriteDualAdditive - "$dualsequence" particle sprites
   * /Game/LambdaEngine/Maps/LambdaEntry    - empty startup level
 
 Run via Tools/CreateAssets.bat (UnrealEditor-Cmd -run=pythonscript) or from the editor's Python console.
@@ -18,6 +21,9 @@ DECAL_PBR_NAME = 'M_LambdaDecalPBR'
 SPRITE_NAME = 'M_LambdaSprite'
 SPRITE_NOZ_NAME = 'M_LambdaSpriteNoZ'
 SPRITE_TRANSLUCENT_NAME = 'M_LambdaSpriteTranslucent'
+SPRITE_ADDITIVE_MASKED_NAME = 'M_LambdaSpriteAdditiveMasked'
+SPRITE_DUAL_NAME = 'M_LambdaSpriteDual'
+SPRITE_DUAL_ADDITIVE_NAME = 'M_LambdaSpriteDualAdditive'
 MODEL_NAME = 'M_LambdaModel'
 MODEL_TRANSLUCENT_NAME = 'M_LambdaModelTranslucent'
 MODEL_MASKED_NAME = 'M_LambdaModelMasked'
@@ -639,7 +645,7 @@ def ensure_decal_pbr_material():
     return material
 
 
-def build_sprite_material(name, ignore_z, translucent=False):
+def build_sprite_material(name, ignore_z, translucent=False, alpha_masked=False, dual=False):
     # Unlit additive master for Source's UnlitGeneric "$additive 1" effect sprites.
     #
     # Source's flash VMTs also set "$vertexcolor 1", and the first-person ones set "$ignorez 1" so the flash draws
@@ -657,7 +663,9 @@ def build_sprite_material(name, ignore_z, translucent=False):
 
     material.set_editor_property('material_domain', unreal.MaterialDomain.MD_SURFACE)
     material.set_editor_property('shading_model', unreal.MaterialShadingModel.MSM_UNLIT)
-    material.set_editor_property('blend_mode', unreal.BlendMode.BLEND_TRANSLUCENT if translucent else unreal.BlendMode.BLEND_ADDITIVE)
+    # Alpha-blended sprites composite premultiplied (ONE : INV_SRC_ALPHA, as SpriteCard blends), which lets the
+    # "$addself" self-add below glow on top of the alpha blend.
+    material.set_editor_property('blend_mode', unreal.BlendMode.BLEND_ALPHA_COMPOSITE if translucent else unreal.BlendMode.BLEND_ADDITIVE)
     material.set_editor_property('two_sided', True)
     if ignore_z:
         try:
@@ -667,11 +675,22 @@ def build_sprite_material(name, ignore_z, translucent=False):
 
     mel = unreal.MaterialEditingLibrary
 
-    tex_param = mel.create_material_expression(material, unreal.MaterialExpressionTextureSampleParameter2D, -700, 0)
-    tex_param.set_editor_property('parameter_name', 'BaseTexture')
     default_tex = unreal.load_asset('/Engine/EngineResources/DefaultTexture')
-    if default_tex:
-        tex_param.set_editor_property('texture', default_tex)
+    tex_object = None
+    if dual:
+        # The sheet is sampled twice (two sequences), so the parameter is a texture object feeding two plain
+        # samplers; two sampler parameters of the same name are not one parameter to the instance.
+        tex_object = mel.create_material_expression(material, unreal.MaterialExpressionTextureObjectParameter, -900, -100)
+        tex_object.set_editor_property('parameter_name', 'BaseTexture')
+        if default_tex:
+            tex_object.set_editor_property('texture', default_tex)
+        tex_param = mel.create_material_expression(material, unreal.MaterialExpressionTextureSample, -700, 0)
+        connect_any(tex_object, '', tex_param, ['TextureObject', 'Tex'])
+    else:
+        tex_param = mel.create_material_expression(material, unreal.MaterialExpressionTextureSampleParameter2D, -700, 0)
+        tex_param.set_editor_property('parameter_name', 'BaseTexture')
+        if default_tex:
+            tex_param.set_editor_property('texture', default_tex)
 
     # A Tint parameter on the instance colours a whole effect (the muzzle flash); "$vertexcolor 1" / "$vertexalpha 1"
     # particles carry their own ramp in the vertex colour, multiplied in below.
@@ -680,8 +699,8 @@ def build_sprite_material(name, ignore_z, translucent=False):
     tint.set_editor_property('default_value', unreal.LinearColor(1.0, 1.0, 1.0, 1.0))
 
     tinted = mel.create_material_expression(material, unreal.MaterialExpressionMultiply, -420, 60)
-    connect(tex_param, 'RGB', tinted, 'A')
     connect(tint, 'RGB', tinted, 'B')
+    # Its A input is the base colour, connected below once the dual-sequence combine (if any) exists.
 
     # "$vertexcolor 1" / "$vertexalpha 1": particles carry their colour ramp in the vertex colour. Every output of
     # MaterialExpressionVertexColor is named "", and "" resolves to output 0 - the float3 RGB - so the alpha output
@@ -716,6 +735,69 @@ def build_sprite_material(name, ignore_z, translucent=False):
     connect(uv_offset, '', uv_add, 'B')
     connect(uv_add, '', tex_param, 'UVs')
 
+    # The base colour and alpha the rest of the graph uses: the texture as it is, or for a "$dualsequence 1"
+    # material two samples of the sheet (the second frame's rectangle arrives in UV2) combined the way
+    # SpriteCard's $sequence_blend_mode says: 0 averages them, 1 takes the RGB of the second under the alpha of
+    # the first (the flames of Half-Life 2's explosions ride on their smoke puffs), 2 lays the second over the
+    # first by its own alpha. The scalar parameters SequenceAverage / SequenceOver pick the mode, so one master
+    # serves all three.
+    base_rgb, base_rgb_out = tex_param, 'RGB'
+    base_a, base_a_out = tex_param, 'A'
+    if dual:
+        uv2 = mel.create_material_expression(material, unreal.MaterialExpressionTextureCoordinate, -1100, -200)
+        uv2.set_editor_property('coordinate_index', 2)
+        uv2_mul = mel.create_material_expression(material, unreal.MaterialExpressionMultiply, -860, -160)
+        connect(uv2, '', uv2_mul, 'A')
+        connect(uv_scale, '', uv2_mul, 'B')
+        uv2_add = mel.create_material_expression(material, unreal.MaterialExpressionAdd, -780, -160)
+        connect(uv2_mul, '', uv2_add, 'A')
+        connect(uv_offset, '', uv2_add, 'B')
+        tex2 = mel.create_material_expression(material, unreal.MaterialExpressionTextureSample, -700, -220)
+        connect_any(tex_object, '', tex2, ['TextureObject', 'Tex'])
+        connect(uv2_add, '', tex2, 'UVs')
+
+        seq_average = mel.create_material_expression(material, unreal.MaterialExpressionScalarParameter, -700, -400)
+        seq_average.set_editor_property('parameter_name', 'SequenceAverage')
+        seq_average.set_editor_property('default_value', 0.0)
+        seq_over = mel.create_material_expression(material, unreal.MaterialExpressionScalarParameter, -700, -340)
+        seq_over.set_editor_property('parameter_name', 'SequenceOver')
+        seq_over.set_editor_property('default_value', 0.0)
+        half = mel.create_material_expression(material, unreal.MaterialExpressionConstant, -700, -280)
+        half.set_editor_property('r', 0.5)
+
+        rgb_sum = mel.create_material_expression(material, unreal.MaterialExpressionAdd, -560, -400)
+        connect(tex_param, 'RGB', rgb_sum, 'A')
+        connect(tex2, 'RGB', rgb_sum, 'B')
+        rgb_avg = mel.create_material_expression(material, unreal.MaterialExpressionMultiply, -480, -400)
+        connect(rgb_sum, '', rgb_avg, 'A')
+        connect(half, '', rgb_avg, 'B')
+        rgb_over = mel.create_material_expression(material, unreal.MaterialExpressionLinearInterpolate, -560, -300)
+        connect(tex_param, 'RGB', rgb_over, 'A')
+        connect(tex2, 'RGB', rgb_over, 'B')
+        connect(tex2, 'A', rgb_over, 'Alpha')
+        rgb_mode1 = mel.create_material_expression(material, unreal.MaterialExpressionLinearInterpolate, -400, -360)
+        connect(tex2, 'RGB', rgb_mode1, 'A')
+        connect(rgb_avg, '', rgb_mode1, 'B')
+        connect(seq_average, '', rgb_mode1, 'Alpha')
+        rgb_final = mel.create_material_expression(material, unreal.MaterialExpressionLinearInterpolate, -320, -320)
+        connect(rgb_mode1, '', rgb_final, 'A')
+        connect(rgb_over, '', rgb_final, 'B')
+        connect(seq_over, '', rgb_final, 'Alpha')
+
+        a_sum = mel.create_material_expression(material, unreal.MaterialExpressionAdd, -560, -200)
+        connect(tex_param, 'A', a_sum, 'A')
+        connect(tex2, 'A', a_sum, 'B')
+        a_avg = mel.create_material_expression(material, unreal.MaterialExpressionMultiply, -480, -200)
+        connect(a_sum, '', a_avg, 'A')
+        connect(half, '', a_avg, 'B')
+        a_final = mel.create_material_expression(material, unreal.MaterialExpressionLinearInterpolate, -400, -220)
+        connect(tex_param, 'A', a_final, 'A')
+        connect(a_avg, '', a_final, 'B')
+        connect(seq_average, '', a_final, 'Alpha')
+        base_rgb, base_rgb_out = rgb_final, ''
+        base_a, base_a_out = a_final, ''
+    connect(base_rgb, base_rgb_out, tinted, 'A')
+
     vertex_tinted = mel.create_material_expression(material, unreal.MaterialExpressionMultiply, -320, 120)
     connect(tinted, '', vertex_tinted, 'A')
     connect(vc_rgb, '', vertex_tinted, 'B')
@@ -727,16 +809,41 @@ def build_sprite_material(name, ignore_z, translucent=False):
     emissive = mel.create_material_expression(material, unreal.MaterialExpressionMultiply, -180, 60)
     connect(vertex_tinted, '', emissive, 'A')
     connect(brightness, '', emissive, 'B')
-    connect_property(emissive, '', unreal.MaterialProperty.MP_EMISSIVE_COLOR)
 
     if translucent:
-        # alpha blend: the texture's alpha times the vertex alpha (the particle's fade)
+        # The texture's alpha times the vertex alpha (the particle's fade) is the coverage; the colour is
+        # premultiplied by it and then, as SpriteCard's ADDSELF does, has AddSelf ($overbrightfactor * $addself)
+        # times the fade added back on top: the fireball glows through its own smoke-shaped alpha.
         opacity = mel.create_material_expression(material, unreal.MaterialExpressionMultiply, -180, 300)
-        connect(tex_param, 'A', opacity, 'A')
+        connect(base_a, base_a_out, opacity, 'A')
         connect(vc_a, '', opacity, 'B')
         connect_property(opacity, '', unreal.MaterialProperty.MP_OPACITY)
+        addself = mel.create_material_expression(material, unreal.MaterialExpressionScalarParameter, -700, 560)
+        addself.set_editor_property('parameter_name', 'AddSelf')
+        addself.set_editor_property('default_value', 0.0)
+        addself_fade = mel.create_material_expression(material, unreal.MaterialExpressionMultiply, -400, 560)
+        connect(addself, '', addself_fade, 'A')
+        connect(vc_a, '', addself_fade, 'B')
+        one = mel.create_material_expression(material, unreal.MaterialExpressionConstant, -400, 640)
+        one.set_editor_property('r', 1.0)
+        glow = mel.create_material_expression(material, unreal.MaterialExpressionAdd, -280, 560)
+        connect(one, '', glow, 'A')
+        connect(addself_fade, '', glow, 'B')
+        premultiplied = mel.create_material_expression(material, unreal.MaterialExpressionMultiply, -60, 120)
+        connect(emissive, '', premultiplied, 'A')
+        connect(opacity, '', premultiplied, 'B')
+        glowing = mel.create_material_expression(material, unreal.MaterialExpressionMultiply, 60, 120)
+        connect(premultiplied, '', glowing, 'A')
+        connect(glow, '', glowing, 'B')
+        connect_property(glowing, '', unreal.MaterialProperty.MP_EMISSIVE_COLOR)
+    elif alpha_masked:
+        connect_property(emissive, '', unreal.MaterialProperty.MP_EMISSIVE_COLOR)
+        # SpriteCard adds its texture masked by the texture's own alpha: the particle atlases keep colour where
+        # their alpha is zero, and adding that unmasked draws every frame's whole rectangle.
+        connect_property(base_a, base_a_out, unreal.MaterialProperty.MP_OPACITY)
     else:
         # Additive blending still reads opacity; the flash textures carry their shape in RGB.
+        connect_property(emissive, '', unreal.MaterialProperty.MP_EMISSIVE_COLOR)
         one = mel.create_material_expression(material, unreal.MaterialExpressionConstant, -220, 380)
         one.set_editor_property('r', 1.0)
         connect_property(one, '', unreal.MaterialProperty.MP_OPACITY)
@@ -886,6 +993,9 @@ def ensure_sprite_materials():
     build_sprite_material(SPRITE_NAME, ignore_z=False)
     build_sprite_material(SPRITE_NOZ_NAME, ignore_z=True)
     build_sprite_material(SPRITE_TRANSLUCENT_NAME, ignore_z=False, translucent=True)
+    build_sprite_material(SPRITE_ADDITIVE_MASKED_NAME, ignore_z=False, alpha_masked=True)
+    build_sprite_material(SPRITE_DUAL_NAME, ignore_z=False, translucent=True, dual=True)
+    build_sprite_material(SPRITE_DUAL_ADDITIVE_NAME, ignore_z=False, alpha_masked=True, dual=True)
 
 
 scan_assets()

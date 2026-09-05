@@ -83,6 +83,12 @@ public:
 	 */
 	USoundAttenuation* GetAttenuationForSoundLevel(float SoundLevelDb);
 
+	/**
+	 * CBaseEntity::EmitSound for something that is not an entity, or is about to stop being one: plays a
+	 * soundscript at a place, with the script's volume, pitch and falloff. WorldContext is any object in the world.
+	 */
+	static void EmitSoundAtLocation(UObject* WorldContext, const FString& SoundScript, const FVector& Location);
+
 	void Clear() { Cache.Reset(); }
 
 private:

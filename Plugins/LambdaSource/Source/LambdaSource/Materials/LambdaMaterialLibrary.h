@@ -26,6 +26,20 @@ struct LAMBDASOURCE_API FSourceMaterialInfo
 	float DecalScale = 1.0f;	// $decalscale: decal world size = texture width * this (Source's decal sizing)
 	bool bIgnoreZ = false;	// $ignorez: draw without depth testing (first-person effect sprites)
 	bool bAdditive = false;	// $additive: additive blend (flashes, glows) rather than alpha
+	// SpriteCard's brightness controls, which particle materials lean on: $overbrightfactor scales the colour,
+	// $addself adds the texture onto itself. $vertexcolor/$vertexalpha say the geometry carries the tint/fade.
+	float OverbrightFactor = 1.0f;
+	float AddSelf = 0.0f;
+	bool bVertexColor = false;
+	bool bVertexAlpha = false;
+	// $dualsequence: a second sheet sequence (SEQUENCE_NUMBER1) drawn over the first - Half-Life 2's explosion
+	// materials keep their flames there. $sequence_blend_mode 1 adds it, 0 blends it over.
+	bool bDualSequence = false;
+	int32 SequenceBlendMode = 0;
+	// $startfadesize / $endfadesize: a sprite fades out as its size on screen (as a fraction of the screen) grows
+	// past the first towards the second, so a fireball at arm's length does not fill the view. 0 = never.
+	float StartFadeSize = 0.0f;
+	float EndFadeSize = 0.0f;
 	// PBR inputs: Source 2 imports write real values (Lambda keys $roughness/$metalness); HL2 materials only have $bumpmap.
 	float Roughness = -1.0f;	// $roughness, -1 = not given
 	float Metalness = -1.0f;	// $metalness, -1 = not given
@@ -98,8 +112,19 @@ public:
 	/** $decalsizevariance (random +/- in Hammer units) of a decal built with GetDecalMaterial; 0 when it has none. */
 	float GetDecalSizeVariance(const FString& SourceMaterialName) const;
 
-	/** Builds an additive unlit sprite material (muzzle flashes and other UnlitGeneric $additive effects). */
-	UMaterialInterface* GetSpriteMaterial(const FString& SourceMaterialName);
+	/**
+	 * Builds an unlit sprite material: additive for $additive effects (muzzle flashes, glows), alpha-blended for
+	 * the rest (smoke, blood, dust). bForceAdditive asks for the additive kind whatever the VMT says - what a
+	 * particle's second sheet sequence wants when its blend mode adds.
+	 */
+	UMaterialInterface* GetSpriteMaterial(const FString& SourceMaterialName, bool bForceAdditive = false);
+
+	/**
+	 * The sprite sheet compiled into a material's base texture, or null when it has none. Particle systems pick
+	 * their frames from it. Cached per material; the texture is read once more for it, since the mip chain
+	 * upload does not keep the file around.
+	 */
+	TSharedPtr<const struct FSourceSpriteSheet> GetSpriteSheet(const FString& SourceMaterialName);
 
 	/** Names of every material created so far (normalised), for precaching what goes with them. */
 	void GetMaterialNames(TArray<FString>& OutNames) const;
@@ -155,6 +180,15 @@ private:
 	TObjectPtr<UMaterialInterface> SpriteMasterMaterialTranslucent;
 
 	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInterface> SpriteMasterMaterialAdditiveMasked;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInterface> SpriteMasterMaterialDual;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInterface> SpriteMasterMaterialDualAdditive;
+
+	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInterface> ModelMasterMaterial;
 
 	UPROPERTY(Transient)
@@ -174,6 +208,9 @@ private:
 	TMap<FString, TObjectPtr<UTexture2D>> DecalHeightCache;
 
 	TMap<FString, float> DecalVarianceCache;
+
+	/** Sprite sheets by normalised material name; a null entry remembers that the texture has none. */
+	TMap<FString, TSharedPtr<const struct FSourceSpriteSheet>> SheetCache;
 
 	/** $surfaceprop per material name, so a bullet impact does not re-parse the VMT every shot. */
 	TMap<FString, FString> SurfacePropCache;

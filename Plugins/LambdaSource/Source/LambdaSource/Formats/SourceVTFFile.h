@@ -45,6 +45,32 @@ enum class ESourceImageFormat : int32
 	Count
 };
 
+/** One frame of a sheet sequence: how long it shows and where it sits in the texture (left, top, right, bottom). */
+struct FSourceSheetFrame
+{
+	float Duration = 1.0f;
+	FVector4f UV = FVector4f(0.0f, 0.0f, 1.0f, 1.0f);
+};
+
+/** One animation of a sprite sheet: its frames, whether it holds on the last one or loops, and its total length. */
+struct FSourceSheetSequence
+{
+	int32 Number = 0;
+	bool bClamp = false;
+	float TotalTime = 0.0f;
+	TArray<FSourceSheetFrame> Frames;
+};
+
+/**
+ * The sprite sheet compiled into a particle texture (bitmap/psheet.h): the sequences a particle system picks
+ * from with SEQUENCE_NUMBER, each a run of frames with their UV rectangles. mksheet writes it into the VTF as
+ * resource 0x10.
+ */
+struct LAMBDASOURCE_API FSourceSpriteSheet
+{
+	TArray<FSourceSheetSequence> Sequences;
+};
+
 /** Parsed VTF header (versions 7.0 - 7.5). */
 struct FSourceVTFHeader
 {
@@ -120,6 +146,11 @@ public:
 	/** Returns a view on the raw image data of one 2D image (MipLevel 0 = largest). */
 	bool GetMipData(int32 MipLevel, int32 Frame, int32 Face, int32 Slice, TConstArrayView<uint8>& OutData) const;
 
+	/** True if the file carries a sprite sheet (7.3+ resource 0x10). */
+	bool HasSheet() const { return SheetDataOffset >= 0; }
+	/** Reads the sprite sheet; false when there is none or it is malformed. */
+	bool GetSheet(FSourceSpriteSheet& OutSheet) const;
+
 	// ---- Format helpers ----
 	static int64 ComputeImageBytes(int32 Width, int32 Height, ESourceImageFormat Format);
 	static bool IsCompressedFormat(ESourceImageFormat Format);
@@ -136,6 +167,7 @@ private:
 	FSourceVTFHeader Header;
 	int64 ImageDataOffset = 0;
 	int64 LowResDataOffset = 0;
+	int64 SheetDataOffset = -1;
 	int32 NumFaces = 1;
 	bool bLoaded = false;
 };

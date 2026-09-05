@@ -4,6 +4,7 @@
 #include "FileSystem/LambdaFileSystem.h"
 #include "Core/LambdaSourceModule.h"
 #include "Audio/SourceSoundScript.h"
+#include "Kismet/GameplayStatics.h"
 
 // ---------------------------------------------------------------------------------------------------------------------
 // ULambdaSoundWave
@@ -186,4 +187,22 @@ USoundAttenuation* FLambdaSoundCache::GetAttenuationForSoundLevel(float SoundLev
 	}
 	AttenuationByLevel.Add(Key, Attenuation);
 	return Attenuation;
+}
+
+void FLambdaSoundCache::EmitSoundAtLocation(UObject* WorldContext, const FString& SoundScript, const FVector& Location)
+{
+	if (!WorldContext)
+	{
+		return;
+	}
+	float Volume = 1.0f, Pitch = 1.0f;
+	ULambdaSoundWave* Wave = Get().CreateWaveResolved(WorldContext, SoundScript, false, Volume, Pitch);
+	if (!Wave)
+	{
+		return;
+	}
+	// The script's soundlevel decides how far it carries, as the channel's attenuation would in Source.
+	const FSourceSoundScriptEntry* Entry = FSourceSoundScripts::Get().Find(SoundScript);
+	USoundAttenuation* Attenuation = Get().GetAttenuationForSoundLevel(Entry ? Entry->SoundLevel : 75.0f);
+	UGameplayStatics::SpawnSoundAtLocation(WorldContext, Wave, Location, FRotator::ZeroRotator, Volume, Pitch, 0.0f, Attenuation);
 }

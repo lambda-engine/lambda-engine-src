@@ -103,6 +103,23 @@ public:
 	UPROPERTY(config, EditAnywhere, Category = "Materials", meta = (AllowedClasses = "/Script/Engine.MaterialInterface"))
 	FSoftObjectPath SpriteMaterialTranslucent;
 
+	/**
+	 * Additive sprite master masked by the texture's alpha, for SpriteCard particle materials: their atlases keep
+	 * colour where the alpha is zero, which the plain additive master would add as a square.
+	 */
+	UPROPERTY(config, EditAnywhere, Category = "Materials", meta = (AllowedClasses = "/Script/Engine.MaterialInterface"))
+	FSoftObjectPath SpriteMaterialAdditiveMasked;
+
+	/**
+	 * Sprite masters for "$dualsequence 1" SpriteCard materials, which sample two sheet sequences per sprite (the
+	 * second frame's rectangle in UV2) and combine them by $sequence_blend_mode; alpha-blended and additive.
+	 */
+	UPROPERTY(config, EditAnywhere, Category = "Materials", meta = (AllowedClasses = "/Script/Engine.MaterialInterface"))
+	FSoftObjectPath SpriteMaterialDual;
+
+	UPROPERTY(config, EditAnywhere, Category = "Materials", meta = (AllowedClasses = "/Script/Engine.MaterialInterface"))
+	FSoftObjectPath SpriteMaterialDualAdditive;
+
 	// ---- Effects ----
 
 	/** Seconds a bullet-impact decal stays before it fades out (Source's r_decal_cullsize/decal lifetime analogue). */

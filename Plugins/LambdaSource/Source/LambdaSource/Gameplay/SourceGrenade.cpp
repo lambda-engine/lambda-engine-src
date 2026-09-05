@@ -5,6 +5,8 @@
 #include "Creatures/SourceGameNPC.h"
 #include "Gameplay/SourceDamage.h"
 #include "Rendering/SourceStudioModelComponent.h"
+#include "Particles/SourceParticleSystem.h"
+#include "Audio/LambdaSoundLibrary.h"
 #include "Components/SphereComponent.h"
 #include "GameFramework/ProjectileMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
@@ -55,6 +57,7 @@ ASourceGrenade* ASourceGrenade::Throw(UWorld* World, AActor* InThrower, const FV
 	Grenade->Thrower = InThrower;
 	Grenade->Damage = InDamage;
 	Grenade->RadiusCm = RadiusUnits * Scale;
+	Grenade->MaterialLibrary = Materials;
 	Grenade->DetonateTime = World->GetTimeSeconds() + FuseSeconds;
 	Grenade->Movement->Velocity = Velocity;
 	// Whoever threw it does not trip over it on the way out.
@@ -158,6 +161,24 @@ void ASourceGrenade::Detonate()
 			SourceDamageType::DMG_BLAST, SourceHitGroup::HITGROUP_GENERIC);
 		Victim->TakeDamage(Dealt, Event, nullptr, Thrower.Get());
 	}
+
+	// CBaseGrenade::Detonate traces 32 units down and Explode pulls the blast a hair out of what it finds, so
+	// the effect is born on the floor the grenade lies on rather than half inside it.
+	FVector EffectOrigin = Centre;
+	{
+		const float Scale = ULambdaSourceSettings::Get().UnitScale;
+		FHitResult Floor;
+		FCollisionQueryParams TraceParams(SCENE_QUERY_STAT(LambdaGrenadeFloor), false, this);
+		if (World->LineTraceSingleByChannel(Floor, Centre, Centre - FVector(0.0f, 0.0f, 32.0f * Scale), ECC_Visibility, TraceParams))
+		{
+			EffectOrigin = Floor.ImpactPoint + Floor.ImpactNormal * (0.6f * Scale);
+		}
+	}
+	// The explosion itself: Half-Life 2's grenade explosion particle system, and the sounds env_explosion and
+	// the grenade each make - the boom, then the debris coming down.
+	ASourceParticleSystem::Create(World, TEXT("grenade_explosion_01"), EffectOrigin, FVector3f::ZeroVector, MaterialLibrary);
+	FLambdaSoundCache::EmitSoundAtLocation(World, TEXT("BaseExplosionEffect.Sound"), EffectOrigin);
+	FLambdaSoundCache::EmitSoundAtLocation(World, TEXT("BaseGrenade.Explode"), EffectOrigin);
 
 	UE_LOG(LogLambdaSource, Log, TEXT("grenade detonated at %s (%.0f damage, %.0f cm)"),
 		*Centre.ToCompactString(), Damage, RadiusCm);

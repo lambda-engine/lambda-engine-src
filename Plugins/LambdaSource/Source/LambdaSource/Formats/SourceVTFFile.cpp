@@ -16,6 +16,8 @@ namespace
 
 	constexpr uint32 VTF_RSRC_LOW_RES_IMAGE = 0x01;
 	constexpr uint32 VTF_RSRC_IMAGE = 0x30;
+	constexpr uint32 VTF_RSRC_SHEET = 0x10;
+	constexpr uint8 VTF_RSRC_FLAG_NO_DATA = 0x02;	// the entry holds its value inline; nothing to seek to
 	constexpr int64 VTF_RESOURCE_DICTIONARY_OFFSET = 80; // resources start at 0x50 in 7.3+ files (see vtf.h comment)
 }
 
@@ -98,6 +100,7 @@ bool FSourceVTFFile::Load(TArray<uint8>&& InData, FString* OutError)
 	// Locate the image data.
 	ImageDataOffset = -1;
 	LowResDataOffset = -1;
+	SheetDataOffset = -1;
 	if (Header.VersionMinor >= 3)
 	{
 		for (int32 i = 0; i < Header.NumResources; ++i)
@@ -116,6 +119,10 @@ bool FSourceVTFFile::Load(TArray<uint8>&& InData, FString* OutError)
 			else if (Type == VTF_RSRC_LOW_RES_IMAGE)
 			{
 				LowResDataOffset = ResData;
+			}
+			else if (Type == VTF_RSRC_SHEET && (Data[EntryOffset + 3] & VTF_RSRC_FLAG_NO_DATA) == 0)
+			{
+				SheetDataOffset = ResData;
 			}
 		}
 	}
@@ -327,4 +334,66 @@ const TCHAR* FSourceVTFFile::GetFormatName(ESourceImageFormat Format)
 	case ESourceImageFormat::ATI1N: return TEXT("ATI1N");
 	default: return TEXT("UNKNOWN");
 	}
+}
+
+bool FSourceVTFFile::GetSheet(FSourceSpriteSheet& OutSheet) const
+{
+	OutSheet.Sequences.Reset();
+	if (!bLoaded || SheetDataOffset < 0)
+	{
+		return false;
+	}
+	// A resource's data starts with its byte size; the sheet proper (CSheet::CSheet in bitmap/psheet.cpp) is a
+	// version, a sequence count, and then per sequence: number, clamp, frame count, total time, and per frame
+	// its duration and one UV rectangle per image slot - four slots from version 1 on, of which the first is the
+	// one a plain sprite uses.
+	int64 Pos = SheetDataOffset;
+	if (Pos + 12 > Data.Num())
+	{
+		return false;
+	}
+	const int64 Size = ReadLE<uint32>(Data, Pos);
+	const int64 End = FMath::Min<int64>(Data.Num(), Pos + 4 + Size);
+	Pos += 4;
+	const uint32 Version = ReadLE<uint32>(Data, Pos);
+	const uint32 NumSequences = ReadLE<uint32>(Data, Pos + 4);
+	Pos += 8;
+	if (Version > 1 || NumSequences > 4096)
+	{
+		return false;
+	}
+	const int32 ImagesPerFrame = Version > 0 ? 4 : 1;
+	OutSheet.Sequences.Reserve(NumSequences);
+	for (uint32 s = 0; s < NumSequences; ++s)
+	{
+		if (Pos + 16 > End)
+		{
+			return false;
+		}
+		FSourceSheetSequence Sequence;
+		Sequence.Number = (int32)ReadLE<uint32>(Data, Pos);
+		Sequence.bClamp = ReadLE<uint32>(Data, Pos + 4) != 0;
+		const uint32 NumFrames = ReadLE<uint32>(Data, Pos + 8);
+		Sequence.TotalTime = ReadLE<float>(Data, Pos + 12);
+		Pos += 16;
+		if (NumFrames > 4096)
+		{
+			return false;
+		}
+		Sequence.Frames.Reserve(NumFrames);
+		for (uint32 f = 0; f < NumFrames; ++f)
+		{
+			if (Pos + 4 + 16 * ImagesPerFrame > End)
+			{
+				return false;
+			}
+			FSourceSheetFrame Frame;
+			Frame.Duration = ReadLE<float>(Data, Pos);
+			Frame.UV = FVector4f(ReadLE<float>(Data, Pos + 4), ReadLE<float>(Data, Pos + 8), ReadLE<float>(Data, Pos + 12), ReadLE<float>(Data, Pos + 16));
+			Pos += 4 + 16 * ImagesPerFrame;
+			Sequence.Frames.Add(Frame);
+		}
+		OutSheet.Sequences.Add(MoveTemp(Sequence));
+	}
+	return true;
 }

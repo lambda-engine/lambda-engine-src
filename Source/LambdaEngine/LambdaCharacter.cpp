@@ -36,6 +36,7 @@ void ALambdaCharacterAddPickupHistory(TArray<ALambdaCharacter::FPickupEvent>& Hi
 #include "Materials/LambdaMaterialLibrary.h"
 #include "Core/LambdaSourceSettings.h"
 #include "World/SourceBSPWorldActor.h"
+#include "Particles/SourceParticleSystem.h"
 #include "EngineUtils.h"	// TActorIterator, for entfire.auto
 #include "Kismet/GameplayStatics.h"
 #include "Materials/SourceSurfaceProps.h"
@@ -87,6 +88,13 @@ static FAutoConsoleVariableRef CVarPropCreateAuto(
 	TEXT("prop_create.auto"),
 	GPropCreateAuto,
 	TEXT("\"<model> [distance_cm]\": prop_physics_create where the player looks, 2s after spawn"));
+
+// particle_create.auto "<effect> [distance_cm]" starts a particle system where the player looks after spawn.
+static FString GParticleCreateAuto;
+static FAutoConsoleVariableRef CVarParticleCreateAuto(
+	TEXT("particle_create.auto"),
+	GParticleCreateAuto,
+	TEXT("\"<effect> [distance_cm]\": particle_create where the player looks, 2s after spawn"));
 
 // propcarry.auto "<grab_delay_s> [throw_delay_s]" exercises the +USE carry without injecting input.
 // walk.auto "<seconds> [delay_s]" walks the player forward, for testing what he bumps into.
@@ -948,6 +956,16 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 				}
 				PendingPropCreate.Reset();
 			}
+			if (!PendingParticleCreate.IsEmpty())
+			{
+				TArray<FString> Parts;
+				PendingParticleCreate.ParseIntoArrayWS(Parts);
+				if (Parts.Num() > 0)
+				{
+					ParticleCreate(Parts[0], Parts.Num() > 1 ? FCString::Atof(*Parts[1]) : 5000.0f);
+				}
+				PendingParticleCreate.Reset();
+			}
 		}
 	}
 
@@ -1251,6 +1269,7 @@ void ALambdaCharacter::Tick(float DeltaSeconds)
 			AutoSpawnDelay = 0.25f;
 			PendingNPCCreate = GNPCCreateAuto;
 			PendingPropCreate = GPropCreateAuto;
+			PendingParticleCreate = GParticleCreateAuto;
 			if (!GPitchSweepAuto.IsEmpty())
 			{
 				TArray<FString> Parts;
@@ -2636,6 +2655,35 @@ AActor* ALambdaCharacter::PropCreate(const FString& ModelPath, float MaxDistance
 	AActor* Prop = BSPWorld->CreateProp(ModelPath, Spot, 0.0f);
 	UE_LOG(LogLambda, Display, TEXT("prop_create %s: %s"), *ModelPath, Prop ? *Prop->GetActorLocation().ToString() : TEXT("failed"));
 	return Prop;
+}
+
+AActor* ALambdaCharacter::ParticleCreate(const FString& InEffectName, float MaxDistanceCm)
+{
+	UWorld* World = GetWorld();
+	ASourceBSPWorldActor* BSPWorld = World ? Cast<ASourceBSPWorldActor>(UGameplayStatics::GetActorOfClass(World, ASourceBSPWorldActor::StaticClass())) : nullptr;
+	if (!BSPWorld)
+	{
+		UE_LOG(LogLambda, Warning, TEXT("particle_create: no BSP world actor"));
+		return nullptr;
+	}
+	// On the surface the player is looking at, facing out of it, the way an impact effect is dispatched; or
+	// hanging in the air at the distance asked for when nothing is in the way.
+	FVector Eye;
+	FRotator EyeRot;
+	GetActorEyesViewPoint(Eye, EyeRot);
+	FHitResult Hit;
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(LambdaParticleCreate), true, this);
+	FVector Spot = Eye + EyeRot.Vector() * MaxDistanceCm;
+	FVector3f Angles = FVector3f::ZeroVector;
+	if (World->LineTraceSingleByChannel(Hit, Eye, Spot, ECC_Visibility, Params))
+	{
+		Spot = Hit.ImpactPoint + Hit.ImpactNormal * 2.0f;
+		Angles = FSourceCoords::AnglesFromUE(Hit.ImpactNormal.Rotation());
+	}
+	ASourceParticleSystem* Effect = ASourceParticleSystem::Create(World, InEffectName, Spot, Angles, BSPWorld->MaterialLibrary);
+	UE_LOG(LogLambda, Display, TEXT("particle_create %s: %s (eye %s, %s)"), *InEffectName, Effect ? *Spot.ToString() : TEXT("failed"),
+		*Eye.ToCompactString(), Hit.bBlockingHit ? *FString::Printf(TEXT("hit %s"), *GetNameSafe(Hit.GetActor())) : TEXT("no hit"));
+	return Effect;
 }
 
 AActor* ALambdaCharacter::NPCCreate(const FString& ClassName, float MaxDistanceCm)

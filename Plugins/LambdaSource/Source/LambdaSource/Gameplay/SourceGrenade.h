@@ -58,6 +58,10 @@ protected:
 	UPROPERTY(Transient)
 	TObjectPtr<UProjectileMovementComponent> Movement;
 
+	/** The map's materials, for the explosion's sprites. */
+	UPROPERTY(Transient)
+	TObjectPtr<ULambdaMaterialLibrary> MaterialLibrary;
+
 	TWeakObjectPtr<AActor> Thrower;
 	float DetonateTime = 0.0f;
 	float Damage = 125.0f;

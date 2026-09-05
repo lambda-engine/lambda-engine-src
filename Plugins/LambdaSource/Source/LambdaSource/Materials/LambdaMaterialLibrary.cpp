@@ -1,4 +1,5 @@
 #include "Materials/LambdaMaterialLibrary.h"
+#include "HAL/IConsoleManager.h"
 #include "FileSystem/LambdaFileSystem.h"
 #include "Core/LambdaSourceModule.h"
 #include "Core/LambdaSourceSettings.h"
@@ -81,6 +82,18 @@ void ULambdaMaterialLibrary::Initialize()
 	if (Settings.SpriteMaterialTranslucent.IsValid())
 	{
 		SpriteMasterMaterialTranslucent = Cast<UMaterialInterface>(Settings.SpriteMaterialTranslucent.TryLoad());
+	}
+	if (Settings.SpriteMaterialAdditiveMasked.IsValid())
+	{
+		SpriteMasterMaterialAdditiveMasked = Cast<UMaterialInterface>(Settings.SpriteMaterialAdditiveMasked.TryLoad());
+	}
+	if (Settings.SpriteMaterialDual.IsValid())
+	{
+		SpriteMasterMaterialDual = Cast<UMaterialInterface>(Settings.SpriteMaterialDual.TryLoad());
+	}
+	if (Settings.SpriteMaterialDualAdditive.IsValid())
+	{
+		SpriteMasterMaterialDualAdditive = Cast<UMaterialInterface>(Settings.SpriteMaterialDualAdditive.TryLoad());
 	}
 	if (Settings.ModelMaterial.IsValid())
 	{
@@ -226,6 +239,24 @@ bool ULambdaMaterialLibrary::LoadMaterialInfo(const FString& SourceMaterialName,
 	OutInfo.bIgnoreZ = Root.GetBool(TEXT("$ignorez"));
 	OutInfo.DecalScale = Root.GetFloat(TEXT("$decalscale"), 1.0f);
 	OutInfo.bAdditive = Root.GetBool(TEXT("$additive"));
+	OutInfo.OverbrightFactor = Root.GetFloat(TEXT("$overbrightfactor"), 1.0f);
+	OutInfo.AddSelf = Root.GetFloat(TEXT("$addself"), 0.0f);
+	OutInfo.bVertexColor = Root.GetBool(TEXT("$vertexcolor"));
+	OutInfo.bVertexAlpha = Root.GetBool(TEXT("$vertexalpha"));
+	OutInfo.bDualSequence = Root.GetBool(TEXT("$dualsequence"));
+	OutInfo.SequenceBlendMode = Root.GetInt(TEXT("$sequence_blend_mode"), 0);
+	OutInfo.StartFadeSize = Root.GetFloat(TEXT("$startfadesize"), 0.0f);
+	OutInfo.EndFadeSize = Root.GetFloat(TEXT("$endfadesize"), 0.0f);
+	// The Sprite shader blends by $spriterendermode rather than $additive: 5 is kRenderTransAdd and 7 is
+	// kRenderTransAddFrameBlend (const.h), the two that add.
+	if (Root.Key.Equals(TEXT("Sprite"), ESearchCase::IgnoreCase))
+	{
+		const int32 RenderMode = Root.GetInt(TEXT("$spriterendermode"), 0);
+		if (RenderMode == 5 || RenderMode == 7)
+		{
+			OutInfo.bAdditive = true;
+		}
+	}
 	OutInfo.Roughness = Root.GetFloat(TEXT("$roughness"), -1.0f);
 	OutInfo.Metalness = Root.GetFloat(TEXT("$metalness"), -1.0f);
 	OutInfo.bNormalMapFlipY = Root.GetBool(TEXT("$normalmapflipy"));
@@ -873,11 +904,16 @@ UMaterialInterface* ULambdaMaterialLibrary::GetDecalMaterial(const FString& Sour
 	return Result;
 }
 
-UMaterialInterface* ULambdaMaterialLibrary::GetSpriteMaterial(const FString& SourceMaterialName)
+static TAutoConsoleVariable<int32> CVarParticleDualMaster(
+	TEXT("lambda.particles.dualmaster"), 1,
+	TEXT("1 = $dualsequence particle materials use the dual sprite masters (two sheet sequences per sprite); 0 = the plain masters, first sequence only."));
+
+UMaterialInterface* ULambdaMaterialLibrary::GetSpriteMaterial(const FString& SourceMaterialName, bool bForceAdditive)
 {
 	Initialize();
 	const FString Name = NormalizeMaterialName(SourceMaterialName);
-	if (TObjectPtr<UMaterialInterface>* Found = SpriteCache.Find(Name))
+	const FString CacheKey = bForceAdditive ? Name + TEXT("|additive") : Name;
+	if (TObjectPtr<UMaterialInterface>* Found = SpriteCache.Find(CacheKey))
 	{
 		return Found->Get();
 	}
@@ -908,21 +944,48 @@ UMaterialInterface* ULambdaMaterialLibrary::GetSpriteMaterial(const FString& Sou
 			// flash so it is not occluded by the very view model it is attached to. "$additive" picks the additive
 			// blend; a translucent sprite (blood, smoke, dust) alpha-blends and is tinted by vertex colour.
 			UMaterialInterface* Master = SpriteMasterMaterial.Get();
+			const bool bDual = Info.bDualSequence && SpriteMasterMaterialDual && SpriteMasterMaterialDualAdditive
+				&& CVarParticleDualMaster.GetValueOnGameThread() != 0;
 			if (Info.bIgnoreZ && SpriteMasterMaterialNoZ)
 			{
 				Master = SpriteMasterMaterialNoZ.Get();
 			}
-			else if (!Info.bAdditive && SpriteMasterMaterialTranslucent)
+			else if (bDual)
+			{
+				// "$dualsequence 1": two sheet sequences per sprite, combined by $sequence_blend_mode (below).
+				Master = (Info.bAdditive || bForceAdditive) ? SpriteMasterMaterialDualAdditive.Get() : SpriteMasterMaterialDual.Get();
+			}
+			else if ((Info.bAdditive || bForceAdditive) && Info.Shader.Equals(TEXT("SpriteCard"), ESearchCase::IgnoreCase)
+				&& SpriteMasterMaterialAdditiveMasked)
+			{
+				// SpriteCard adds its texture through the texture's alpha; a particle atlas is not black outside its puffs.
+				Master = SpriteMasterMaterialAdditiveMasked.Get();
+			}
+			else if (!Info.bAdditive && !bForceAdditive && SpriteMasterMaterialTranslucent)
 			{
 				Master = SpriteMasterMaterialTranslucent.Get();
 			}
 			if (UTexture2D* Texture = Info.BaseTexture.IsEmpty() ? nullptr : GetTexture(Info.BaseTexture))
 			{
 				UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(Master, this,
-					*FString::Printf(TEXT("Sprite_%s"), *Name.Replace(TEXT("/"), TEXT("_"))));
+					*FString::Printf(TEXT("Sprite_%s%s"), *Name.Replace(TEXT("/"), TEXT("_")), bForceAdditive ? TEXT("_additive") : TEXT("")));
 				if (MID)
 				{
 					MID->SetTextureParameterValue(ULambdaSourceSettings::Get().BaseTextureParameterName, Texture);
+					// $overbrightfactor is the instance's brightness - vertex colours are 8-bit and cannot carry it - and
+					// $addself the premultiplied self-add the alpha-blended masters glow with.
+					MID->SetScalarParameterValue(TEXT("Brightness"), Info.OverbrightFactor);
+					MID->SetScalarParameterValue(TEXT("AddSelf"), Info.OverbrightFactor * Info.AddSelf);
+					if (bDual)
+					{
+						// 0 averages the two samples, 1 takes the second's RGB under the first's alpha, 2 lays the
+						// second over the first by its own alpha (spritecard_ps2x.fxc).
+						MID->SetScalarParameterValue(TEXT("SequenceAverage"), Info.SequenceBlendMode == 0 ? 1.0f : 0.0f);
+						MID->SetScalarParameterValue(TEXT("SequenceOver"), Info.SequenceBlendMode == 2 ? 1.0f : 0.0f);
+					}
+					UE_LOG(LogLambdaSource, Verbose, TEXT("Sprite material '%s': master %s%s%s"), *Name, *GetNameSafe(Master),
+						bDual ? *FString::Printf(TEXT(" dual (blend mode %d)"), Info.SequenceBlendMode) : TEXT(""),
+						Info.bDualSequence && !bDual ? TEXT(" ($dualsequence, plain master)") : TEXT(""));
 					if (bIsSubrect && Texture->GetSizeX() > 0 && Texture->GetSizeY() > 0)
 					{
 						const double SheetW = Texture->GetSizeX(), SheetH = Texture->GetSizeY();
@@ -940,7 +1003,37 @@ UMaterialInterface* ULambdaMaterialLibrary::GetSpriteMaterial(const FString& Sou
 		UE_LOG(LogLambdaSource, Warning, TEXT("Sprite material '%s' could not be built (master=%s)"),
 			*Name, *GetNameSafe(SpriteMasterMaterial));
 	}
-	SpriteCache.Add(Name, Result);
+	SpriteCache.Add(CacheKey, Result);
+	return Result;
+}
+
+TSharedPtr<const FSourceSpriteSheet> ULambdaMaterialLibrary::GetSpriteSheet(const FString& SourceMaterialName)
+{
+	const FString Name = NormalizeMaterialName(SourceMaterialName);
+	if (const TSharedPtr<const FSourceSpriteSheet>* Found = SheetCache.Find(Name))
+	{
+		return *Found;
+	}
+
+	TSharedPtr<const FSourceSpriteSheet> Result;
+	FSourceMaterialInfo Info;
+	if (LoadMaterialInfo(Name, Info) && !Info.BaseTexture.IsEmpty())
+	{
+		TArray<uint8> Bytes;
+		if (FLambdaFileSystem::Get().ReadFile(FString::Printf(TEXT("materials/%s.vtf"), *Info.BaseTexture), Bytes))
+		{
+			FSourceVTFFile VTF;
+			if (VTF.Load(MoveTemp(Bytes)) && VTF.HasSheet())
+			{
+				TSharedPtr<FSourceSpriteSheet> Sheet = MakeShared<FSourceSpriteSheet>();
+				if (VTF.GetSheet(*Sheet) && Sheet->Sequences.Num() > 0)
+				{
+					Result = Sheet;
+				}
+			}
+		}
+	}
+	SheetCache.Add(Name, Result);
 	return Result;
 }
 

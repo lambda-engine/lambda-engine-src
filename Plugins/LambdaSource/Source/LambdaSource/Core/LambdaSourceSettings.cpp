@@ -12,6 +12,9 @@ ULambdaSourceSettings::ULambdaSourceSettings()
 	SpriteMaterial = FSoftObjectPath(TEXT("/LambdaSource/Materials/M_LambdaSprite.M_LambdaSprite"));
 	SpriteMaterialNoZ = FSoftObjectPath(TEXT("/LambdaSource/Materials/M_LambdaSpriteNoZ.M_LambdaSpriteNoZ"));
 	SpriteMaterialTranslucent = FSoftObjectPath(TEXT("/LambdaSource/Materials/M_LambdaSpriteTranslucent.M_LambdaSpriteTranslucent"));
+	SpriteMaterialAdditiveMasked = FSoftObjectPath(TEXT("/LambdaSource/Materials/M_LambdaSpriteAdditiveMasked.M_LambdaSpriteAdditiveMasked"));
+	SpriteMaterialDual = FSoftObjectPath(TEXT("/LambdaSource/Materials/M_LambdaSpriteDual.M_LambdaSpriteDual"));
+	SpriteMaterialDualAdditive = FSoftObjectPath(TEXT("/LambdaSource/Materials/M_LambdaSpriteDualAdditive.M_LambdaSpriteDualAdditive"));
 	ModelMaterial = FSoftObjectPath(TEXT("/LambdaSource/Materials/M_LambdaModel.M_LambdaModel"));
 	ModelMaterialTranslucent = FSoftObjectPath(TEXT("/LambdaSource/Materials/M_LambdaModelTranslucent.M_LambdaModelTranslucent"));
 	ModelMaterialMasked = FSoftObjectPath(TEXT("/LambdaSource/Materials/M_LambdaModelMasked.M_LambdaModelMasked"));

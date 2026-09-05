@@ -22,12 +22,14 @@ lambda-engine-src/            this repository - the Unreal project
     World/                    the BSP world actor, geometry building, entity parsing and I/O
     Entities/  Creatures/     brush and point entities; the NPCs
     Weapons/  Gameplay/       weapon scripts, ammo table, damage, view punch
-    Rendering/                studio models, runtime skeletal meshes, ragdolls, decals, particles
+    Rendering/                studio models, runtime skeletal meshes, ragdolls, decals, the simple sprite emitters
+    Particles/                the Source particle system: the .pcf reader, the simulator and its operators,
+                              and the actor that draws a system
   Config/  Content/
   Build/Windows/              Application.ico - the icon compiled into the packaged exe
   Tools/                      dev scripts: GenerateProjectFiles / Build / CreateAssets / Editor / Env,
                               content importers (ImportSuitVoice, ImportSource2*, ImportImageToVTF), vpk.py,
-                              make_movement_testmap.py
+                              pcf.py (what a particle file holds), make_movement_testmap.py
 
 lambda-engine/                the other repository - the shippable game files
   lambda.exe                  the packaged game (created by Release.bat over here)
@@ -145,6 +147,7 @@ Clip sizes, ammo types, sounds and damage come from `scripts/weapon_*.txt`, `scr
 | `light`, `light_spot`, `light_environment` | Done — `light` and `light_spot` carry Source's appearances (the twelve preset styles and a custom `pattern`), start dark on the spawnflag, and answer to TurnOn, TurnOff, Toggle, SetPattern and FadeToPattern. `light_environment` is a sun and takes no style |
 | `prop_physics`, `prop_physics_override`, `prop_physics_multiplayer`, `physics_prop` | Done |
 | `point_template` | Done |
+| `env_particles`, `info_particle_system` | Done — plays a particle system from any mounted `particles/*.pcf`; see Particles below |
 | `item_ammo_*`, `item_box_*`, `item_large_box_*`, `item_rpg_round`, `item_ar2_grenade` | Done |
 | `weapon_*` lying in a map | Done — gives the weapon its script describes |
 | anything else | Counted and logged as unhandled at the end of the load |
@@ -157,6 +160,40 @@ Clip sizes, ammo types, sounds and damage come from `scripts/weapon_*.txt`, `scr
 | `func_door_rotating` | Done |
 | `func_ladder` (as vbsp's `info_ladder`) | Done — attach, climb at 200 u/s, jump off at 270; Tools/make_movement_testmap.py builds a map to try it on |
 | any other `"model" "*N"` entity | Geometry only — it is drawn and collides, but does nothing |
+
+### Particles
+
+Source's particle system (`particles/*.pcf`, the DMX files the particle editor writes), ported from the
+engine's `particles/` sources: the binary DMX container is read (`Formats/SourceDMXFile`), every
+`DmeParticleSystemDefinition` becomes a definition (`Particles/SourceParticleLibrary`), and a system is
+simulated the way `CParticleCollection::Simulate` does it — sub-steps clamped to `maximum time step`,
+emitters, initializers over the new particles, the operators in file order with the kill list applied after
+each, `Movement Basic` running the forces and constraints from inside, children after their delay on a copy
+of the parent's control points. Randoms come from a fixed table indexed by particle id and a per-operator
+offset, so a system replays the same way twice.
+
+What runs: all four emitters; fifty initializers, seventy-eight operators, seven forces and six constraints —
+everything Half-Life 2's and Episode Two's files use, with one exception below. `Velocity Repulse from World`,
+`Collision via traces`, `Prevent passing through static part of world` and the place-on-ground pair trace
+against the brushes for real, so smoke lifts off the floor it was born on and sparks bounce. Not simulated:
+`Color Light From Control Point` (the only one Half-Life's files use — particles keep their initial
+colour), the model/hitbox family, `lennard jones force`, and the lighting tint of `Color Random`. An
+operator that is not implemented does nothing and says so once in the log.
+
+Drawing: one procedural mesh per system, a section per definition in the tree, rebuilt each frame.
+`render_animated_sprites` are camera-facing quads (the other three orientation types too);
+`render_sprite_trail` stretches each particle along its velocity; `render_rope` joins the particles into a
+ribbon. Frames come from the sprite sheet compiled into the material's texture (`FSourceVTFFile::GetSheet`),
+and a frame blend is two quads crossfading. A `Refract` material (heat haze) is not drawn. `$additive`,
+`$overbrightfactor` (the instance's brightness), `$addself` (alpha-blended sprites composite premultiplied, so the
+self-add glows through the smoke-shaped alpha the way a fireball does), `$dualsequence` with `$sequence_blend_mode` (the second sheet sequence's frame
+travels in UV2 and the dual sprite master combines the two samples as SpriteCard does: averaged, second's RGB
+under first's alpha, or second over first), `$startfadesize`/`$endfadesize` and SpriteCard's alpha-masked
+additive blend are honoured; `$depthblend`, `$maxlumframeblend` and `$zoomanimateseq2` are not.
+
+Every `particles/*.pcf` in any mount is loaded, and `particles/particles_manifest.txt` is only for ordering
+and overriding. `particle_list` shows the names; `particle_create <name>` plays one where you look. The
+grenade plays `grenade_explosion_01` (Episode Two's, shipped in `plugins/half-life`) when it goes off.
 
 ### World
 

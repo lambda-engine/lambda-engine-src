@@ -14,6 +14,8 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "World/SourceBSPWorldActor.h"
+#include "Particles/SourceParticleLibrary.h"
+#include "Particles/SourceParticleSystem.h"
 #include "Entities/SourcePropPhysics.h"
 #include "EngineUtils.h"
 #include "LambdaCharacter.h"
@@ -1179,6 +1181,68 @@ static FAutoConsoleCommandWithWorldAndArgs GLambdaNPCCreateCommand(
 	TEXT("npc_create"),
 	TEXT("Spawn an NPC by classname where the player is looking (Source's npc_create)"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaNPCCreateCommand));
+
+// particle_create <effect> [distance_cm] - DispatchParticleEffect where the player is looking
+static void LambdaParticleCreateCommand(const TArray<FString>& Args, UWorld* World)
+{
+	if (!World || Args.Num() < 1)
+	{
+		UE_LOG(LogLambda, Display, TEXT("Usage: particle_create <effect name> [distance_cm]  (particle_list shows the names)"));
+		return;
+	}
+	APlayerController* PC = World->GetFirstPlayerController();
+	if (ALambdaCharacter* Player = PC ? Cast<ALambdaCharacter>(PC->GetPawn()) : nullptr)
+	{
+		Player->ParticleCreate(Args[0], Args.Num() > 1 ? FCString::Atof(*Args[1]) : 5000.0f);
+	}
+}
+
+static FAutoConsoleCommandWithWorldAndArgs GLambdaParticleCreateCommand(
+	TEXT("particle_create"),
+	TEXT("Start a particle system by name where the player is looking"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaParticleCreateCommand));
+
+// particle_list [filter] - every particle system the mounted .pcf files define
+static void LambdaParticleListCommand(const TArray<FString>& Args, UWorld* World)
+{
+	FSourceParticleLibrary::Get().Initialize();
+	TArray<FString> Names;
+	FSourceParticleLibrary::Get().GetDefinitionNames(Names);
+	int32 Shown = 0;
+	for (const FString& Name : Names)
+	{
+		if (Args.Num() > 0 && !Name.Contains(Args[0]))
+		{
+			continue;
+		}
+		UE_LOG(LogLambda, Display, TEXT("  %s"), *Name);
+		++Shown;
+	}
+	UE_LOG(LogLambda, Display, TEXT("%d particle systems%s"), Shown,
+		Args.Num() > 0 ? *FString::Printf(TEXT(" matching '%s'"), *Args[0]) : TEXT(""));
+}
+
+static FAutoConsoleCommandWithWorldAndArgs GLambdaParticleListCommand(
+	TEXT("particle_list"),
+	TEXT("List the particle systems defined by the mounted .pcf files, optionally filtered by a substring"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaParticleListCommand));
+
+// particle_stats - every particle system playing, and what each of its systems holds and draws
+static void LambdaParticleStatsCommand(const TArray<FString>& Args, UWorld* World)
+{
+	int32 Count = 0;
+	for (TActorIterator<ASourceParticleSystem> It(World); It; ++It)
+	{
+		UE_LOG(LogLambda, Display, TEXT("%s"), *It->GetDebugString());
+		++Count;
+	}
+	UE_LOG(LogLambda, Display, TEXT("%d particle systems playing"), Count);
+}
+
+static FAutoConsoleCommandWithWorldAndArgs GLambdaParticleStatsCommand(
+	TEXT("particle_stats"),
+	TEXT("List the particle systems playing right now, with their particle counts and what was drawn"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LambdaParticleStatsCommand));
 
 // decaltest [distance_cm] [angle_deg] - stamp test impact decals ahead and jump to a fixed viewpoint
 static void LambdaDecalTestCommand(const TArray<FString>& Args, UWorld* World)

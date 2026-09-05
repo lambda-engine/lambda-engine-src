@@ -23,6 +23,7 @@
 #include "Core/LambdaSourceSettings.h"
 #include "Core/SourceCoordinates.h"
 #include "Entities/SourceBrushEntity.h"
+#include "Entities/SourceEnvParticles.h"
 #include "Entities/SourcePointTemplate.h"
 #include "World/SourceEntity.h"
 #include "World/SourceGeometryBuilder.h"
@@ -404,6 +405,11 @@ AActor* ASourceBSPWorldActor::SpawnEntityFromKeyValues(const FSourceEntity& Enti
 			{
 				SpawnedActors.Add(Prop);
 			}
+		}
+		else if (Class.Equals(TEXT("env_particles"), ESearchCase::IgnoreCase) ||
+			Class.Equals(TEXT("info_particle_system"), ESearchCase::IgnoreCase))
+		{
+			return SpawnEnvParticles(Entity);
 		}
 		else if (FLambdaGameDll::Get().HandlesClass(Class))
 		{
@@ -1089,4 +1095,28 @@ void ASourceBSPWorldActor::RegisterPlayerAsNavInvoker()
 	bPlayerRegisteredAsInvoker = true;
 	UE_LOG(LogLambdaSource, Log, TEXT("Navigation: generating around the player (%.0f cm, dropped beyond %.0f cm)"),
 		NavInvokerGenerationRadius, NavInvokerRemovalRadius);
+}
+
+AActor* ASourceBSPWorldActor::SpawnEnvParticles(const FSourceEntity& Entity)
+{
+	FVector3f Origin = FVector3f::ZeroVector;
+	FVector3f Angles = FVector3f::ZeroVector;
+	Entity.GetVector(TEXT("origin"), Origin);
+	Entity.GetVector(TEXT("angles"), Angles);
+
+	UWorld* World = GetWorld();
+	FActorSpawnParameters Params;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	Params.ObjectFlags |= RF_Transient;
+	ASourceEnvParticles* Actor = World->SpawnActor<ASourceEnvParticles>(ASourceEnvParticles::StaticClass(),
+		FSourceCoords::ToUE(Origin), FSourceCoords::AnglesToUE(Angles), Params);
+	if (!Actor)
+	{
+		return nullptr;
+	}
+	Actor->SetMaterialLibrary(MaterialLibrary);
+	Actor->InitializeEntity(Entity, this);
+	RegisterEntity(Actor);
+	SpawnedActors.Add(Actor);
+	return Actor;
 }
