@@ -193,7 +193,14 @@ additive blend are honoured; `$depthblend`, `$maxlumframeblend` and `$zoomanimat
 
 Every `particles/*.pcf` in any mount is loaded, and `particles/particles_manifest.txt` is only for ordering
 and overriding. `particle_list` shows the names; `particle_create <name>` plays one where you look. The
-grenade plays `grenade_explosion_01` (Episode Two's, shipped in `plugins/half-life`) when it goes off.
+grenade plays `grenade_explosion_01` (Episode Two's, shipped in `plugins/half-life`) when it goes off, with
+a decaying point light (`ASourceLightFlash`, Source's dlight) and the HL:A explosion sound.
+
+The grenade itself is a physics prop built from `w_grenade.phy` (CGrenadeFrag's VPhysicsInitNormal): it
+leaves the hand with the throw's tumble, bounces and rolls to rest, blips once a second and three times a
+second in its last second and a half (`Grenade.Blip`), passes through characters and bounces off them by
+its own trace as VPhysicsUpdate does, and goes off when shot. A per-frame sweep from its last position
+clear of the world puts it back on any surface it went through, the net under continuous collision.
 
 ### World
 

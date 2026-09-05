@@ -119,6 +119,9 @@ ASourcePropPhysics::ASourcePropPhysics(const FObjectInitializer& ObjectInitializ
 	Body->SetCollisionResponseToAllChannels(ECR_Block);
 	Body->SetCastShadow(false);
 	Body->SetGenerateOverlapEvents(false);
+	// The body has collision hulls and no mesh sections, which the navigation octree warns about on every
+	// move; NPCs find their way by the map's own nodes, so it has nothing to tell the navmesh anyway.
+	Body->SetCanEverAffectNavigation(false);
 
 	Model = CreateDefaultSubobject<USourceStudioModelComponent>(TEXT("Model"));
 	Model->SetupAttachment(Body);

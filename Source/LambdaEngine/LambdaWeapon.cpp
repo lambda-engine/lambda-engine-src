@@ -1072,7 +1072,19 @@ void ALambdaWeaponFrag::ThrowGrenade(bool bLob)
 	// CWeaponFrag::ThrowGrenade: it leaves the hand a little forward and below the eye so it does not clip
 	// the player's own view, carrying his own velocity plus the throw.
 	const FVector Forward = EyeRotation.Vector();
-	const FVector Source = EyeLocation + Forward * (18.0f * Scale) - FVector(0, 0, 8.0f * Scale);
+	FVector Source = EyeLocation + Forward * (18.0f * Scale) - FVector(0, 0, 8.0f * Scale);
+	// CheckThrowPosition: a grenade must not be born inside the wall the player is facing. Its hull is swept
+	// from the eye to where the hand would let go, and it starts wherever that stopped.
+	{
+		FHitResult Hit;
+		FCollisionQueryParams Params(SCENE_QUERY_STAT(LambdaThrowPosition), false, WeaponOwner);
+		const float HullUnits = 4.0f + 2.0f;	// GRENADE_RADIUS + 2
+		if (World->SweepSingleByChannel(Hit, EyeLocation, Source, FQuat::Identity, ECC_Visibility,
+			FCollisionShape::MakeSphere(HullUnits * Scale), Params) && !Hit.bStartPenetrating)
+		{
+			Source = Hit.Location;
+		}
+	}
 	const float Speed = (bLob ? 350.0f : 1200.0f) * Scale;
 	FVector Velocity = WeaponOwner->GetVelocity() + Forward * Speed;
 	if (bLob)
@@ -1082,9 +1094,13 @@ void ALambdaWeaponFrag::ThrowGrenade(bool bLob)
 
 	const float Damage = FSourceAmmoDef::Get().GetSkillValue(TEXT("sk_plr_dmg_fraggrenade"), 125.0f);
 	const float RadiusUnits = FSourceAmmoDef::Get().GetSkillValue(TEXT("sk_fraggrenade_radius"), 250.0f);
-	// GRENADE_TIMER is three seconds for the player's grenade.
+	// The tumble it leaves the hand with: AngularImpulse(600, random(-1200, 1200), 0) for a throw, a third of
+	// that for a lob. GRENADE_TIMER is three seconds for the player's grenade.
+	const float SpinScale = bLob ? 1.0f / 3.0f : 1.0f;
+	const FVector Spin = FSourceCoords::ToUEDirection(FVector3f(600.0f * SpinScale,
+		FMath::FRandRange(-1200.0f, 1200.0f) * SpinScale, 0.0f));
 	ASourceGrenade::Throw(World, WeaponOwner, Source, Velocity, 3.0f, Damage, RadiusUnits,
-		WeaponOwner->GetWorldMaterialLibrary());
+		WeaponOwner->GetWorldMaterialLibrary(), Spin);
 
 	WeaponOwner->RemoveAmmo(WeaponInfo.PrimaryAmmo, 1);
 	NextPrimaryAttack = World->GetTimeSeconds() + 0.5f;
