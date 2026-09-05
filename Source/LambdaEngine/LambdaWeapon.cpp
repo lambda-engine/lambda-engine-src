@@ -214,6 +214,16 @@ void ALambdaWeapon::Deploy()
 	SetWeaponIdleTime(GetCurrentTime() + 0.5f);
 }
 
+bool ALambdaWeapon::HasPrimaryAmmo() const
+{
+	if (UsesClipsForAmmo1() && Clip1 > 0)
+	{
+		return true;
+	}
+	const ALambdaCharacter* WeaponOwner = OwningCharacter.Get();
+	return WeaponOwner && WeaponOwner->GetAmmoCount(WeaponInfo.PrimaryAmmo) > 0;
+}
+
 void ALambdaWeapon::ItemPostFrame()
 {
 	// CBaseCombatWeapon::ItemPostFrame
@@ -1038,6 +1048,18 @@ void ALambdaWeaponShotgun::ItemPostFrame()
 // ---------------------------------------------------------------------------------------------------------
 // weapon_frag
 // ---------------------------------------------------------------------------------------------------------
+
+void ALambdaWeaponFrag::ItemPostFrame()
+{
+	Super::ItemPostFrame();
+	// The grenade that has just left the hand is still in the air, and the throw is still playing: the
+	// switch waits until the weapon is free again, which is what CWeaponFrag's redraw dance amounts to.
+	ALambdaCharacter* WeaponOwner = GetOwningCharacter();
+	if (WeaponOwner && !IsHolstered() && !HasPrimaryAmmo() && GetCurrentTime() >= NextPrimaryAttack)
+	{
+		WeaponOwner->SwitchToNextBestWeapon(this);
+	}
+}
 
 void ALambdaWeaponFrag::PrimaryAttack()
 {

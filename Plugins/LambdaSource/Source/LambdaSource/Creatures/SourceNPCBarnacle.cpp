@@ -8,6 +8,7 @@
 #include "Weapons/SourceAmmoDef.h"
 #include "Gameplay/SourceDamage.h"
 #include "Rendering/SourceImpactEffects.h"
+#include "Materials/SourceDecalScript.h"
 #include "Entities/SourcePropPhysics.h"
 #include "Rendering/SourceRagdoll.h"
 #include "Core/SourceCoordinates.h"
@@ -750,7 +751,7 @@ void ASourceNPCBarnacle::Event_Killed(AActor* Attacker)
 		if (World->LineTraceSingleByObjectType(Ground, TongueRootCm, TongueRootCm - FVector(0, 0, 256.0f * Scale),
 			FCollisionObjectQueryParams(ECC_WorldStatic), Params))
 		{
-			SourceImpact::SpawnDecal(Ground, MaterialLibrary, TEXT("Blood"));
+			SourceImpact::SpawnDecal(Ground, MaterialLibrary, FSourceDecalScript::Get().PickDecalMaterial(TEXT("Blood")));
 		}
 	}
 	SpawnDeathGibs();

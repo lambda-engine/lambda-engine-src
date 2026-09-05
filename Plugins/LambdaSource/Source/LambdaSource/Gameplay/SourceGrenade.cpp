@@ -7,6 +7,8 @@
 #include "Gameplay/SourceDamage.h"
 #include "Particles/SourceParticleSystem.h"
 #include "Rendering/SourceLightFlash.h"
+#include "Rendering/SourceImpactEffects.h"
+#include "Materials/SourceDecalScript.h"
 #include "Audio/LambdaSoundLibrary.h"
 #include "Materials/LambdaMaterialLibrary.h"
 #include "Formats/SourceBSPFile.h"
@@ -199,6 +201,10 @@ void ASourceGrenade::Tick(float DeltaSeconds)
 			const FVector Start = GetActorLocation();
 			FHitResult Hit;
 			FCollisionQueryParams Params(SCENE_QUERY_STAT(LambdaGrenadeCharacter), false, this);
+			// Never off the thrower: COLLISION_GROUP_WEAPON does not collide with players at all, and a grenade
+			// thrown down at your own feet leaves through the capsule you are standing in. Bouncing it off that
+			// leaves it hanging in the air beside you, reflected again every frame until the fuse runs out.
+			Params.AddIgnoredActor(Thrower.Get());
 			if (World->LineTraceSingleByObjectType(Hit, Start, Start + Velocity * DeltaSeconds,
 				FCollisionObjectQueryParams(ECC_Pawn), Params) && Hit.GetActor())
 			{
@@ -290,7 +296,8 @@ void ASourceGrenade::Detonate()
 	}
 
 	// CBaseGrenade::Detonate traces 32 units down and Explode pulls the blast a hair out of what it finds, so
-	// the effect is born on the floor the grenade lies on rather than half inside it.
+	// the effect is born on the floor the grenade lies on rather than half inside it. The same trace is what
+	// CEnvExplosion stamps its scorch mark on: a blast in mid-air over nothing leaves no mark, as in Source.
 	const float Scale = ULambdaSourceSettings::Get().UnitScale;
 	FVector EffectOrigin = Centre;
 	{
@@ -299,6 +306,9 @@ void ASourceGrenade::Detonate()
 		if (World->LineTraceSingleByChannel(Floor, Centre, Centre - FVector(0.0f, 0.0f, 32.0f * Scale), ECC_Visibility, TraceParams))
 		{
 			EffectOrigin = Floor.ImpactPoint + Floor.ImpactNormal * (0.6f * Scale);
+			// UTIL_DecalTrace( &tr, "Scorch" ): the burn the blast leaves on what it went off against. "Scorch"
+			// is a decal group in decals_subrect.txt, so it is picked from before it can be stamped.
+			SourceImpact::SpawnDecal(Floor, Materials.Get(), FSourceDecalScript::Get().PickDecalMaterial(TEXT("Scorch")));
 		}
 	}
 	// The explosion itself: Half-Life 2's grenade explosion particle system, the flash of light it throws on the

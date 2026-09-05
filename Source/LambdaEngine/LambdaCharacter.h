@@ -53,6 +53,12 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Lambda")
 	ALambdaWeapon* GetActiveWeapon() const { return ActiveWeapon; }
+	/**
+	 * CBaseCombatCharacter::SwitchToNextBestWeapon: the heaviest weapon that still has something to fire,
+	 * skipping the one being put down. With nothing left to hold the hands are empty and no view model is
+	 * drawn at all, as Source's Weapon_Switch(NULL) leaves them. Returns whether a weapon was found.
+	 */
+	bool SwitchToNextBestWeapon(ALambdaWeapon* Ignoring);
 	/** Every weapon the player carries, for the selection HUD (sorted by bucket, then position). */
 	const TArray<TObjectPtr<ALambdaWeapon>>& GetWeapons() const { return Weapons; }
 	ALambdaWeapon* FindWeapon(const FString& WeaponClassName) const;

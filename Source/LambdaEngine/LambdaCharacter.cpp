@@ -1574,6 +1574,43 @@ void ALambdaCharacter::SwitchToWeapon(ALambdaWeapon* Weapon)
 	Weapon->Deploy();
 }
 
+bool ALambdaCharacter::SwitchToNextBestWeapon(ALambdaWeapon* Ignoring)
+{
+	// CHalfLife2::GetNextBestWeapon: of everything that can still be fired, the one with the most weight -
+	// the weapon scripts rank them, so a player who throws his last grenade comes back to the AR2 and not
+	// to the crowbar. The weapon being put down is passed in because it is the one that just ran dry.
+	ALambdaWeapon* Best = nullptr;
+	for (const TObjectPtr<ALambdaWeapon>& Weapon : Weapons)
+	{
+		if (!Weapon || Weapon == Ignoring || !Weapon->CanBeSelected())
+		{
+			continue;
+		}
+		if (!Best || Weapon->GetWeaponInfo().Weight > Best->GetWeaponInfo().Weight)
+		{
+			Best = Weapon.Get();
+		}
+	}
+	if (Best)
+	{
+		UE_LOG(LogLambda, Log, TEXT("'%s' is empty; switching to '%s'"),
+			Ignoring ? *Ignoring->GetWeaponClassName() : TEXT("(none)"), *Best->GetWeaponClassName());
+		SwitchToWeapon(Best);
+		return true;
+	}
+	// Weapon_Switch(NULL): nothing left that can be fired, so the hands are empty and there is no view
+	// model to draw.
+	if (ActiveWeapon)
+	{
+		UE_LOG(LogLambda, Log, TEXT("'%s' is empty and there is nothing else to hold"), *ActiveWeapon->GetWeaponClassName());
+		ActiveWeapon->Holster();
+		LastWeapon = ActiveWeapon;
+		ActiveWeapon = nullptr;
+		SetViewModel(FString());
+	}
+	return false;
+}
+
 void ALambdaCharacter::Input_LastInv()
 {
 	// "lastinv" swaps straight back, no menu.
@@ -1586,11 +1623,13 @@ void ALambdaCharacter::Input_LastInv()
 
 void ALambdaCharacter::SelectSlot(int32 Bucket)
 {
-	// CHudWeaponSelection::SelectWeaponSlot: open the menu on that bucket, or cycle within it if already there.
+	// CHudWeaponSelection::SelectWeaponSlot: open the menu on that bucket, or cycle within it if already
+	// there. An empty weapon is not offered (CBaseCombatWeapon::CanBeSelected), so a slot whose only weapon
+	// is out of ammo is refused the same way an empty slot is.
 	int32 First = INDEX_NONE;
 	for (int32 i = 0; i < Weapons.Num(); ++i)
 	{
-		if (Weapons[i] && Weapons[i]->GetWeaponInfo().Bucket == Bucket)
+		if (Weapons[i] && Weapons[i]->GetWeaponInfo().Bucket == Bucket && Weapons[i]->CanBeSelected())
 		{
 			First = i;
 			break;
@@ -1605,11 +1644,15 @@ void ALambdaCharacter::SelectSlot(int32 Bucket)
 	const int32 Was = bSelectionActive ? SelectionIndex : INDEX_NONE;
 	if (bSelectionActive && Weapons.IsValidIndex(SelectionIndex) && Weapons[SelectionIndex]->GetWeaponInfo().Bucket == Bucket)
 	{
-		// Cycle within the bucket, wrapping back to its first weapon.
-		int32 Next = SelectionIndex + 1;
-		if (!Weapons.IsValidIndex(Next) || Weapons[Next]->GetWeaponInfo().Bucket != Bucket)
+		// Cycle within the bucket, over what can be selected, wrapping back to its first weapon.
+		int32 Next = First;
+		for (int32 i = SelectionIndex + 1; Weapons.IsValidIndex(i) && Weapons[i]->GetWeaponInfo().Bucket == Bucket; ++i)
 		{
-			Next = First;
+			if (Weapons[i]->CanBeSelected())
+			{
+				Next = i;
+				break;
+			}
 		}
 		SelectionIndex = Next;
 	}
@@ -1644,7 +1687,15 @@ void ALambdaCharacter::CycleSelection(int32 Step)
 		bSelectionActive = true;
 	}
 	const int32 Was = SelectionIndex;
-	SelectionIndex = (SelectionIndex + Step + Weapons.Num()) % Weapons.Num();
+	// Walk on past anything that cannot be fired, so the wheel never stops on an empty weapon.
+	for (int32 i = 0; i < Weapons.Num(); ++i)
+	{
+		SelectionIndex = (SelectionIndex + Step + Weapons.Num()) % Weapons.Num();
+		if (Weapons[SelectionIndex] && Weapons[SelectionIndex]->CanBeSelected())
+		{
+			break;
+		}
+	}
 	if (SelectionIndex != Was)
 	{
 		// CHudWeaponSelection::CycleToNextWeapon - every notch of the wheel is a click.

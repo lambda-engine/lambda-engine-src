@@ -201,6 +201,12 @@ leaves the hand with the throw's tumble, bounces and rolls to rest, blips once a
 second in its last second and a half (`Grenade.Blip`), passes through characters and bounces off them by
 its own trace as VPhysicsUpdate does, and goes off when shot. A per-frame sweep from its last position
 clear of the world puts it back on any surface it went through, the net under continuous collision.
+Where it goes off it leaves the `Scorch` decal on what it went off against (`UTIL_DecalTrace`), and a
+blast in mid-air over nothing leaves no mark, as in Source.
+
+A weapon with nothing left to fire cannot be selected (`CBaseCombatWeapon::CanBeSelected`): the menu and
+the mouse wheel skip it, and the weapon that runs dry in your hands is swapped for the heaviest one that
+still has ammo (`SwitchToNextBestWeapon`). Throwing your last grenade therefore puts the grenade away.
 
 ### World
 

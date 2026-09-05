@@ -87,6 +87,17 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Lambda") int32 GetClipSize() const { return WeaponInfo.ClipSize; }
 	UFUNCTION(BlueprintPure, Category = "Lambda") FString GetWeaponClassName() const { return WeaponInfo.ClassName; }
 	FString GetPrimaryAmmoType() const { return WeaponInfo.PrimaryAmmo; }
+	/** CBaseCombatWeapon::UsesPrimaryAmmo - the crowbar needs none and is never empty. */
+	bool UsesPrimaryAmmo() const { return !WeaponInfo.PrimaryAmmo.IsEmpty() && !WeaponInfo.PrimaryAmmo.Equals(TEXT("None"), ESearchCase::IgnoreCase); }
+	/** CBaseCombatWeapon::HasPrimaryAmmo - a round in the clip, or one in the owner's pockets. */
+	bool HasPrimaryAmmo() const;
+	/** CBaseCombatWeapon::HasAnyAmmo. */
+	bool HasAnyAmmo() const { return !UsesPrimaryAmmo() || HasPrimaryAmmo(); }
+	/**
+	 * CBaseCombatWeapon::CanBeSelected - whether the weapon menu may stop on it. An empty weapon is skipped
+	 * and is never switched to, which is why running out of grenades takes the grenade out of your hands.
+	 */
+	virtual bool CanBeSelected() const { return HasAnyAmmo(); }
 	const FSourceWeaponInfo& GetWeaponInfo() const { return WeaponInfo; }
 	bool UsesClipsForAmmo1() const { return WeaponInfo.UsesClipsForAmmo1(); }
 
@@ -232,6 +243,11 @@ class LAMBDAENGINE_API ALambdaWeaponFrag : public ALambdaWeapon
 public:
 	virtual void PrimaryAttack() override;
 	virtual void SecondaryAttack() override;
+	/**
+	 * CWeaponFrag::PrimaryAttack's "If I'm now out of ammo, switch away": the last grenade leaves the hand
+	 * empty, and an empty hand is not a weapon to hold. The switch waits for the throw to finish playing.
+	 */
+	virtual void ItemPostFrame() override;
 
 protected:
 	/** CWeaponFrag::ThrowGrenade / LobGrenade - the same grenade, thrown hard or lobbed underarm. */
